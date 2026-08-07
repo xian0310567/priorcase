@@ -414,3 +414,24 @@ func TestDifferentSessionDoesNotSuppress(t *testing.T) {
 		t.Error("표시했어야 한다")
 	}
 }
+
+// pending 은 **대화가 오간 날짜**를 담아야 한다. 표시 시각(At)을 보여 주면 에이전트가
+// 엉뚱한 날을 뒤진다 — 데몬이 며칠 뒤에 켜졌거나 훅이 밀린 구간을 뒤늦게 훑으면
+// 둘이 크게 벌어진다.
+func TestPendingCarriesConversationDate(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
+
+	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+		t.Fatal(err)
+	}
+	p := s.Pending()[0]
+	if len(p.Days) == 0 || p.Days[0] != "2026-08-07" {
+		t.Errorf("Days = %v, 대화 날짜 2026-08-07 이어야 한다", p.Days)
+	}
+	if got := p.When(); got != "2026-08-07" {
+		t.Errorf("When() = %q, 대화 날짜여야 한다 (표시 시각이 아니라)", got)
+	}
+}

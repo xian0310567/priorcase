@@ -44,15 +44,32 @@ type Checkpoint struct {
 
 // Pending 은 "이 구간에 결정이 있었을 수 있다" 는 표시다. 결정 노트가 아니다.
 type Pending struct {
-	SessionID string    `json:"session_id"`
-	Path      string    `json:"path"`
-	Cwd       string    `json:"cwd"`
-	Domain    string    `json:"domain"`
-	Turns     int       `json:"turns"`
-	Signals   []string  `json:"signals"`
-	From      int64     `json:"from"`
-	To        int64     `json:"to"`
-	At        time.Time `json:"at"`
+	SessionID string   `json:"session_id"`
+	Path      string   `json:"path"`
+	Cwd       string   `json:"cwd"`
+	Domain    string   `json:"domain"`
+	Turns     int      `json:"turns"`
+	Signals   []string `json:"signals"`
+	From      int64    `json:"from"`
+	To        int64    `json:"to"`
+	// Days 는 **대화가 오간 날짜**다 (YYYY-MM-DD).
+	//
+	// At(표시한 시각)과 다르다. 에이전트는 이 값으로 대화를 찾아가므로, 표시 시각을
+	// 보여 주면 엉뚱한 날을 뒤진다 — 데몬이 며칠 뒤에 켜졌거나 훅이 밀린 구간을
+	// 뒤늦게 훑으면 둘이 크게 벌어진다.
+	Days []string  `json:"days,omitempty"`
+	At   time.Time `json:"at"`
+}
+
+// When 은 사람에게 보여 줄 날짜다. 대화 날짜를 알면 그것을, 모르면 표시 시각을 준다.
+func (p Pending) When() string {
+	if len(p.Days) > 0 {
+		if len(p.Days) == 1 {
+			return p.Days[0]
+		}
+		return p.Days[0] + "~" + p.Days[len(p.Days)-1]
+	}
+	return p.At.Format("2006-01-02")
 }
 
 // key 는 중복 판정 기준이다. **구간의 시작점**으로 잡는다 — 체크포인트가 전진하지

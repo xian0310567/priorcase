@@ -76,6 +76,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 		}
 	}
 	r.Signals = matchSignals(c.Capture.Signals, turns)
+	days := segmentDays(turns)
 
 	minTurns := c.Capture.MinTurns
 	if minTurns <= 0 {
@@ -99,7 +100,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 	// 에이전트가 제 할 일을 다 한 세션까지 표시하면 무시하는 법을 배운다.
 	if len(r.Signals) > 0 && !r.Excluded {
 		domain := c.DomainForCwd(meta.Cwd)
-		rec, ferr := alreadyRecorded(l, domain, meta.SessionID, segmentDays(turns))
+		rec, ferr := alreadyRecorded(l, domain, meta.SessionID, days)
 		if ferr != nil {
 			// 볼트를 못 읽었다고 표시를 건너뛰면 안전망이 조용히 꺼진다.
 			// 모르면 표시하는 쪽으로 기운다 — 놓치는 것이 더 나쁘다.
@@ -119,6 +120,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 			Signals:   r.Signals,
 			From:      from,
 			To:        from + consumed,
+			Days:      days,
 			At:        time.Now().UTC(),
 		}
 		if err := s.AddPending(p); err != nil {

@@ -236,7 +236,7 @@ func (s *server) pending(ctx context.Context, req *sdk.CallToolRequest, a pendin
 			domain = "(도메인 미상)"
 		}
 		fmt.Fprintf(&b, "\n- id: %s\n  때: %s · 도메인: %s · 발화 %d · 시그널 %s\n  대화: %s (바이트 %d~%d)\n",
-			p.ID(), p.At.Format("2006-01-02 15:04"), domain, p.Turns,
+			p.ID(), p.When(), domain, p.Turns,
 			strings.Join(p.Signals, "·"), p.Path, p.From, p.To)
 	}
 	b.WriteString("\n각 구간의 대화를 확인하고, 실제 결정이면 casebook_capture 로 남긴 뒤 " +
