@@ -5,8 +5,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/xian0310567/casebook/internal/adapter/cli"
 	"github.com/xian0310567/casebook/internal/adapter/mcp"
@@ -14,11 +17,16 @@ import (
 )
 
 func main() {
+	// cb watch 는 장기 실행 프로세스다. Ctrl-C·SIGTERM 에 ctx 가 닫혀야 감시 루프가
+	// 스스로 빠져나온다. 두 번째 신호에는 즉시 죽는다(NotifyContext 의 기본 동작).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	root := cli.NewRootCmd()
 	root.AddCommand(mcp.NewCommand(cli.Version))
 	root.AddCommand(daemon.NewCommand())
 
-	if err := cli.Run(root); err != nil {
+	if err := cli.Run(ctx, root); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
