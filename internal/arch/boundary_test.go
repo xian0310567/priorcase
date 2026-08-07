@@ -69,6 +69,39 @@ func TestAdaptersDoNotImportEachOther(t *testing.T) {
 	}
 }
 
+// core 는 호스트를 모른다. transcript 는 호스트의 파일 형식에 묶인 코드이고,
+// daemon 은 배경 프로세스다. core 가 둘 중 하나라도 알게 되면 "core 는 어댑터가
+// 부르는 유일한 API" 라는 전제가 깨지고, CLI 로 부르는 경로와 데몬으로 부르는 경로가
+// 갈라지기 시작한다.
+func TestCoreKnowsNeitherHostNorDaemon(t *testing.T) {
+	for _, d := range deps(t, mod+"/internal/core/...") {
+		if strings.HasPrefix(d, "internal/transcript") || strings.HasPrefix(d, "internal/daemon") {
+			t.Errorf("core 가 %s 를 import 한다 (§4.1 위반)", d)
+		}
+	}
+}
+
+// transcript 는 잎이다. 호스트의 파일을 읽어 Turn 으로 바꾸는 것 말고는 아무것도
+// 모른다 — 설정도, 볼트도, 데몬도. 이 인터페이스가 `(파일) → []Turn` 하나로 좁아야
+// 호스트 하나가 깨져도 다른 호스트에 번지지 않는다 (스펙 §9).
+func TestTranscriptIsALeaf(t *testing.T) {
+	for _, d := range deps(t, mod+"/internal/transcript/...") {
+		if d == "internal/transcript" || strings.HasPrefix(d, "internal/transcript/") {
+			continue
+		}
+		t.Errorf("transcript 가 %s 를 import 한다 — 잎이어야 한다", d)
+	}
+}
+
+// 데몬은 core 와 transcript 를 쓰되 어댑터는 모른다.
+func TestDaemonDoesNotImportAdapters(t *testing.T) {
+	for _, d := range deps(t, mod+"/internal/daemon") {
+		if strings.HasPrefix(d, "internal/adapter/") {
+			t.Errorf("daemon 이 %s 를 import 한다", d)
+		}
+	}
+}
+
 // 어댑터는 core 를 부르라고 있는 것이다. core 를 하나도 안 부르는 어댑터가 있다면
 // 로직을 자기가 들고 있다는 뜻이고, 그게 쓰기 경로가 갈라지는 시작점이다.
 func TestAdaptersDoCallCore(t *testing.T) {
