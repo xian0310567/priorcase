@@ -3,5 +3,8 @@
 /cb
 *.test
 
+# local agent settings (permission grants — never publish)
+.claude/settings.local.json
+
 # local
 .DS_Store
