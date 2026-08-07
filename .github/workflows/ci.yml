@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      # gofmt 는 출력이 있어도 종료 코드 0 이라 그냥 부르면 아무것도 막지 못한다.
+      # 위반 파일 목록을 잡아서 있으면 명시적으로 실패시킨다.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt 위반:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race ./...

@@ -673,8 +673,13 @@ func TestTruncateRunesKeepsValidUTF8(t *testing.T) {
 }
 
 func TestNFC(t *testing.T) {
-	nfd := "한"  // ᄒ + ᅡ + ᆫ (분리)
-	nfc := "한"              // 한 (완성)
+	// NFD 는 반드시 코드포인트 이스케이프로 쓴다. 소스에 한글을 직접 적으면
+	// 에디터·도구가 NFC 로 정규화해 테스트가 같은 문자열끼리 비교하며 무의미해진다.
+	nfd := "\u1112\u1161\u11ab" // ᄒ + ᅡ + ᆫ
+	nfc := "\ud55c"               // 한
+	if nfd == nfc {
+		t.Fatal("NFD 리터럴이 NFC 와 같다 — 테스트가 무의미하다")
+	}
 	if got := NFC(nfd); got != nfc {
 		t.Errorf("NFC(NFD) = %q, want %q", got, nfc)
 	}
@@ -1174,18 +1179,22 @@ func TestResolveStemRejectsTraversal(t *testing.T) {
 
 func TestResolveStemNFD(t *testing.T) {
 	l, vault := testLayout(t)
-	// NFD 로 들어온 stem 도 NFC 경로로 해석돼야 한다 (tar 복원 시나리오)
-	nfdStem := "omni-결정-한-2026-08-01"
-	// 위 stem 은 "omni-결정-한-2026-08-01" 의 NFD 형태
+	// NFD 로 들어온 stem 도 NFC 경로로 해석돼야 한다 (tar 복원 시나리오).
+	// NFD 부분은 코드포인트 이스케이프로 쓴다 — 직접 쓰면 도구가 NFC 로 정규화한다.
+	nfdStem := "omni-\u1100\u1167\u11af\u110c\u1165\u11bc-\u1112\u1161\u11ab-2026-08-01"
+	nfcStem := "omni-결정-한-2026-08-01"
+	if nfdStem == nfcStem {
+		t.Fatal("NFD 리터럴이 NFC 와 같다 — 테스트가 무의미하다")
+	}
 	got, err := l.ResolveStem(nfdStem)
 	if err != nil {
 		t.Fatalf("NFD stem 을 거부했다: %v", err)
 	}
-	want := filepath.Join(vault, "omni", "decisions", "omni-결정-한-2026-08-01.md")
+	want := filepath.Join(vault, "omni", "decisions", nfcStem+".md")
 	if got != want {
 		t.Errorf("ResolveStem(NFD) = %q,\nwant %q", got, want)
 	}
-	if strings.Contains(got, "ᄀ") {
+	if strings.ContainsRune(got, '\u1100') {
 		t.Error("경로에 NFD 자모가 남아 있다")
 	}
 }
@@ -1629,7 +1638,65 @@ func (l *Layout) Write(n Note) error {
 }
 ```
 
-- [ ] **Step 6: vault 테스트**
+- [ ] **Step 6: 공용 픽스처 헬퍼와 vault 테스트**
+
+**먼저 공용 픽스처 헬퍼를 만든다.** 이후 index·search·capture 태스크가 전부 이걸 쓴다 —
+패키지마다 복제하면 픽스처가 갈라진다.
+
+`internal/testutil/vault.go` (테스트 파일이 아니라 일반 파일이라 다른 패키지의 테스트가 import 할 수 있다):
+
+```go
+// Package testutil 은 테스트용 볼트 픽스처를 만든다.
+// store 를 import 하지 않는다 — store 의 테스트가 이걸 쓰면 순환이 되기 때문이다.
+package testutil
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/xian0310567/casebook/internal/core/config"
+)
+
+// VaultConfig 는 testdata/vault 를 임시 디렉토리로 복사하고 그것을 가리키는 설정을 준다.
+// 도메인 경로는 /tmp/proj/<name> 으로 고정해 cwd 기반 테스트가 결정적이게 한다.
+func VaultConfig(t *testing.T) *config.Config {
+	t.Helper()
+	dst := t.TempDir()
+	if err := os.CopyFS(dst, os.DirFS(fixtureSrc(t))); err != nil {
+		t.Fatal(err)
+	}
+	return &config.Config{
+		Vault: dst,
+		Naming: config.Naming{
+			DecisionFile: "{domain}-결정-{slug}-{date}.md",
+			DecisionsDir: "{project}/decisions",
+			Worklog:      "99-{project}-작업-로그.md",
+			Index:        "_meta/00-결정-색인.md",
+		},
+		Domain: []config.Domain{
+			{Prefix: "alpha", Folder: "alpha", Paths: []string{"/tmp/proj/alpha"}},
+			{Prefix: "beta", Folder: "beta", Paths: []string{"/tmp/proj/beta"}},
+			{Prefix: "common", Folder: "common"},
+		},
+	}
+}
+
+// fixtureSrc 는 이 파일의 위치에서 저장소 루트를 거슬러 testdata/vault 를 찾는다.
+// 상대 경로("../../testdata")를 쓰면 호출하는 패키지의 깊이에 따라 깨진다.
+func fixtureSrc(t *testing.T) string {
+	t.Helper()
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("호출자 정보를 얻을 수 없다")
+	}
+	// self = <repo>/internal/testutil/vault.go
+	root := filepath.Dir(filepath.Dir(filepath.Dir(self)))
+	return filepath.Join(root, "testdata", "vault")
+}
+```
+
 
 `internal/core/store/vault_test.go`:
 
@@ -1638,33 +1705,15 @@ package store
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/testutil"
 )
 
-// fixtureLayout 은 testdata/vault 를 임시 디렉토리로 복사해 Layout 을 만든다.
+// fixtureLayout 은 공용 픽스처로 Layout 을 만든다.
 func fixtureLayout(t *testing.T) *Layout {
 	t.Helper()
-	dst := t.TempDir()
-	src := filepath.Join("..", "..", "..", "testdata", "vault")
-	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
-		t.Fatal(err)
-	}
-	return NewLayout(&config.Config{
-		Vault: dst,
-		Naming: config.Naming{
-			DecisionFile: "{domain}-결정-{slug}-{date}.md",
-			DecisionsDir: "{project}/decisions",
-			Index:        "_meta/00-결정-색인.md",
-		},
-		Domain: []config.Domain{
-			{Prefix: "alpha", Folder: "alpha"},
-			{Prefix: "beta", Folder: "beta"},
-			{Prefix: "common", Folder: "common"},
-		},
-	})
+	return NewLayout(testutil.VaultConfig(t))
 }
 
 func TestList(t *testing.T) {
@@ -1759,7 +1808,7 @@ import (
 )
 
 func TestBuild(t *testing.T) {
-	l := fixtureLayout(t) // store 패키지의 헬퍼를 index 용으로 복제 (아래 Step 3)
+	l := fixtureLayout(t) // fixture_test.go 의 헬퍼 (아래 Step 3)
 	out, err := Build(l)
 	if err != nil {
 		t.Fatal(err)
@@ -1865,40 +1914,21 @@ func Write(l *store.Layout) (int, error) {
 }
 ```
 
-`internal/core/index/fixture_test.go` — `store` 의 헬퍼를 여기서도 쓰기 위해 복제한다:
+`internal/core/index/fixture_test.go`:
 
 ```go
 package index
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/testutil"
 )
 
 func fixtureLayout(t *testing.T) *store.Layout {
 	t.Helper()
-	dst := t.TempDir()
-	src := filepath.Join("..", "..", "..", "testdata", "vault")
-	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
-		t.Fatal(err)
-	}
-	return store.NewLayout(&config.Config{
-		Vault: dst,
-		Naming: config.Naming{
-			DecisionFile: "{domain}-결정-{slug}-{date}.md",
-			DecisionsDir: "{project}/decisions",
-			Index:        "_meta/00-결정-색인.md",
-		},
-		Domain: []config.Domain{
-			{Prefix: "alpha", Folder: "alpha"},
-			{Prefix: "beta", Folder: "beta"},
-			{Prefix: "common", Folder: "common"},
-		},
-	})
+	return store.NewLayout(testutil.VaultConfig(t))
 }
 ```
 
@@ -2196,12 +2226,31 @@ func TestRecallNoMatchReturnsEmpty(t *testing.T) {
 
 func TestSupersededPenalty(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	hits := Recall(l, c, "스키마 단일 테이블", Options{Limit: 5, MinScore: 1})
-	for _, h := range hits {
-		if h.Note.Meta.Status == "superseded" {
-			// 감점이 적용됐는지: 같은 매칭 수라면 active 보다 낮아야 한다
-			t.Logf("superseded %s score=%d", h.Note.Stem, h.Score)
+	// 픽스처의 alpha-결정-스키마 는 superseded 다. 같은 검색에서 잡히는
+	// active 노트보다 점수가 낮아야 감점이 적용된 것이다.
+	hits := Recall(l, c, "스키마 단일 테이블 저장 엔진", Options{CrossProject: true, Limit: 10, MinScore: 1})
+	var sup, act *Hit
+	for i := range hits {
+		switch hits[i].Note.Meta.Status {
+		case "superseded":
+			if sup == nil {
+				sup = &hits[i]
+			}
+		case "active":
+			if act == nil {
+				act = &hits[i]
+			}
 		}
+	}
+	if sup == nil {
+		t.Fatal("superseded 노트가 결과에 없다 — 픽스처나 검색이 잘못됐다")
+	}
+	if act == nil {
+		t.Fatal("active 노트가 결과에 없다 — 비교 대상이 없다")
+	}
+	if sup.Score >= act.Score {
+		t.Errorf("superseded(%d) 가 active(%d) 보다 낮지 않다 — 감점이 적용되지 않았다",
+			sup.Score, act.Score)
 	}
 }
 
@@ -2253,34 +2302,16 @@ func TestRenderInjectEmpty(t *testing.T) {
 package search
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/testutil"
 )
 
 func fixtureLayoutConfig(t *testing.T) (*store.Layout, *config.Config) {
 	t.Helper()
-	dst := t.TempDir()
-	src := filepath.Join("..", "..", "..", "testdata", "vault")
-	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
-		t.Fatal(err)
-	}
-	c := &config.Config{
-		Vault: dst,
-		Naming: config.Naming{
-			DecisionFile: "{domain}-결정-{slug}-{date}.md",
-			DecisionsDir: "{project}/decisions",
-			Index:        "_meta/00-결정-색인.md",
-		},
-		Domain: []config.Domain{
-			{Prefix: "alpha", Folder: "alpha", Paths: []string{"/tmp/proj/alpha"}},
-			{Prefix: "beta", Folder: "beta", Paths: []string{"/tmp/proj/beta"}},
-			{Prefix: "common", Folder: "common"},
-		},
-	}
+	c := testutil.VaultConfig(t)
 	return store.NewLayout(c), c
 }
 ```
@@ -2699,7 +2730,25 @@ func TestDoUpdatesIndex(t *testing.T) {
 }
 ```
 
-`internal/core/capture/fixture_test.go` — Task 9 의 `fixtureLayoutConfig` 와 동일한 내용을 `package capture` 로 복제한다 (import 는 `config`, `store` 만).
+`internal/core/capture/fixture_test.go` — Task 9 와 같은 3줄짜리 헬퍼다 (`package capture` 로만 바꾼다):
+
+```go
+package capture
+
+import (
+	"testing"
+
+	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/testutil"
+)
+
+func fixtureLayoutConfig(t *testing.T) (*store.Layout, *config.Config) {
+	t.Helper()
+	c := testutil.VaultConfig(t)
+	return store.NewLayout(c), c
+}
+```
 
 - [ ] **Step 2: 실패 확인**
 

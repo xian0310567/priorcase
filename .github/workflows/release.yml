@@ -1,0 +1,26 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # tap 저장소는 별개 저장소라 GITHUB_TOKEN 으로는 밀 수 없다.
+          # 시크릿이 없으면 빈 문자열이 되고, .goreleaser.yaml 의 skip_upload 가
+          # 그때 cask 업로드를 건너뛴다 — 릴리스 자체는 성공한다.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

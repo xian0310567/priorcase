@@ -1,0 +1,83 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/store"
+)
+
+// Version 은 릴리스 시 -ldflags 로 주입된다.
+var Version = "dev"
+
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "cb",
+		Short:         "casebook — 결정을 기록하고 회수한다",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Version:       Version,
+	}
+	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/casebook/config.toml)")
+	root.AddCommand(newIndexCmd())
+	root.AddCommand(newRecallCmd())
+	root.AddCommand(newCaptureCmd())
+	root.AddCommand(newReviewCmd())
+	return root
+}
+
+// loadFrom 은 --config 플래그로 설정을 읽고 그 설정과 Layout 을 함께 준다.
+//
+// 설정 로딩 진입점이 하나뿐이어야 하는 이유: Layout 은 config.Config 를 비공개
+// 필드로 감추므로 Config 도 필요한 명령(capture·recall)은 Layout 만 받아서는
+// 일을 못 한다. 그래서 예전에는 index·review 만 이 헬퍼를 쓰고 capture·recall
+// 은 config.Load 를 직접 불렀는데, 그러면 설정 경로 해석 규칙(플래그 →
+// CASEBOOK_CONFIG → XDG)이 두 자리에 생겨 한쪽만 고치는 사고가 난다.
+// 둘을 같이 돌려주면 갈래가 없어진다.
+func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
+	path, err := cmd.Flags().GetString("config")
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, store.NewLayout(c), nil
+}
+
+// warnSkipped 는 읽지 못해 건너뛴 결정 노트를 알린다. 없으면 아무것도 안 낸다.
+//
+// **항상 stderr 로 낸다.** `cb recall --format inject` 의 stdout 은 훅이 그대로
+// 에이전트 컨텍스트에 밀어넣는 순수 데이터다 — 거기에 경고가 한 줄이라도 섞이면
+// "[과거 결정 참조]" 블록이 오염된다. 그래서 경고 경로를 명령마다 나누지 않고
+// 여기 하나로 모아, 오염될 수 있는 자리를 아예 없앤다. 사람은 터미널에서 보고,
+// 파이프는 받지 않는다.
+//
+// 파일 목록을 다 찍는다(자르지 않는다). "6건 건너뜀" 만으로는 사용자가 무엇을
+// 고쳐야 할지 알 수 없고, 건너뛴 노트는 원래 흔해서는 안 되는 것이라 길어질
+// 일이 정상 상태에는 없다.
+func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
+	if len(skipped) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "경고: 결정 노트 %d건을 읽지 못해 건너뛰었다 — 색인·회수에서 빠진다:\n", len(skipped))
+	for _, s := range skipped {
+		// 원인이 여러 줄일 수 있다 (yaml 은 잉여 키를 한 줄에 하나씩 보고한다).
+		// 이어지는 줄을 들여쓰지 않으면 목록의 "- " 항목 경계가 무너져 어느
+		// 파일의 원인인지 눈으로 못 따라간다.
+		reason := strings.ReplaceAll(strings.TrimRight(fmt.Sprint(s.Reason), "\n"), "\n", "\n      ")
+		fmt.Fprintf(w, "  - %s\n      %s\n", l.RelPath(s.Path), reason)
+	}
+}
+
+// Execute 는 CLI 를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
+func Execute() error {
+	if err := newRootCmd().Execute(); err != nil {
+		return fmt.Errorf("cb: %w", err)
+	}
+	return nil
+}

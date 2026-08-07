@@ -8,3 +8,6 @@
 
 # local
 .DS_Store
+
+# sdd scratch
+.superpowers/
