@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/xian0310567/casebook/internal/core/store"
 )
 
 // 지시 1: Do() 가 노트를 쓴 뒤 색인 갱신에 실패하면 노트만 남고 색인이
@@ -52,26 +54,53 @@ func TestDoIndexWriteFailureLeavesNoteButReportsIt(t *testing.T) {
 	}
 }
 
-// 지시 2: 중복 검사가 os.Stat 하나뿐이다 — 같은 경로만 잡는다. 감사에서
-// 나온 결함 4("slug 가 한 글자만 달라도 중복 노트가 생긴다")를 이
-// 태스크에서 고치지는 않는다(범위 밖). 대신 현재 동작을 테스트로 못박아,
-// 나중에 유사도 기반 검사를 넣을 때 이 테스트가 깨지면서 의도가
-// 바뀌었음을 알 수 있게 한다.
-func TestDoAllowsNearDuplicateSlugCurrently(t *testing.T) {
+// 감사 결함 4 / 스펙 §11 "유사 slug 중복 생성 시도 → 거부": 중복 검사가
+// os.Stat 하나뿐이던 시절에는 --slug 세번째 와 --slug 세-번째 가 둘 다
+// 통과했다. 지금은 하이픈·공백·밑줄을 접고 대소문자를 무시한 키가 같으면
+// 거부한다. (예전 TestDoAllowsNearDuplicateSlugCurrently 는 이 잘못된 동작을
+// 고정하고 있었으므로 거부를 확인하는 쪽으로 뒤집었다.)
+func TestDoRejectsNearDuplicateSlug(t *testing.T) {
+	cases := []struct{ name, first, second string }{
+		{"하이픈만 다르다", "세번째 시도", "세-번째-시도"},
+		{"대소문자와 밑줄만 다르다", "Retry Policy", "retry_policy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l, c := fixtureLayoutConfig(t)
+			if _, err := Do(l, c, Request{Domain: "alpha", Slug: tc.first,
+				Summary: "먼저 기록한다", Date: "2026-08-07", Body: []byte("## 결정\n")}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Do(l, c, Request{Domain: "alpha", Slug: tc.second,
+				Summary: "비슷한 slug 로 또 기록한다", Date: "2026-08-07", Body: []byte("## 결정\n")})
+			if err == nil {
+				t.Fatalf("유사 slug(%q vs %q)가 통과했다", tc.first, tc.second)
+			}
+			// 에러는 무엇과 충돌하는지 알려줘야 한다 — 기존 노트의 stem.
+			if !strings.Contains(err.Error(), store.Slugify(tc.first)) {
+				t.Errorf("에러가 충돌 상대(기존 stem)를 알려주지 않는다: %v", err)
+			}
+		})
+	}
+}
+
+// TestDoAllowsGenuinelyDifferentSlug 는 유사 slug 검사가 과잉 거부로 가지
+// 않는지 본다: 하이픈·대소문자 말고 실제 글자가 다르면 통과해야 한다.
+func TestDoAllowsGenuinelyDifferentSlug(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	r1 := Request{Domain: "alpha", Slug: "저장소 정책", Summary: "저장소 정책을 정한다",
-		Date: "2026-08-07", Body: []byte("## 결정\n")}
-	if _, err := Do(l, c, r1); err != nil {
+	if _, err := Do(l, c, Request{Domain: "alpha", Slug: "저장소 정책",
+		Summary: "저장소 정책을 정한다", Date: "2026-08-07", Body: []byte("## 결정\n")}); err != nil {
 		t.Fatal(err)
 	}
-
-	// slug 가 글자 하나(끝의 "1") 다를 뿐이지만 파일명이 달라지므로 지금은
-	// 중복으로 취급되지 않고 그대로 통과한다.
-	r2 := Request{Domain: "alpha", Slug: "저장소 정책1", Summary: "저장소 정책을 다시 정한다",
-		Date: "2026-08-07", Body: []byte("## 결정\n")}
-	if _, err := Do(l, c, r2); err != nil {
-		t.Fatalf("비슷하지만 다른 slug 가 거부됐다 — 중복 검사가 os.Stat 하나뿐이라는 "+
-			"현재 동작(범위 밖, 결함4)이 바뀐 것으로 보인다: %v", err)
+	// 끝의 "1" 은 하이픈·대소문자 차이가 아니라 실제 글자 차이다.
+	if _, err := Do(l, c, Request{Domain: "alpha", Slug: "저장소 정책1",
+		Summary: "저장소 정책을 다시 정한다", Date: "2026-08-07", Body: []byte("## 결정\n")}); err != nil {
+		t.Fatalf("실제로 다른 slug 가 거부됐다 — 유사 검사가 과잉이다: %v", err)
+	}
+	// 같은 slug 라도 날짜가 다르면 다른 결정이다.
+	if _, err := Do(l, c, Request{Domain: "alpha", Slug: "저장소 정책",
+		Summary: "다음 날 다시 정한다", Date: "2026-08-08", Body: []byte("## 결정\n")}); err != nil {
+		t.Fatalf("날짜가 다른 같은 slug 가 거부됐다: %v", err)
 	}
 }
 

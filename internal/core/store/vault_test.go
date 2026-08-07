@@ -34,6 +34,39 @@ func TestList(t *testing.T) {
 	}
 }
 
+// TestDecisionStems 는 한 도메인의 결정 폴더 stem 만 준다는 것과, 폴더가 아직
+// 없으면 에러가 아니라 빈 목록이라는 것을 확인한다 (중복 검사가 첫 노트를
+// 기록할 때 여기서 죽으면 안 된다).
+func TestDecisionStems(t *testing.T) {
+	l := fixtureLayout(t)
+	stems, err := l.DecisionStems("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stems) != 2 {
+		t.Fatalf("alpha stem %d건, want 2: %v", len(stems), stems)
+	}
+	for _, s := range stems {
+		if !strings.HasPrefix(s, "alpha-") || strings.HasSuffix(s, ".md") {
+			t.Errorf("stem 이 아니다: %q", s)
+		}
+	}
+	// common 도메인은 픽스처에 폴더가 있지만, 존재하지 않는 폴더도 빈 목록이어야 한다.
+	if err := os.RemoveAll(filepath.Join(l.c.Vault, "common", "decisions")); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := l.DecisionStems("common")
+	if err != nil {
+		t.Fatalf("폴더가 없을 때 에러가 났다: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("폴더가 없는데 %d건: %v", len(empty), empty)
+	}
+	if _, err := l.DecisionStems("없는도메인"); err == nil {
+		t.Error("알 수 없는 접두어를 통과시켰다")
+	}
+}
+
 func TestWriteThenRead(t *testing.T) {
 	l := fixtureLayout(t)
 	notes, err := l.List()

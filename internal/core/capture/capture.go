@@ -86,6 +86,9 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if _, err := os.Stat(path); err == nil {
 		return Result{}, fmt.Errorf("같은 경로에 이미 결정이 있다: %s", l.RelPath(path))
 	}
+	if err := checkNearDuplicate(l, r.Domain, stem); err != nil {
+		return Result{}, err
+	}
 
 	// 편승: 쓰기 **전에** 검색한다 — 자기 자신이 결과에 끼지 않게.
 	// 여기서 실패해도 기록은 계속한다. 대신 원인을 Result 에 실어 보낸다.
@@ -108,6 +111,45 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 		return Result{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
 	}
 	return Result{Path: path, Related: related, RelatedErr: relatedErr}, nil
+}
+
+// slugKey 는 유사 slug 비교용 정규화 키다. 하이픈·공백·밑줄을 접고 대소문자를
+// 무시한다 — "세번째" 와 "세-번째", "Retry-Policy" 와 "retry_policy" 가 같은
+// 키가 된다.
+func slugKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(store.NFC(s)) {
+		switch r {
+		case '-', '_', ' ', '\t':
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// checkNearDuplicate 는 하이픈·대소문자만 다른 결정이 이미 있는지 본다
+// (감사 결함 4, 스펙 §11 "유사 slug 중복 생성 시도 → 거부").
+//
+// 예전에는 중복 검사가 os.Stat 하나뿐이라 --slug 세번째 와 --slug 세-번째 가
+// 둘 다 통과했다 — 같은 결정이 두 노트로 갈라지면 회수가 둘 다 물어오고
+// 어느 쪽이 정본인지 알 수 없게 된다.
+//
+// 비교는 한 도메인의 결정 폴더 안에서만 한다. stem 에 날짜가 들어 있으므로
+// 날짜가 다른 결정은 키가 달라져 자동으로 빠진다 — 전 볼트를 훑을 필요가 없다.
+func checkNearDuplicate(l *store.Layout, prefix, stem string) error {
+	stems, err := l.DecisionStems(prefix)
+	if err != nil {
+		return err
+	}
+	key := slugKey(stem)
+	for _, s := range stems {
+		if slugKey(s) == key {
+			return fmt.Errorf("유사한 결정이 이미 있다: %q (하이픈·공백·밑줄·대소문자만 다르다). "+
+				"뒤집는 결정이면 --supersedes 를 쓰고, 정말 다른 결정이면 slug 를 구별되게 바꿔라", s)
+		}
+	}
+	return nil
 }
 
 // ensureDecisionTag 는 decision 태그를 보장한다. 회수의 1차 구분자다.
