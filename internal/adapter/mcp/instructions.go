@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/daemon"
 )
 
 // buildInstructions 는 initialize 응답에 실릴 본문을 만든다.
@@ -23,7 +24,7 @@ import (
 // 볼트가 잠깐 안 읽힌다는 이유로 casebook_capture 까지 통째로 사라진다. 게다가
 // instructions 는 에이전트에게 닿는 가장 이른 채널이므로, 여기 적는 것이 stderr 로
 // 흘리는 것보다 훨씬 크게 알리는 것이다 — 조용히 넘어가는 것과는 다르다.
-func buildInstructions(l *store.Layout) (string, []store.SkippedNote) {
+func buildInstructions(l *store.Layout, pend pendingView) (string, []store.SkippedNote) {
 	notes, skipped, err := l.List()
 
 	var b strings.Builder
@@ -48,10 +49,59 @@ func buildInstructions(l *store.Layout) (string, []store.SkippedNote) {
 	b.WriteString("**결과가 판명됐거나 결정을 뒤집었으면 `casebook_review` 로 갱신한다.**\n" +
 		"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.\n")
 
+	b.WriteString(pend.render())
+
 	if len(skipped) > 0 {
 		fmt.Fprintf(&b, "\n⚠️ 결정 노트 %d건을 읽지 못해 회수 대상에서 빠져 있다. "+
 			"`casebook_recall` 이 그 목록을 알려준다.\n", len(skipped))
 	}
 
 	return b.String(), skipped
+}
+
+// pendingView 는 데몬이 표시한 미확인 구간을 instructions 에 실을 형태로 들고 있다.
+//
+// Err 를 따로 두는 이유: **"미확인 0건" 과 "확인할 수 없다" 는 다른 사실이다.**
+// 상태 파일이 깨졌는데 0건으로 보여 주면, 안전망이 죽은 것을 안전망이 할 일이
+// 없는 것으로 읽게 된다. 안전망의 침묵은 안전망이 없는 것보다 나쁘다.
+type pendingView struct {
+	Items   []daemon.Pending
+	Err     error
+	Enabled bool // 데몬 연동이 켜져 있나 (stateDir 가 있나)
+}
+
+// maxListed 는 instructions 에 이름까지 적는 최대 건수다. instructions 는 세션당 한 번
+// 실리고 갱신되지 않으므로, 길어지면 그 자체가 소음이 된다. 나머지는 도구로 본다.
+const maxListed = 5
+
+func (v pendingView) render() string {
+	if !v.Enabled {
+		return ""
+	}
+	if v.Err != nil {
+		return fmt.Sprintf("\n⚠️ 미확인 구간을 확인할 수 없다 (%v). 데몬 상태 파일 문제이니 "+
+			"기록·회수에는 지장이 없지만, **놓친 기록을 줍는 안전망은 지금 꺼져 있다.**\n", v.Err)
+	}
+	if len(v.Items) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n⚠️ **데몬이 표시한 미확인 구간이 %d건 있다.** 이전 세션에서 결정을 내리고도\n"+
+		"기록하지 않고 지나간 자리다. 확인해서 실제 결정이면 `casebook_capture` 로 남기고,\n"+
+		"아니면 `casebook_pending` 으로 지워라 — 쌓아 두면 다음 세션에도 그대로 뜬다.\n",
+		len(v.Items))
+	for i, p := range v.Items {
+		if i >= maxListed {
+			fmt.Fprintf(&b, "  … 그 밖 %d건 (`casebook_pending` 으로 전체를 본다)\n", len(v.Items)-maxListed)
+			break
+		}
+		domain := p.Domain
+		if domain == "" {
+			domain = "(도메인 미상)"
+		}
+		fmt.Fprintf(&b, "  - %s %s · 발화 %d · 시그널 %s\n",
+			p.At.Format("2006-01-02"), domain, p.Turns, strings.Join(p.Signals, "·"))
+	}
+	return b.String()
 }

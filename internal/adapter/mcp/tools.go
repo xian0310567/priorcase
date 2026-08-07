@@ -9,6 +9,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/xian0310567/casebook/internal/core/capture"
 	"github.com/xian0310567/casebook/internal/core/search"
+	"github.com/xian0310567/casebook/internal/daemon"
 )
 
 // 도구 출력은 전부 텍스트다. 구조화 출력(Out 타입)을 쓰지 않는 이유: 이 도구들의
@@ -35,6 +36,13 @@ func (s *server) addTools(srv *sdk.Server) {
 		Description: "기존 결정의 결과(outcome)·상태·회고를 갱신하거나, 그 결정을 뒤집는다. " +
 			"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.",
 	}, s.review)
+
+	sdk.AddTool(srv, &sdk.Tool{
+		Name: "casebook_pending",
+		Description: "데몬(cb watch)이 표시한 미확인 구간을 본다. 이전 세션에서 결정을 내리고도 " +
+			"기록하지 않고 지나간 자리다. 확인 후 실제 결정이면 casebook_capture 로 남기고, " +
+			"아니면 resolve 로 지운다 — 쌓아 두면 다음 세션에도 그대로 뜬다.",
+	}, s.pending)
 }
 
 // ── recall ──────────────────────────────────────────────────────────────
@@ -195,4 +203,46 @@ func sessionID(req *sdk.CallToolRequest) string {
 		return ""
 	}
 	return req.Session.ID()
+}
+
+// ── pending ─────────────────────────────────────────────────────────────
+
+type pendingToolArgs struct {
+	Resolve string `json:"resolve,omitempty" jsonschema:"지울 구간의 id. 비우면 목록만 본다"`
+}
+
+func (s *server) pending(ctx context.Context, req *sdk.CallToolRequest, a pendingToolArgs) (*sdk.CallToolResult, noOutput, error) {
+	if s.stateDir == "" {
+		return nil, nil, fmt.Errorf("데몬 연동이 꺼져 있다 — 상태 디렉토리를 정하지 못했다")
+	}
+	if a.Resolve != "" {
+		if err := daemon.ResolvePending(s.stateDir, a.Resolve); err != nil {
+			return nil, nil, err
+		}
+		return textResult(fmt.Sprintf("지웠다: %s\n", a.Resolve)), nil, nil
+	}
+
+	items, err := daemon.ReadPending(s.stateDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(items) == 0 {
+		// "없다" 를 명시한다. 빈 응답은 도구가 고장난 것으로 읽힌다.
+		return textResult("미확인 구간이 없다. 데몬이 표시한 것이 없거나 전부 확인됐다.\n"), nil, nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "미확인 구간 %d건:\n", len(items))
+	for _, p := range items {
+		domain := p.Domain
+		if domain == "" {
+			domain = "(도메인 미상)"
+		}
+		fmt.Fprintf(&b, "\n- id: %s\n  때: %s · 도메인: %s · 발화 %d · 시그널 %s\n  대화: %s (바이트 %d~%d)\n",
+			p.ID(), p.At.Format("2006-01-02 15:04"), domain, p.Turns,
+			strings.Join(p.Signals, "·"), p.Path, p.From, p.To)
+	}
+	b.WriteString("\n각 구간의 대화를 확인하고, 실제 결정이면 casebook_capture 로 남긴 뒤 " +
+		"casebook_pending(resolve: <id>) 로 지운다.\n")
+	return textResult(b.String()), nil, nil
 }

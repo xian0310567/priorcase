@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -190,4 +192,46 @@ func (s *Store) Resolve(path string, from int64) error {
 	}
 	s.st.Pending = kept
 	return s.save()
+}
+
+// ID 는 pending 하나를 가리키는 문자열이다. 에이전트가 해소할 때 되돌려 준다.
+func (p Pending) ID() string { return fmt.Sprintf("%s@%d", p.Path, p.From) }
+
+// ParseID 는 ID 를 되돌린다. 경로에 '@' 가 있을 수 있으므로 **마지막** 것에서 자른다.
+func ParseID(id string) (path string, from int64, err error) {
+	i := strings.LastIndex(id, "@")
+	if i < 0 {
+		return "", 0, fmt.Errorf("pending id 형식이 아니다: %q", id)
+	}
+	from, err = strconv.ParseInt(id[i+1:], 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("pending id 의 오프셋을 읽을 수 없다 (%q): %w", id, err)
+	}
+	return id[:i], from, nil
+}
+
+// ReadPending 은 데몬이 표시한 구간을 읽기만 한다. 데몬이 돌고 있지 않아도 안전하다.
+//
+// 상태 파일이 없으면 빈 목록이다(데몬을 한 번도 안 켰다는 뜻). 깨져 있으면 에러다 —
+// **"미확인 0건" 과 "확인할 수 없다" 는 다른 사실이고**, 후자를 전자로 보여 주면
+// 안전망이 죽은 것을 안전망이 할 일이 없는 것으로 오해하게 만든다.
+func ReadPending(dir string) ([]Pending, error) {
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		return nil, err
+	}
+	return s.Pending(), nil
+}
+
+// ResolvePending 은 확인이 끝난 구간을 지운다.
+func ResolvePending(dir, id string) error {
+	path, from, err := ParseID(id)
+	if err != nil {
+		return err
+	}
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		return err
+	}
+	return s.Resolve(path, from)
 }

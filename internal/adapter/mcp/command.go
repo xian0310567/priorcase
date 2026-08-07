@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/daemon"
 )
 
 // NewCommand 는 `cb mcp` 서브커맨드를 만든다.
@@ -33,7 +34,13 @@ func NewCommand(version string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return Serve(cmd.Context(), New(c, store.NewLayout(c), version))
+			stateDir, err := daemon.DefaultDir()
+			if err != nil {
+				// 상태 디렉토리를 못 정해도 서버는 떠야 한다 — 기록·회수는 그것과
+				// 무관하다. pending 만 꺼지고, 그 사실은 instructions 에 나온다.
+				stateDir = ""
+			}
+			return Serve(cmd.Context(), New(c, store.NewLayout(c), version, stateDir))
 		},
 	}
 }
