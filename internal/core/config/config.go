@@ -86,29 +86,53 @@ func Load(path string) (*Config, error) {
 }
 
 // expand 는 ~ 를 홈 디렉토리로 편다. 경로 비교 전에 반드시 수행한다.
-// 홈 디렉토리를 못 구하면 에러를 반환한다 — 조용히 넘어가면 ~ 가 문자
-// 그대로 남아 filepath.Rel 비교에서 이상한 결과를 낸다.
+// 홈 디렉토리 조회는 지연시킨다 — ~ 를 실제로 만났을 때만 os.UserHomeDir 를
+// 부른다. casebook 은 훅·데몬으로 뜨는 물건이라 $HOME 이 항상 보장되지
+// 않는데(launchd·cron·컨테이너), 설정에 ~ 가 하나도 없으면 $HOME 이 없어도
+// Load 가 성공해야 한다. ~ 를 만났는데 홈 디렉토리를 못 구하면 에러를
+// 반환한다 — 조용히 넘어가면 ~ 가 문자 그대로 남아 filepath.Rel 비교에서
+// 이상한 결과를 낸다.
 func (c *Config) expand() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("홈 디렉토리를 확인할 수 없다: %w", err)
+	var home string
+	var homeErr error
+	homeLoaded := false
+	getHome := func() (string, error) {
+		if !homeLoaded {
+			home, homeErr = os.UserHomeDir()
+			if homeErr != nil {
+				homeErr = fmt.Errorf("홈 디렉토리를 확인할 수 없다: %w", homeErr)
+			}
+			homeLoaded = true
+		}
+		return home, homeErr
 	}
-	tilde := func(p string) string {
+	tilde := func(p string) (string, error) {
 		if p == "~" {
-			return home
+			return getHome()
 		}
 		if strings.HasPrefix(p, "~/") {
-			return filepath.Join(home, p[2:])
+			h, err := getHome()
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(h, p[2:]), nil
 		}
-		return p
+		return p, nil
 	}
-	c.Vault = tilde(c.Vault)
+	var err error
+	if c.Vault, err = tilde(c.Vault); err != nil {
+		return err
+	}
 	for i := range c.Exclude {
-		c.Exclude[i] = tilde(c.Exclude[i])
+		if c.Exclude[i], err = tilde(c.Exclude[i]); err != nil {
+			return err
+		}
 	}
 	for i := range c.Domain {
 		for j := range c.Domain[i].Paths {
-			c.Domain[i].Paths[j] = tilde(c.Domain[i].Paths[j])
+			if c.Domain[i].Paths[j], err = tilde(c.Domain[i].Paths[j]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

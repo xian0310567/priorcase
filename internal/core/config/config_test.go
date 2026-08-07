@@ -182,3 +182,18 @@ quiesce_seconds = 3
 		t.Fatal("HOME 을 못 구하는데 ~ 확장이 조용히 성공했다")
 	}
 }
+
+// TestLoadNoTildeSucceedsWithoutHome 은 설정에 ~ 가 하나도 없으면 $HOME 이
+// 없는 환경(launchd·cron·컨테이너)에서도 Load 가 성공하는지 확인한다.
+// expand() 가 홈 디렉토리 조회를 지연시켜, ~ 를 실제로 만나지 않는 한
+// os.UserHomeDir 를 부르지 않아야 한다.
+func TestLoadNoTildeSucceedsWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	c, err := Load(write(t, sample))
+	if err != nil {
+		t.Fatalf("HOME 이 없어도 ~ 없는 설정은 성공해야 하는데 실패했다: %v", err)
+	}
+	if c.Vault != "/tmp/vault" {
+		t.Errorf("Vault = %q", c.Vault)
+	}
+}
