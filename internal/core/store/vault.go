@@ -63,9 +63,13 @@ func (l *Layout) Read(path string) (Note, error) {
 }
 
 // Write 는 노트를 정본 형식으로 쓴다. 부모 디렉토리를 만든다.
+//
+// WriteFileAtomic 을 쓴다 — os.WriteFile 은 기존 파일을 먼저 비운 뒤 쓰기
+// 때문에 중간에 실패하면 결정 노트가 잘린 채로 남는다. 색인과 달리 결정
+// 노트는 `cb index` 로 재생성할 원본이 없으므로 이 보장이 특히 중요하다.
 func (l *Layout) Write(n Note) error {
 	if err := os.MkdirAll(filepath.Dir(n.Path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(n.Path, EmitNote(n.Meta, n.Body), 0o644)
+	return WriteFileAtomic(n.Path, EmitNote(n.Meta, n.Body), 0o644)
 }

@@ -63,7 +63,9 @@ func Write(l *store.Layout) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(p, out, 0o644); err != nil {
+	// WriteFileAtomic 을 쓴다 — os.WriteFile 은 기존 파일을 먼저 비운 뒤 쓰기
+	// 때문에 중간에 실패하면 색인이 잘린 채로 남는다.
+	if err := store.WriteFileAtomic(p, out, 0o644); err != nil {
 		return 0, err
 	}
 	return n, nil

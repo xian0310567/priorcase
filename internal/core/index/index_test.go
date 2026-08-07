@@ -81,8 +81,17 @@ func TestBuildEscapesPipeAndNewlineInSummary(t *testing.T) {
 	if row == "" {
 		t.Fatalf("2026-08-05 행을 못 찾았다:\n%s", s)
 	}
-	if strings.Contains(row, "\n") {
-		t.Errorf("행에 개행이 그대로 남아있다: %q", row)
+	// row 는 strings.Split(s, "\n") 의 원소라 정의상 "\n" 을 포함할 수 없다
+	// — strings.Contains(row, "\n") 검사는 절대 발동하지 않는 죽은
+	// 단언이었다. 의미 있게 확인해야 할 것은 개행이 "사라진" 게 아니라
+	// "이스케이프돼 같은 행에 남아있는" 것이다: escapeCell 이 개행을
+	// 스페이스로 바꿔치기만 하므로, summary 원문의 개행 앞부분과 뒷부분이
+	// 모두 같은 한 행(row) 안에 들어있어야 한다.
+	if !strings.Contains(row, "성능") || !strings.Contains(row, "속도 우선") {
+		t.Errorf("개행 앞부분이 행에 없다: %q", row)
+	}
+	if !strings.Contains(row, "두 번째 줄은 참고용") {
+		t.Errorf("개행 뒷부분이 같은 행에 없다(개행이 이스케이프되지 않았을 수 있다): %q", row)
 	}
 
 	// 이스케이프된 파이프(백슬래시+파이프)를 지워, markdown 표 파서가 그걸
