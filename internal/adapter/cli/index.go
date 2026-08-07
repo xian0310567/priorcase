@@ -12,7 +12,7 @@ func newIndexCmd() *cobra.Command {
 		Use:   "index",
 		Short: "결정 색인을 재생성한다",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			l, err := layoutFrom(cmd)
+			_, l, err := loadFrom(cmd)
 			if err != nil {
 				return err
 			}

@@ -7,8 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
 )
 
 func newCaptureCmd() *cobra.Command {
@@ -19,8 +17,7 @@ func newCaptureCmd() *cobra.Command {
 		Use:   "capture",
 		Short: "결정을 기록한다",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, _ := cmd.Flags().GetString("config")
-			c, err := config.Load(path)
+			c, l, err := loadFrom(cmd)
 			if err != nil {
 				return err
 			}
@@ -33,7 +30,6 @@ func newCaptureCmd() *cobra.Command {
 					return err
 				}
 			}
-			l := store.NewLayout(c)
 			res, err := capture.Do(l, c, r)
 			if err != nil {
 				return err

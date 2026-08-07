@@ -15,7 +15,7 @@ func newReviewCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r.Stem = args[0]
-			l, err := layoutFrom(cmd)
+			_, l, err := loadFrom(cmd)
 			if err != nil {
 				return err
 			}

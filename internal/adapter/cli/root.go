@@ -27,17 +27,24 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// layoutFrom 은 --config 플래그로 설정을 읽어 Layout 을 만든다.
-func layoutFrom(cmd *cobra.Command) (*store.Layout, error) {
+// loadFrom 은 --config 플래그로 설정을 읽고 그 설정과 Layout 을 함께 준다.
+//
+// 설정 로딩 진입점이 하나뿐이어야 하는 이유: Layout 은 config.Config 를 비공개
+// 필드로 감추므로 Config 도 필요한 명령(capture·recall)은 Layout 만 받아서는
+// 일을 못 한다. 그래서 예전에는 index·review 만 이 헬퍼를 쓰고 capture·recall
+// 은 config.Load 를 직접 불렀는데, 그러면 설정 경로 해석 규칙(플래그 →
+// CASEBOOK_CONFIG → XDG)이 두 자리에 생겨 한쪽만 고치는 사고가 난다.
+// 둘을 같이 돌려주면 갈래가 없어진다.
+func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
 	path, err := cmd.Flags().GetString("config")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c, err := config.Load(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return store.NewLayout(c), nil
+	return c, store.NewLayout(c), nil
 }
 
 // Execute 는 CLI 를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.

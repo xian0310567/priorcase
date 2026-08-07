@@ -5,9 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
 )
 
 func newRecallCmd() *cobra.Command {
@@ -20,12 +18,10 @@ func newRecallCmd() *cobra.Command {
 		Short: "관련 과거 결정을 찾는다",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, _ := cmd.Flags().GetString("config")
-			c, err := config.Load(path)
+			c, l, err := loadFrom(cmd)
 			if err != nil {
 				return err
 			}
-			l := store.NewLayout(c)
 			cwd, _ := os.Getwd()
 
 			query := args[0]
