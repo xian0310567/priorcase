@@ -62,11 +62,11 @@ func Review(l *store.Layout, r ReviewRequest) error {
 	// 상태로 디스크에 고정된다 — supersedes 링크는 없는데 옛 노트는 이미
 	// 뒤집힌 것으로 기록돼, 회수 시 두 노트 다 사실과 다르게 잡힌다.
 	if hasOld {
-		if err := schema.Validate(old.Stem, old.Meta); err != nil {
+		if err := schema.Validate(l.DecisionMarker(), old.Stem, old.Meta); err != nil {
 			return fmt.Errorf("옛 노트 검증 실패: %w", err)
 		}
 	}
-	if err := schema.Validate(n.Stem, n.Meta); err != nil {
+	if err := schema.Validate(l.DecisionMarker(), n.Stem, n.Meta); err != nil {
 		return fmt.Errorf("검증 실패: %w", err)
 	}
 

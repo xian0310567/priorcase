@@ -52,7 +52,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 		Supersedes: r.Supersedes, Related: r.Related,
 		Tags: ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
 	}
-	if err := schema.Validate(stem, m); err != nil {
+	if err := schema.Validate(l.DecisionMarker(), stem, m); err != nil {
 		return Result{}, fmt.Errorf("스키마 검증 실패: %w", err)
 	}
 	if _, err := os.Stat(path); err == nil {

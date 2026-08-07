@@ -18,7 +18,13 @@ var (
 )
 
 // Validate 는 stem 과 meta 가 서로 정합한지 본다.
-func Validate(stem string, m store.Meta) error {
+//
+// marker 는 결정 노트 파일명의 표식이다("-결정-", 영어 템플릿이면 "-decision-").
+// 정본은 설정의 decision_file 템플릿이고 store.Layout.DecisionMarker 가 그걸
+// 유도해 준다 — schema 는 config 를 몰라야 하므로 인자로 받는다. 여기에 리터럴을
+// 두면 파일명을 만드는 쪽(store)과 검사하는 쪽(schema)이 갈라져, 템플릿을 바꾼
+// 순간 capture 가 통째로 죽는다.
+func Validate(marker, stem string, m store.Meta) error {
 	if m.Type != "decision" {
 		return fmt.Errorf("type 은 decision 이어야 한다: %q", m.Type)
 	}
@@ -42,10 +48,14 @@ func Validate(stem string, m store.Meta) error {
 	if !outcomes[m.Outcome] {
 		return fmt.Errorf("outcome 이 허용값(pending/good/bad) 밖이다: %q", m.Outcome)
 	}
+	marker = store.NFC(marker)
+	if marker == "" {
+		return fmt.Errorf("결정 표식이 비었다 — 설정의 decision_file 템플릿을 확인하라")
+	}
 	stem = store.NFC(stem)
-	i := strings.Index(stem, "-결정-")
+	i := strings.Index(stem, marker)
 	if i <= 0 {
-		return fmt.Errorf("stem 이 규약에 맞지 않는다: %q", stem)
+		return fmt.Errorf("stem 이 규약(%s)에 맞지 않는다: %q", marker, stem)
 	}
 	if prefix := stem[:i]; prefix != m.Domain[0] {
 		return fmt.Errorf("파일명 접두어(%q)와 domain 첫 값(%q)이 다르다", prefix, m.Domain[0])

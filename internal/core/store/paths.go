@@ -8,16 +8,23 @@ import (
 	"github.com/xian0310567/casebook/internal/core/config"
 )
 
-// decisionMarker 는 파일명이 결정 노트임을 나타내는 표식이다.
-// 설정의 decision_file 템플릿에서 유도한다.
-const decisionMarker = "-결정-"
-
-type Layout struct{ c *config.Config }
+type Layout struct {
+	c *config.Config
+	// marker 는 파일명이 결정 노트임을 나타내는 표식이다. 설정의 decision_file
+	// 템플릿에서 유도한 값(config.DecisionMarker)을 NFC 로 접어 캐시한다 —
+	// 설정 파일이 NFD 로 저장돼 있어도 ReadDir 이 준 NFC 이름과 비교되게.
+	marker string
+}
 
 // NewLayout 은 Layout 을 만든다.
 func NewLayout(c *config.Config) *Layout {
-	return &Layout{c: c}
+	return &Layout{c: c, marker: NFC(c.DecisionMarker())}
 }
+
+// DecisionMarker 는 결정 노트 파일명의 표식을 준다. 정본은 설정의 decision_file
+// 템플릿이고, 여기서는 그걸 유도한 값을 그대로 내보낸다 — schema 는 config 를
+// 모르므로 표식을 인자로 받아야 하는데, 그 인자의 출처가 여기다.
+func (l *Layout) DecisionMarker() string { return l.marker }
 
 // decisionsDir 는 접두어에 대응하는 결정 폴더의 절대 경로다.
 func (l *Layout) decisionsDir(prefix string) (string, error) {
@@ -44,8 +51,11 @@ func (l *Layout) DecisionPath(prefix, slug, date string) (string, error) {
 
 // PrefixOf 는 stem 에서 도메인 접두어를 뽑는다. 규약에 안 맞으면 빈 문자열.
 func (l *Layout) PrefixOf(stem string) string {
+	if l.marker == "" {
+		return "" // 표식을 유도할 수 없는 설정 — 규약을 판정할 수 없으니 거부한다
+	}
 	stem = NFC(stem)
-	i := strings.Index(stem, decisionMarker)
+	i := strings.Index(stem, l.marker)
 	if i <= 0 {
 		return ""
 	}

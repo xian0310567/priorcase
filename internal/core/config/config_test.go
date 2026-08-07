@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,6 +145,132 @@ func TestLoadVaultEnvOverride(t *testing.T) {
 	}
 	if c.Vault != "/override" {
 		t.Errorf("Vault = %q, want CASEBOOK_VAULT 오버라이드 값 %q", c.Vault, "/override")
+	}
+}
+
+// TestDecisionMarkerIsDerivedFromTemplate 는 결정 표식이 코드 상수가 아니라
+// decision_file 템플릿에서 유도된다는 사실을 못박는다. 템플릿을 바꾸면 표식이
+// 따라 바뀌어야 국제화가 열린다 (스펙 §5).
+func TestDecisionMarkerIsDerivedFromTemplate(t *testing.T) {
+	tests := []struct{ template, want string }{
+		{"{domain}-결정-{slug}-{date}.md", "-결정-"},
+		{"{domain}-decision-{slug}-{date}.md", "-decision-"},
+		{"{domain}__{slug}-{date}.md", "__"},
+		{"{domain}{slug}-{date}.md", ""},     // 표식이 없다
+		{"{slug}-결정-{domain}-{date}.md", ""}, // 순서가 뒤집혔다
+		{"decision-{slug}-{date}.md", ""},    // {domain} 이 없다
+		{"{domain}-결정-{date}.md", ""},        // {slug} 가 없다
+	}
+	for _, tt := range tests {
+		c := &Config{Naming: Naming{DecisionFile: tt.template}}
+		if got := c.DecisionMarker(); got != tt.want {
+			t.Errorf("DecisionMarker(%q) = %q, want %q", tt.template, got, tt.want)
+		}
+	}
+}
+
+// TestLoadRejectsBadNaming 은 [naming] 오류가 config 층에서 잡히는지 본다.
+// 여기서 안 잡으면 볼트 디렉터리명이 stem 으로 새거나(schema 에러) 색인이
+// 볼트 디렉터리를 덮어쓰려 든다(store 에러) — 진단이 불가능한 자리에서 터진다.
+func TestLoadRejectsBadNaming(t *testing.T) {
+	const head = "vault = \"/tmp/vault\"\n\n"
+	tests := []struct{ name, naming, want string }{
+		{"[naming] 절이 통째로 없다", "", "[naming]"},
+		{"decision_file 이 없다", `
+[naming]
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "decision_file"},
+		{"decisions_dir 이 없다", `
+[naming]
+decision_file = "{domain}-d-{slug}-{date}.md"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "decisions_dir"},
+		{"worklog 이 없다", `
+[naming]
+decision_file = "{domain}-d-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+index = "i.md"
+`, "worklog"},
+		{"index 가 없다", `
+[naming]
+decision_file = "{domain}-d-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+`, "index"},
+		{"decision_file 에 {date} 가 없다", `
+[naming]
+decision_file = "{domain}-d-{slug}.md"
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "{date}"},
+		{"decision_file 에서 {slug} 가 {domain} 보다 앞이다", `
+[naming]
+decision_file = "{slug}-d-{domain}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "{slug}"},
+		{"decision_file 에 표식이 없다", `
+[naming]
+decision_file = "{domain}{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "표식"},
+		{"decision_file 이 -{date}.md 로 안 끝난다", `
+[naming]
+decision_file = "{date}-{domain}-d-{slug}.md"
+decisions_dir = "{project}/decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "{date}.md"},
+		{"decisions_dir 에 {project} 가 없다", `
+[naming]
+decision_file = "{domain}-d-{slug}-{date}.md"
+decisions_dir = "decisions"
+worklog = "w-{project}.md"
+index = "i.md"
+`, "{project}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(write(t, head+tt.naming))
+			if err == nil {
+				t.Fatalf("잘못된 [naming] 을 통과시켰다:\n%s", tt.naming)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("에러가 무엇이 잘못됐는지 알려주지 않는다 (%q 를 기대): %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestLoadAcceptsEnglishNaming 은 영어 템플릿 설정이 config 층을 통과하는지
+// 본다 — 국제화가 여기서 열린다.
+func TestLoadAcceptsEnglishNaming(t *testing.T) {
+	const english = `
+vault = "/tmp/vault"
+
+[naming]
+decision_file = "{domain}-decision-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "99-{project}-worklog.md"
+index = "_meta/00-decision-index.md"
+
+[[domain]]
+prefix = "alpha"
+folder = "alpha"
+`
+	c, err := Load(write(t, english))
+	if err != nil {
+		t.Fatalf("영어 템플릿 설정을 거부했다: %v", err)
+	}
+	if got := c.DecisionMarker(); got != "-decision-" {
+		t.Errorf("DecisionMarker() = %q, want %q", got, "-decision-")
 	}
 }
 

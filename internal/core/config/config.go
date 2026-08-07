@@ -142,6 +142,9 @@ func (c *Config) validate() error {
 	if c.Vault == "" {
 		return fmt.Errorf("vault 가 비어 있다")
 	}
+	if err := c.validateNaming(); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, d := range c.Domain {
 		if d.Prefix == "" || d.Folder == "" {
@@ -151,6 +154,48 @@ func (c *Config) validate() error {
 			return fmt.Errorf("domain prefix 가 중복이다: %s", d.Prefix)
 		}
 		seen[d.Prefix] = true
+	}
+	return nil
+}
+
+// validateNaming 은 [naming] 절을 검사한다.
+//
+// 이 절이 통째로 빠져도 예전에는 Load 가 통과했다. 그러면 decisions_dir 이 빈
+// 문자열이라 결정 폴더가 볼트 루트 자체가 되고, index 도 빈 문자열이라 색인이
+// 볼트 디렉터리를 덮어쓰려 든다 — 설정 오류가 config 층이 아니라 store·schema
+// 층에서 "stem 이 규약에 맞지 않는다: \"vault\"" 같은 엉뚱한 메시지로 터진다.
+// 설정의 함정은 설정을 읽는 자리에서 잡는다.
+func (c *Config) validateNaming() error {
+	n := c.Naming
+	for _, f := range []struct{ key, val string }{
+		{"decision_file", n.DecisionFile},
+		{"decisions_dir", n.DecisionsDir},
+		{"worklog", n.Worklog},
+		{"index", n.Index},
+	} {
+		if strings.TrimSpace(f.val) == "" {
+			return fmt.Errorf("[naming] %s 가 비어 있다 — 설정에 [naming] 절이 통째로 빠졌는지 확인하라", f.key)
+		}
+	}
+	for _, ph := range []string{domainPH, slugPH, datePH} {
+		if !strings.Contains(n.DecisionFile, ph) {
+			return fmt.Errorf("[naming] decision_file 에 %s 가 없다: %q", ph, n.DecisionFile)
+		}
+	}
+	// 결정 표식은 {domain} 과 {slug} 사이에서 유도된다. 순서가 뒤집혔거나 둘이
+	// 붙어 있으면 표식이 없어져 파일명이 결정 노트인지 판정할 수 없다.
+	if c.DecisionMarker() == "" {
+		return fmt.Errorf("[naming] decision_file 은 %s 뒤에 %s 가 오고 그 사이에 결정 표식이 있어야 한다"+
+			" (예: \"{domain}-결정-{slug}-{date}.md\"): %q", domainPH, slugPH, n.DecisionFile)
+	}
+	// schema 는 stem 이 "-{date}" 로 끝나기를 요구하고 store 는 ".md" 만 결정
+	// 노트로 본다. 템플릿이 그 모양이 아니면 capture 가 만든 파일을 schema 가
+	// 거부한다 — 그 어긋남도 여기서 잡는다.
+	if !strings.HasSuffix(n.DecisionFile, "-"+datePH+".md") {
+		return fmt.Errorf("[naming] decision_file 은 \"-%s.md\" 로 끝나야 한다: %q", datePH, n.DecisionFile)
+	}
+	if !strings.Contains(n.DecisionsDir, "{project}") {
+		return fmt.Errorf("[naming] decisions_dir 에 {project} 가 없다: %q", n.DecisionsDir)
 	}
 	return nil
 }
@@ -187,6 +232,34 @@ func (c *Config) IsExcluded(cwd string) bool {
 		}
 	}
 	return false
+}
+
+// domainPH·slugPH 는 decision_file 템플릿의 자리표시자다.
+const (
+	domainPH = "{domain}"
+	slugPH   = "{slug}"
+	datePH   = "{date}"
+)
+
+// DecisionMarker 는 결정 노트 파일명의 표식을 decision_file 템플릿에서 유도한다.
+// {domain} 과 {slug} 사이의 문자열이 표식이다 — 기본 한국어 템플릿에서는 "-결정-",
+// 영어 템플릿 "{domain}-decision-{slug}-{date}.md" 에서는 "-decision-" 이 된다.
+//
+// 이것이 표식의 유일한 정본이다. store 의 파일 필터·접두어 추출과 schema 의 stem
+// 검증이 전부 이 값을 쓴다 — 어느 한 곳에 리터럴을 두면 템플릿을 바꿨을 때 그
+// 한 곳만 어긋나 국제화가 조용히 깨진다.
+//
+// 유도할 수 없으면(자리표시자가 없거나 {slug} 가 {domain} 보다 앞이거나 둘이
+// 붙어 있으면) 빈 문자열을 준다. validate() 가 Load 경로에서 이 경우를 막지만,
+// 설정 구조체를 직접 만든 호출자를 위해 소비자 쪽도 빈 표식에 실패로 대응한다.
+func (c *Config) DecisionMarker() string {
+	t := c.Naming.DecisionFile
+	i := strings.Index(t, domainPH)
+	j := strings.Index(t, slugPH)
+	if i < 0 || j <= i+len(domainPH) {
+		return ""
+	}
+	return t[i+len(domainPH) : j]
 }
 
 // FolderFor 는 접두어에 대응하는 볼트 폴더명을 준다.
