@@ -1,0 +1,23 @@
+vault = "/tmp/vault"
+exclude = ["/home/t/project/NOI"]
+
+[naming]
+decision_file = "{domain}-결정-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "99-{project}-작업-로그.md"
+index = "_meta/00-결정-색인.md"
+
+[capture]
+signals = ["결정", "선택"]
+min_turns = 6
+quiesce_seconds = 3
+
+[[domain]]
+prefix = "omni"
+folder = "omni"
+paths = ["/home/t/project/omni"]
+
+[[domain]]
+prefix = "occ"
+folder = "OCC"
+paths = ["/home/t/Documents/automation-dropshipping"]
