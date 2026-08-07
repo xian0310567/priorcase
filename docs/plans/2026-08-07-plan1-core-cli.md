@@ -1808,7 +1808,7 @@ import (
 )
 
 func TestBuild(t *testing.T) {
-	l := fixtureLayout(t) // store 패키지의 헬퍼를 index 용으로 복제 (아래 Step 3)
+	l := fixtureLayout(t) // fixture_test.go 의 헬퍼 (아래 Step 3)
 	out, err := Build(l)
 	if err != nil {
 		t.Fatal(err)
