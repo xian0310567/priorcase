@@ -29,11 +29,10 @@ MCP 서버 · 데몬(놓친 기록 안전망) · Claude Code 훅 어댑터는 �
 ```toml
 vault = "~/Documents/Obsidian Vault"
 
-# exclude 는 반드시 [[domain]] 보다 앞에 둔다.
-# TOML 에서 테이블 헤더([[domain]]) 뒤에 오는 bare key 는 파서 에러 없이
-# 조용히 그 테이블(마지막 domain)의 필드가 되어 버린다. 즉 exclude 를
-# [[domain]] 뒤에 쓰면 top-level Exclude 가 아니라 마지막 domain 항목에
-# 흡수되고, 이 실수는 파싱 단계에서 아무 에러도 내지 않는다.
+# exclude 는 top-level 키이므로 [[domain]] 보다 앞에 둔다.
+# TOML 의 테이블 스코프 규칙상 테이블 헤더([[domain]]) 뒤에 오는 bare key 는
+# 그 테이블(마지막 domain)의 필드로 읽힌다 — 여기 두면 top-level exclude 가
+# 아니라 도메인 항목의 필드가 되어 버린다.
 exclude = ["/home/t/project/NOI"]
 
 [naming]
@@ -58,6 +57,21 @@ folder = "OCC"
 paths = ["/home/t/Documents/automation-dropshipping"]
 ```
 
+실수로 `exclude` 를 `[[domain]]` 뒤에 두어도 조용히 넘어가지 않는다. `cb` 는
+go-toml/v2 의 `DisallowUnknownFields()` 로 strict 하게 읽으므로, 위 예제에서
+`exclude` 를 맨 아래로 옮기고 실행하면 그 자리에서 바로 에러가 난다 (실제 실행
+결과):
+
+```
+$ cb --config bad-config.toml index
+cb: 설정에 알 수 없는 키가 있다 (bad-config.toml):
+21| folder = "OCC"
+22| paths = ["/home/t/Documents/automation-dropshipping"]
+23|
+24| exclude = ["/home/t/project/NOI"]
+  | ~~~~~~~ unknown field
+```
+
 ## 사용 예
 
 아래는 실제로 `cb` 를 빌드해 임시 볼트에 돌려서 나온 출력이다 (지어낸 예시가 아니다).
@@ -78,6 +92,25 @@ $ cb --config demo-config.toml capture \
 사람이 grep/에디터로 바로 읽고 고칠 수 있어야 한다. DB는 그 자체로 회수 채널이 하나 더 필요해진다.
 EOF
 기록됨: casebook-demo/decisions/casebook-demo-결정-저장포맷-마크다운-2026-08-07.md
+```
+
+한 번 더 기록해 둔다 — 아래 `index`·`recall` 예시가 이 두 번째 결정을 근거로 한다.
+
+```
+$ cb --config demo-config.toml capture \
+    --domain casebook-demo \
+    --slug 회수-키워드매칭 \
+    --summary "회수는 임베딩 대신 파일명 접두어 + 키워드 매칭으로 시작한다" \
+    --tag 회수 --tag 검색 \
+    --body - <<'EOF'
+## 결정
+회수는 임베딩 유사도 대신 파일명 접두어(domain) + 키워드 매칭으로 시작한다.
+
+## 근거
+임베딩은 인덱싱 파이프라인과 벡터 스토어가 필요해 CLI 단일 바이너리 원칙과 맞지 않는다.
+키워드 매칭은 의존 없이 바로 동작하고, 결정 노트는 파일명과 태그가 이미 신호가 풍부하다.
+EOF
+기록됨: casebook-demo/decisions/casebook-demo-결정-회수-키워드매칭-2026-08-07.md
 ```
 
 ### `cb index` — 색인을 재생성한다
