@@ -21,6 +21,7 @@ func newRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/casebook/config.toml)")
 	root.AddCommand(newIndexCmd())
+	root.AddCommand(newRecallCmd())
 	return root
 }
 

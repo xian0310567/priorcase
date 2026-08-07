@@ -100,3 +100,11 @@ func (l *Layout) DecisionDirs() []string {
 	}
 	return out
 }
+
+// RelPath 는 절대 경로를 볼트 상대 경로로 바꾼다.
+func (l *Layout) RelPath(p string) string {
+	if rel, err := filepath.Rel(l.c.Vault, p); err == nil {
+		return rel
+	}
+	return p
+}
