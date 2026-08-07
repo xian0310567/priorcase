@@ -27,3 +27,36 @@ changelog:
   sort: asc
   filters:
     exclude: ['^docs:', '^test:', '^chore:']
+
+# Homebrew tap.
+#
+# ⚠️ tap 저장소(github.com/xian0310567/homebrew-tap)는 아직 만들지 않았다.
+# 그래서 이 절은 토큰이 있을 때만 업로드한다 — 토큰 없이 태그를 밀어도 릴리스
+# 자체는 성공하고 cask 만 조용히 건너뛴다. tap 저장소를 만들고 릴리스 워크플로에
+# HOMEBREW_TAP_GITHUB_TOKEN 시크릿을 넣는 순간 이 절이 켜진다.
+#
+# formula 가 아니라 cask 인 이유: Homebrew 가 사전 빌드된 바이너리 배포를
+# cask 로 옮기는 중이고, goreleaser 2.10+ 도 brews 를 homebrew_casks 로 대체했다.
+# cask 는 macOS 전용이다 — 리눅스는 go install 이나 GitHub Releases 를 쓴다.
+homebrew_casks:
+  - name: casebook
+    # cask 이름은 casebook 인데 아카이브 안의 실행 파일은 cb 다. 적어 주지 않으면
+    # goreleaser 가 cask 이름으로 심볼릭 링크를 걸어 없는 파일을 가리킨다.
+    binaries: [cb]
+    homepage: https://github.com/xian0310567/casebook
+    description: 에이전트의 결정을 마크다운 볼트에 기록하고 다시 꺼내 주는 CLI
+    license: MIT
+    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    repository:
+      owner: xian0310567
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+
+    hooks:
+      post:
+        # 서명·공증하지 않은 바이너리라 Gatekeeper 격리 속성이 붙는다.
+        # 떼지 않으면 설치는 되는데 실행이 막힌다.
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cb"]
+          end
