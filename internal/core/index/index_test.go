@@ -120,7 +120,7 @@ func TestBuildReportsSkippedNotes(t *testing.T) {
 	l, vault := fixtureLayoutVault(t)
 	dir := filepath.Join(vault, "alpha", "decisions")
 
-	// 실볼트 synth/decisions 의 6건과 같은 구 스키마.
+	// 다른 도구가 남긴 구 스키마 — 잉여 키 때문에 파싱에서 떨어진다.
 	old := filepath.Join(dir, "alpha-결정-구스키마-2026-01-02.md")
 	body := "---\ntitle: 구 스키마로 쓰인 결정\nproject: alpha\ncreated: 2026-01-02\nsuperseded-by: \"\"\n---\n\n## 결정\n\n옛 도구가 남긴 형식이다.\n"
 	if err := os.WriteFile(old, []byte(body), 0o644); err != nil {

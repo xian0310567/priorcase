@@ -52,7 +52,7 @@ vault = "~/Documents/Obsidian Vault"
 # TOML 의 테이블 스코프 규칙상 테이블 헤더([[domain]]) 뒤에 오는 bare key 는
 # 그 테이블(마지막 domain)의 필드로 읽힌다 — 여기 두면 top-level exclude 가
 # 아니라 도메인 항목의 필드가 되어 버린다.
-exclude = ["/home/t/project/NOI"]
+exclude = ["/home/t/project/scratch"]
 
 # [naming] 은 필수다. 네 키가 다 있어야 한다.
 [naming]
@@ -68,14 +68,14 @@ min_turns = 6
 quiesce_seconds = 3
 
 [[domain]]
-prefix = "omni"
-folder = "omni"
-paths = ["/home/t/project/omni"]
+prefix = "work"
+folder = "work"
+paths = ["/home/t/project/work"]
 
 [[domain]]
-prefix = "occ"
-folder = "OCC"
-paths = ["/home/t/Documents/automation-dropshipping"]
+prefix = "shop"
+folder = "Shop"
+paths = ["/home/t/Documents/shop-automation"]
 ```
 
 `paths` 는 "지금 이 디렉토리가 어느 도메인인가"를 판정하는 데 쓴다 — `cb recall` 이
@@ -164,7 +164,7 @@ index = "decisions/INDEX.md"
 prefix = "casebook-demo"
 folder = "casebook-demo"
 
-exclude = ["/home/t/project/NOI"]
+exclude = ["/home/t/project/scratch"]
 ```
 
 그 자리에서 바로 에러가 난다 (실제 실행 결과):
@@ -175,7 +175,7 @@ cb: 설정에 알 수 없는 키가 있다 (bad-config.toml):
 10| prefix = "casebook-demo"
 11| folder = "casebook-demo"
 12|
-13| exclude = ["/home/t/project/NOI"]
+13| exclude = ["/home/t/project/scratch"]
   | ~~~~~~~ unknown field
 ```
 
@@ -255,14 +255,20 @@ frontmatter 가 없거나 스키마가 옛 것이라 파싱에 실패한 노트�
 한 건 때문에 색인 전체가 죽지 않게 하려는 것이지만, **빠졌다는 사실은 반드시
 알린다** — 요약 줄에 건수가 박히고, 어느 파일이 왜인지는 stderr 로 나온다.
 
+위 데모 볼트에 깨진 노트 두 건을 넣어 보자 — 하나는 다른 도구가 남긴 구 스키마,
+하나는 프론트매터가 아예 없는 것이다.
+
 ```
 $ cb --config demo-config.toml index
-색인 47행 생성 (6건 건너뜀 — 색인이 불완전하다)
-경고: 결정 노트 6건을 읽지 못해 건너뛰었다 — 색인·회수에서 빠진다:
-  - synth/decisions/synth-결정-릴스제작-정지영상절충-2026-08-07.md
+색인 2행 생성 (2건 건너뜀 — 색인이 불완전하다)
+경고: 결정 노트 2건을 읽지 못해 건너뛰었다 — 색인·회수에서 빠진다:
+  - casebook-demo/decisions/casebook-demo-결정-구스키마-2026-08-05.md
       frontmatter 파싱 실패: yaml: unmarshal errors:
         line 1: field title not found in type store.Meta
-  ...
+        line 2: field project not found in type store.Meta
+        line 3: field created not found in type store.Meta
+  - casebook-demo/decisions/casebook-demo-결정-머리말없음-2026-08-06.md
+      frontmatter 가 없다 (--- 로 시작하지 않는다)
 ```
 
 종료 코드는 그래도 0 이다. 원인은 `cb` 가 고칠 수 있는 것이 아니라 볼트 데이터를

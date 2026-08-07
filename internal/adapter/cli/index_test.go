@@ -49,8 +49,9 @@ func TestIndexCmd(t *testing.T) {
 	}
 }
 
-// legacyNoteBody 는 구 스키마 frontmatter 다 — 실볼트 synth/decisions 의 6건이
-// 이 모양이라(title/project/created/superseded-by) 파싱에서 거부된다.
+// legacyNoteBody 는 다른 도구가 남긴 구 스키마 frontmatter 다
+// (title/project/created/superseded-by). 잉여 키 때문에 파싱에서 거부된다 —
+// 이런 노트가 섞여도 색인이 조용히 줄어들지 않는 것이 이 테스트의 요지다.
 const legacyNoteBody = `---
 title: 구 스키마로 쓰인 저장 엔진 결정
 project: alpha

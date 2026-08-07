@@ -75,7 +75,7 @@ casebook/
 │   ├── transcript/            호스트별 파서. 인터페이스: (파일) → []Turn
 │   │   └── claudecode/          JSONL
 │   └── daemon/                fsnotify + 필터 체인 + 플래그
-└── testdata/                  골든 파일 (실볼트 42건 사본 포함)
+└── testdata/                  합성 픽스처 — 실볼트 사본은 넣지 않는다 (§11)
 ```
 
 `capture` 안에 `review`(outcome·회고·supersedes 갱신)를 넣는다. 둘 다 "결정 노트를 쓰는"
@@ -125,7 +125,7 @@ paths  = ["~/project/omni"]
 [[domain]]
 prefix = "occ"
 folder = "OCC"
-paths  = ["~/Documents/automation-dropshipping"]
+paths  = ["~/Documents/shop-automation"]
 ```
 
 > **키 배치가 의미를 바꾼다.** TOML 에서 테이블 헤더 뒤의 bare key 는 그 테이블에 속하므로,
@@ -275,8 +275,10 @@ emit(parse(emit(parse(doc)))) == emit(parse(doc))
 
 ### testdata 는 합성 픽스처로 만든다
 
-**실볼트 사본을 저장소에 넣지 않는다.** 볼트 결정에는 개인 내용이 들어 있어(synth 도메인의
-타겟 오디언스·수위 설정 등) 공개 저장소에 그대로 공개된다.
+**실볼트 사본을 저장소에 넣지 않는다.** 결정 노트에는 개인 내용이 섞이고, 사본을 넣으면
+그대로 공개된다. 어느 도메인이 민감한지는 볼트마다 다르고 미리 알기 어렵다 — 그래서
+*민감한 것만 거른다* 가 아니라 **사본을 아예 넣지 않는다** 로 규칙을 세운다. 거르는 규칙은
+한 번 빠뜨리면 되돌릴 수 없다.
 
 - `testdata/vault/` 에는 실볼트의 **구조만** 재현한 합성 픽스처를 둔다 — 10키 frontmatter,
   파일명 규약, 4개 도메인, 그리고 실볼트에는 없는 엣지 케이스(NFD 파일명, 140자 초과 한글

@@ -30,7 +30,7 @@ paths = ["/home/t/project/omni"]
 [[domain]]
 prefix = "occ"
 folder = "OCC"
-paths = ["/home/t/Documents/automation-dropshipping"]
+paths = ["/home/t/Documents/shop-automation"]
 `
 
 func write(t *testing.T, body string) string {
@@ -74,7 +74,7 @@ func TestDomainForCwd(t *testing.T) {
 	tests := []struct{ cwd, want string }{
 		{"/home/t/project/omni", "omni"},
 		{"/home/t/project/omni/src/deep", "omni"},
-		{"/home/t/Documents/automation-dropshipping", "occ"},
+		{"/home/t/Documents/shop-automation", "occ"},
 		{"/home/t/unmapped", ""},
 		{"/home/t/project/omni-other", ""}, // 접두 문자열 오탐 방지
 	}

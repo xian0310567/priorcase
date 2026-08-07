@@ -98,8 +98,8 @@ func TestWriteThenRead(t *testing.T) {
 	}
 }
 
-// oldSchemaNote 는 구 스키마 frontmatter 다 — 실볼트 synth/decisions 의 6건이
-// 이 모양이다(title/project/created/superseded-by). ParseFrontmatter 의
+// oldSchemaNote 는 다른 도구가 남긴 구 스키마 frontmatter 다
+// (title/project/created/superseded-by). ParseFrontmatter 의
 // KnownFields(true) 가 잉여 키를 거부하므로 이 노트는 파싱에서 떨어진다.
 const oldSchemaNote = `---
 title: 구 스키마로 쓰인 결정
