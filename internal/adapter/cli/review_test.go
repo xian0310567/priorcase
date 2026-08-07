@@ -18,7 +18,7 @@ const fixtureStem = "alpha-결정-저장엔진-2026-08-01"
 func TestReviewCmdUpdatesOutcomeAndRetro(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetArgs([]string{
@@ -56,7 +56,7 @@ func TestReviewCmdUpdatesOutcomeAndRetro(t *testing.T) {
 func TestReviewCmdRejectsMissingStem(t *testing.T) {
 	cfgPath, _ := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetArgs([]string{
@@ -75,7 +75,7 @@ func TestReviewCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)

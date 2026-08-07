@@ -17,7 +17,7 @@ import (
 func TestCaptureCmdWritesNoteAndShowsRelated(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetArgs([]string{
@@ -63,7 +63,7 @@ func TestCaptureCmdRequiresFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfgPath, _ := testutil.VaultConfigFile(t)
 
-			root := newRootCmd()
+			root := NewRootCmd()
 			buf := &bytes.Buffer{}
 			root.SetOut(buf)
 			args := append([]string{"capture", "--config", cfgPath}, tc.args...)
@@ -85,7 +85,7 @@ func TestCaptureCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)

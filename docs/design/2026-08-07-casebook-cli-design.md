@@ -74,9 +74,17 @@ casebook/
 │   │   └── hook/                Claude Code 훅 래퍼 — 입력 파싱 + core 호출만
 │   ├── transcript/            호스트별 파서. 인터페이스: (파일) → []Turn
 │   │   └── claudecode/          JSONL
-│   └── daemon/                fsnotify + 필터 체인 + 플래그
+│   ├── daemon/                fsnotify + 필터 체인 + 플래그
+│   └── arch/                  이 경계를 강제하는 테스트 (go list -deps)
 └── testdata/                  합성 픽스처 — 실볼트 사본은 넣지 않는다 (§11)
 ```
+
+**이 규칙은 주석이 아니라 테스트로 강제한다.** `internal/arch` 가 `go list -deps` 로
+(a) core 가 어댑터를 import 하지 않는지 (b) 어댑터끼리 서로를 import 하지 않는지
+(c) 어댑터가 core 를 실제로 부르는지를 검사한다. 어댑터가 하나뿐일 때는 어길 방법이
+없어서 규칙이 있는지조차 확인되지 않았다 — 두 번째 어댑터(MCP)가 생기면서 처음으로
+검사할 수 있게 됐고, 실제로 `cb mcp` 를 cli 에 두면 위반이 된다는 것이 이 테스트로
+드러났다. 그래서 **서브커맨드 조립을 `cmd/cb` 로 옮겼다**(원래 구조도가 지정한 자리다).
 
 `capture` 안에 `review`(outcome·회고·supersedes 갱신)를 넣는다. 둘 다 "결정 노트를 쓰는"
 같은 일이고, 지금 분리돼 있어서 로직이 이원화됐다. CLI 로는 `cb capture` / `cb review` 로
@@ -316,6 +324,12 @@ emit(parse(emit(parse(doc)))) == emit(parse(doc))
 `go >= 1.25` 를 요구하기 때문이다. Go MCP SDK 도 v1.4.0 부터 1.24/1.25 를 요구한다
 (v1.0.0~v1.3.1 은 1.23.0).
 
+**해소됨 (2026-08-07).** (A) 를 택했다 — Makefile 에 `export GOTOOLCHAIN := auto` 를
+고정하고 CI 는 Go 1.25 를 쓴다. Plan 2 에서 MCP SDK v1.7.0 을 넣으면서 `go.mod` 의
+go 지시자가 **1.23.3 → 1.25.0** 으로 올라갔다. 그래서 `go install` 이용자도 Go 1.25
+이상(또는 `GOTOOLCHAIN=auto`)이 필요하다 — README 설치 절에 명시했다.
+아래는 당시 검토 기록이다.
+
 셋 중 하나를 착수 첫 스텝으로 명시한다. **(A) 를 권한다.**
 
 - **(A) 툴체인 상향** — `brew upgrade go`, 또는 저장소에서 `GOTOOLCHAIN=auto` 를 고정.
@@ -333,6 +347,11 @@ emit(parse(emit(parse(doc)))) == emit(parse(doc))
 | 파일 락 | `github.com/gofrs/flock` | v0.12.1 |
 | 파일 감시 | `github.com/fsnotify/fsnotify` | v1.10.1 |
 | 유니코드 정규화 | `golang.org/x/text` | v0.28.0 |
+| MCP | `github.com/modelcontextprotocol/go-sdk` | v1.7.0 |
+
+**MCP SDK 는 이행 의존을 6개 끌고 온다** (`jsonschema-go` · `x/oauth2` ·
+`segmentio/encoding` · `uritemplate` · `x/sync` · `x/time`). 런타임 의존이 0이라는
+성질은 그대로지만(정적 바이너리), 공급망 표면과 바이너리 크기가 늘어난다 — 아래 배포 절 참조.
 
 **`gopkg.in/yaml.v3` 는 2025-04 에 아카이브됐다.** YAML 조직이 유지하는 포크
 `go.yaml.in/yaml/v3` 를 쓴다(API drop-in, cobra 도 이미 이쪽으로 옮겼다).
@@ -351,7 +370,9 @@ emit(parse(emit(parse(doc)))) == emit(parse(doc))
 ### 배포
 
 goreleaser 로 크로스 컴파일(`CGO_ENABLED=0`) → GitHub Releases · `brew tap` ·
-`go install`. 실측 바이너리 크기: darwin/arm64 2.80 MB, linux/amd64 static 2.70 MB.
+`go install`. 실측 바이너리 크기: **Plan 1 시점** darwin/arm64 2.80 MB, linux/amd64 static 2.70 MB →
+**Plan 2 (MCP SDK 추가) 후** darwin/arm64 6.6 MB (릴리스 `-s -w` 기준, 맨몸 9.6 MB).
+2.4배다. 단일 바이너리·런타임 의존 0 이라는 성질은 유지되므로 감수한다.
 런타임 의존이 0이라 설치 안내가 한 줄이다.
 
 ## 14. 채택하지 않은 대안

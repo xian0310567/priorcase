@@ -15,7 +15,7 @@ import (
 func TestRecallCmdInject(t *testing.T) {
 	cfgPath, _ := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "저장", "엔진을", "무엇으로", "골랐지"})
@@ -47,7 +47,7 @@ func TestRecallCmdReportsUnreadableVault(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(buf)
@@ -66,7 +66,7 @@ func TestRecallCmdReportsUnreadableVault(t *testing.T) {
 func TestRecallCmdNoMatch(t *testing.T) {
 	cfgPath, _ := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "완전히", "무관한", "주제", "짜장면"})
@@ -92,7 +92,7 @@ func TestRecallCmdInjectStaysCleanWhenNotesSkipped(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)
@@ -132,7 +132,7 @@ func TestRecallCmdHumanRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 	rel := plantLegacyNote(t, c.Vault)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)

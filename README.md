@@ -9,6 +9,11 @@
 
     go install github.com/xian0310567/casebook/cmd/cb@latest
 
+**`go install` 은 Go 1.25 이상이 필요하다** (MCP SDK 요구). Homebrew 로 깐 Go 는
+`GOTOOLCHAIN` 기본값이 `local` 이라 1.23 에서 멈추고 실패한다 — `GOTOOLCHAIN=auto
+go install …` 로 부르거나 `brew upgrade go` 를 하면 된다. Releases 바이너리는
+영향을 받지 않는다.
+
 또는 [GitHub Releases](https://github.com/xian0310567/casebook/releases) 에서
 `casebook_<os>_<arch>.tar.gz` 를 받아 `cb` 를 PATH 에 둔다. darwin/linux × amd64/arm64.
 
@@ -20,11 +25,12 @@
 
 ## 현재 상태
 
-**Plan 1 (코어 + CLI) 구현 완료.** `cb index` · `cb recall` · `cb capture` · `cb review`
-네 서브커맨드가 코어(`internal/core/*`)를 통해 실제로 동작한다.
+**Plan 1 (코어 + CLI) · Plan 2 (MCP 서버) 구현 완료.** `cb index` · `cb recall` ·
+`cb capture` · `cb review` · `cb mcp` 다섯 서브커맨드가 코어(`internal/core/*`)를 통해
+실제로 동작한다.
 
-MCP 서버 · 데몬(놓친 기록 안전망) · Claude Code 훅 어댑터는 아직 없다 (각각 Plan 2~4).
-지금은 CLI 를 직접 호출해서 쓰는 단계다.
+데몬(놓친 기록 안전망)과 Claude Code 훅 어댑터는 아직 없다 (Plan 3~4). 그래서 기록은
+**에이전트가 부를 때만** 남는다 — 놓친 구간을 주워 오는 안전망이 아직 없다.
 
 ## 설정
 
@@ -373,6 +379,85 @@ $ CASEBOOK_CONFIG=/없는/경로.toml cb --config demo-config.toml index
 색인 3행 생성
 ```
 
+## MCP 서버로 쓰기
+
+`cb mcp` 는 stdio MCP 서버를 띄운다. 사람이 직접 실행할 일은 없다 — 호스트가 이
+프로세스를 띄우고 stdin/stdout 으로 JSON-RPC 를 주고받는다. **그래서 이 명령이 도는
+동안 stdout 은 프로토콜 전용이다.** 진단 출력은 전부 stderr 로 나간다.
+
+호스트 설정에 이렇게 등록한다 (Claude Desktop·Claude Code·그 밖의 MCP 호스트 공통 형태):
+
+```json
+{
+  "mcpServers": {
+    "casebook": {
+      "command": "cb",
+      "args": ["--config", "/home/t/.config/casebook/config.toml", "mcp"]
+    }
+  }
+}
+```
+
+`--config` 를 생략하면 `CASEBOOK_CONFIG` → `$XDG_CONFIG_HOME/casebook/config.toml`
+순으로 찾는다. 호스트가 환경변수를 물려주지 않는 경우가 많으므로 **경로를 명시하는
+쪽을 권한다.**
+
+### 도구 3종
+
+| 도구 | 필수 인자 | 하는 일 |
+|---|---|---|
+| `casebook_recall` | `query` | 관련 과거 결정을 찾는다 |
+| `casebook_capture` | `domain` `slug` `summary` | 결정을 기록한다 |
+| `casebook_review` | `stem` | outcome·상태·회고를 갱신하거나 결정을 뒤집는다 |
+
+### 편승 — 응답에 과거 결정이 딸려 온다
+
+도구 결과는 그 자체로 컨텍스트 주입이다. 그래서 무엇을 부르든 관련 과거 결정을 얹는다.
+특히 `capture` 시점은 곧 결정 시점이라, 기록할 때 과거 결정이 따라 나오는 것이 가장
+정확한 타이밍이다.
+
+```
+기록됨: alpha/decisions/alpha-결정-캐시계층-2026-08-07.md
+
+[과거 결정 참조]
+- 2026-08-01 저장 엔진을 임베디드 DB 로 고른다 (active/pending) → alpha/decisions/alpha-결정-저장엔진-2026-08-01.md
+```
+
+### 세션 진입 — 요약 덤프가 아니라 행동 계약
+
+MCP 에는 서버가 대화 중간에 텍스트를 밀어넣는 채널이 없다. 유일한 자리가 `initialize`
+응답의 `instructions` 인데 **세션당 한 번**이다. 거기에 최근 결정을 쏟아부어도 주제가
+바뀌는 순간 낡는다. 그래서 요약이 아니라 "언제 무엇을 부르라"를 심는다.
+
+```
+casebook — 이 워크스페이스의 과거 결정을 기록하고 회수한다.
+
+**새 작업이나 주제로 넘어갈 때마다 먼저 `casebook_recall(주제)` 를 부른다.**
+지금 볼트에 결정 4건이 쌓여 있다. 부르지 않으면 이미 뒤집힌 결정을 다시 제안하게 된다.
+
+**되돌리기 어려운 선택을 했으면 그 자리에서 `casebook_capture` 를 부른다.**
+아키텍처·스키마·외부 서비스·가격처럼 나중에 "왜 이렇게 했지"를 묻게 될 선택이 대상이다.
+...
+```
+
+호스트가 `instructions` 를 어떻게 쓰는지는 구현 재량이다. Claude Code 는 시스템
+프롬프트에 넣는 것이 확인됐으나 전수 확인은 하지 않았다 — **무시하는 호스트가 있을 수
+있다.** 그때는 편승만 남는다.
+
+### 읽지 못한 노트는 응답 본문으로 알린다
+
+CLI 는 같은 정보를 stderr 로 낸다. MCP 에서 그렇게 하면 호스트 로그로 흘러가고 에이전트
+컨텍스트에는 안 들어간다 — 회수에서 노트가 빠졌다는 사실을 정작 회수하는 쪽이 모르게 된다.
+그래서 **응답 본문에** 싣는다.
+
+```
+⚠️ 결정 노트 1건을 읽지 못해 색인·회수에서 빠졌다:
+  - alpha/decisions/alpha-결정-깨짐-2026-01-01.md
+      frontmatter 파싱 실패: yaml: unmarshal errors:
+        line 1: field title not found in type store.Meta
+정본 10키로 옮겨야 회수 대상으로 돌아온다.
+```
+
 ## 개발
 
     make build   # go build -trimpath -ldflags="-s -w" -o cb ./cmd/cb
@@ -409,8 +494,10 @@ CI 는 `gofmt -l` · `go vet` · `go test -race` 를 돌린다.
 
 MCP 에는 서버가 대화 중간에 텍스트를 밀어넣는 채널이 없다. 마지막 줄이 유일한 차이다.
 
-이 표의 "데몬" · "훅" 줄은 아직 구현되지 않았다 (Plan 3~4). 지금 동작하는 것은
-`cb capture` 를 직접 부르는 경로뿐이다.
+"세션 진입 컨텍스트" 와 "주제 전환 시 회수" 의 MCP 쪽 칸은 이제 실제로 동작한다.
+아직 구현되지 않은 것은 **"놓친 기록 줍기" 줄 전체**(데몬, Plan 3)와 Claude Code
+훅 어댑터(Plan 4)다. 즉 지금은 에이전트가 `casebook_capture` 를 부르지 않으면
+그 결정은 남지 않는다.
 
 ## 라이선스
 
