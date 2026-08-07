@@ -25,6 +25,11 @@ type Meta struct {
 var fence = []byte("---")
 
 // ParseFrontmatter 는 --- 로 감싼 YAML 블록과 그 뒤 본문을 나눈다.
+//
+// 본문은 그대로 돌려주지 않는다: 닫는 펜스와 본문 사이의 선행 빈 줄을 전부
+// 걷어낸다. 즉 이 함수는 왕복 무손실이 아니다 — 본문 앞 빈 줄 개수는 보존되지
+// 않고, EmitNote 가 붙이는 빈 줄 하나로 정규화된다. (그 대신 emit∘parse 가
+// 멱등이 된다. 아래 주석 참고.)
 func ParseFrontmatter(data []byte) (Meta, []byte, error) {
 	var m Meta
 	if !bytes.HasPrefix(data, fence) {
