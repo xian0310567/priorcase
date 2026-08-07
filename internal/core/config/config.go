@@ -174,28 +174,28 @@ func (c *Config) validateNaming() error {
 		{"index", n.Index},
 	} {
 		if strings.TrimSpace(f.val) == "" {
-			return fmt.Errorf("[naming] %s 가 비어 있다 — 설정에 [naming] 절이 통째로 빠졌는지 확인하라", f.key)
+			return fmt.Errorf("[naming] 의 %s 항목이 비어 있다 — 설정에 [naming] 절이 통째로 빠졌는지 확인하라", f.key)
 		}
 	}
 	for _, ph := range []string{domainPH, slugPH, datePH} {
 		if !strings.Contains(n.DecisionFile, ph) {
-			return fmt.Errorf("[naming] decision_file 에 %s 가 없다: %q", ph, n.DecisionFile)
+			return fmt.Errorf("[naming] 의 decision_file 에 %s 자리표시자가 없다: %q", ph, n.DecisionFile)
 		}
 	}
 	// 결정 표식은 {domain} 과 {slug} 사이에서 유도된다. 순서가 뒤집혔거나 둘이
 	// 붙어 있으면 표식이 없어져 파일명이 결정 노트인지 판정할 수 없다.
 	if c.DecisionMarker() == "" {
-		return fmt.Errorf("[naming] decision_file 은 %s 뒤에 %s 가 오고 그 사이에 결정 표식이 있어야 한다"+
+		return fmt.Errorf("[naming] 의 decision_file 은 %s 뒤에 %s 가 오고 그 사이에 결정 표식이 있어야 한다"+
 			" (예: \"{domain}-결정-{slug}-{date}.md\"): %q", domainPH, slugPH, n.DecisionFile)
 	}
 	// schema 는 stem 이 "-{date}" 로 끝나기를 요구하고 store 는 ".md" 만 결정
 	// 노트로 본다. 템플릿이 그 모양이 아니면 capture 가 만든 파일을 schema 가
 	// 거부한다 — 그 어긋남도 여기서 잡는다.
 	if !strings.HasSuffix(n.DecisionFile, "-"+datePH+".md") {
-		return fmt.Errorf("[naming] decision_file 은 \"-%s.md\" 로 끝나야 한다: %q", datePH, n.DecisionFile)
+		return fmt.Errorf("[naming] 의 decision_file 은 \"-%s.md\" 로 끝나야 한다: %q", datePH, n.DecisionFile)
 	}
 	if !strings.Contains(n.DecisionsDir, "{project}") {
-		return fmt.Errorf("[naming] decisions_dir 에 {project} 가 없다: %q", n.DecisionsDir)
+		return fmt.Errorf("[naming] 의 decisions_dir 에 {project} 가 없다: %q", n.DecisionsDir)
 	}
 	return nil
 }
