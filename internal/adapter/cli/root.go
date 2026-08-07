@@ -13,7 +13,10 @@ import (
 // Version 은 릴리스 시 -ldflags 로 주입된다.
 var Version = "dev"
 
-func newRootCmd() *cobra.Command {
+// NewRootCmd 는 **cli 어댑터가 소유한** 서브커맨드만 붙인 루트를 만든다.
+// 다른 어댑터의 서브커맨드(cb mcp 등)는 조립 루트인 cmd/cb 가 붙인다 —
+// 어댑터끼리 서로를 import 하지 않기 위해서다 (§4.1, internal/arch 가 강제한다).
+func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "cb",
 		Short:         "casebook — 결정을 기록하고 회수한다",
@@ -74,9 +77,9 @@ func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
 	}
 }
 
-// Execute 는 CLI 를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
-func Execute() error {
-	if err := newRootCmd().Execute(); err != nil {
+// Run 은 조립이 끝난 루트를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
+func Run(root *cobra.Command) error {
+	if err := root.Execute(); err != nil {
 		return fmt.Errorf("cb: %w", err)
 	}
 	return nil

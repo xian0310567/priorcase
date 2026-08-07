@@ -20,7 +20,7 @@ const fixtureNoteCount = 4
 func TestIndexCmd(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)
@@ -89,7 +89,7 @@ func TestIndexCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
 	rel := plantLegacyNote(t, c.Vault)
 
-	root := newRootCmd()
+	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(errBuf)
