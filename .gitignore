@@ -1,0 +1,7 @@
+# build
+/dist/
+/cb
+*.test
+
+# local
+.DS_Store
