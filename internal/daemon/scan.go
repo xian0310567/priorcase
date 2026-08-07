@@ -99,7 +99,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 	// 에이전트가 제 할 일을 다 한 세션까지 표시하면 무시하는 법을 배운다.
 	if len(r.Signals) > 0 && !r.Excluded {
 		domain := c.DomainForCwd(meta.Cwd)
-		rec, ferr := alreadyRecorded(l, domain, segmentDays(turns))
+		rec, ferr := alreadyRecorded(l, domain, meta.SessionID, segmentDays(turns))
 		if ferr != nil {
 			// 볼트를 못 읽었다고 표시를 건너뛰면 안전망이 조용히 꺼진다.
 			// 모르면 표시하는 쪽으로 기운다 — 놓치는 것이 더 나쁘다.
@@ -179,19 +179,37 @@ func segmentDays(turns []transcript.Turn) []string {
 
 // alreadyRecorded 는 이 도메인·이 날짜에 결정 노트가 이미 있는지 본다.
 //
-// **날짜 단위인 이유**는 데몬과 기록 경로가 세션 식별자를 공유하지 않기 때문이다.
-// MCP 의 세션 id 는 SDK 가 만든 것이고 Claude Code transcript 의 sessionId 와 다르다.
-// 훅은 진짜 session_id 를 받으므로 Plan 4 에서 source_session 대조로 정밀해진다.
+// 두 축으로 본다 — 자세한 이유는 본문 주석에 있다.
 //
-// 한계: 같은 날 같은 도메인에서 **두 번째** 결정은 표시되지 않는다. 안전망의 주된
-// 값은 "아무것도 기록 안 된 세션" 을 잡는 데 있으므로 이 쪽으로 기울였다.
-func alreadyRecorded(l *store.Layout, domain string, days []string) (bool, error) {
-	if l == nil || domain == "" || len(days) == 0 {
+// 한계는 그대로다: 같은 날 같은 도메인에서 **두 번째** 결정은 표시되지 않는다.
+// 안전망의 주된 값은 "아무것도 기록 안 된 세션" 을 잡는 데 있으므로 이 쪽으로 기울였다.
+func alreadyRecorded(l *store.Layout, domain, sessionID string, days []string) (bool, error) {
+	if l == nil {
 		return false, nil
 	}
 	notes, _, err := l.List()
 	if err != nil {
 		return false, err
+	}
+
+	// ① 세션 대조 — 정확하다. 이 대화에서 나온 결정이 기록돼 있다는 직접 증거다.
+	//    도메인·날짜와 무관하게 성립하므로, 자정을 넘긴 세션이나 도메인이 바뀐 경우도 잡는다.
+	if sessionID != "" {
+		for _, n := range notes {
+			if n.Meta.SourceSession == sessionID {
+				return true, nil
+			}
+		}
+	}
+
+	// ② 날짜+도메인 폴백 — 거칠다. source_session 이 안 채워진 기록(에이전트가 세션 id 를
+	//    안 넘겼거나 사람이 손으로 쓴 노트)을 위한 그물이다.
+	//
+	//    ①을 더해도 억제가 **줄지는 않는다** — 둘의 합집합이기 때문이다. 정밀해지려면
+	//    ②를 떼야 하는데, 그러면 세션 id 를 안 넘기는 경로에서 억제가 통째로 사라져
+	//    실질 세션의 99%가 표시된다(Plan 3 실측). 그래서 지금은 합집합으로 둔다.
+	if domain == "" || len(days) == 0 {
+		return false, nil
 	}
 	dayset := map[string]bool{}
 	for _, d := range days {

@@ -27,6 +27,7 @@ func main() {
 	root.AddCommand(mcp.NewCommand(cli.Version))
 	root.AddCommand(daemon.NewCommand())
 	root.AddCommand(hook.NewCommand())
+	root.AddCommand(hook.NewInitCommand())
 
 	if err := cli.Run(ctx, root); err != nil {
 		fmt.Fprintln(os.Stderr, err)
