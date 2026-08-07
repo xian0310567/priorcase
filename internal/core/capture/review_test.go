@@ -11,7 +11,7 @@ import (
 func TestReviewUpdatesOutcome(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
 	stem := "alpha-결정-저장엔진-2026-08-01"
-	if err := Review(l, ReviewRequest{
+	if _, err := Review(l, ReviewRequest{
 		Stem: stem, Outcome: "good", Retrospective: "잘 됐다.",
 	}); err != nil {
 		t.Fatalf("Review() error = %v", err)
@@ -34,7 +34,7 @@ func TestReviewUpdatesOutcome(t *testing.T) {
 
 func TestReviewRejectsMissingTarget(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
-	err := Review(l, ReviewRequest{Stem: "alpha-결정-없는것-2026-01-01", Outcome: "good"})
+	_, err := Review(l, ReviewRequest{Stem: "alpha-결정-없는것-2026-01-01", Outcome: "good"})
 	if err == nil {
 		t.Fatal("없는 대상을 통과시켰다")
 	}
@@ -45,7 +45,7 @@ func TestReviewRejectsMissingTarget(t *testing.T) {
 
 func TestReviewRejectsTraversal(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
-	if err := Review(l, ReviewRequest{Stem: "../CLAUDE", Outcome: "good"}); err == nil {
+	if _, err := Review(l, ReviewRequest{Stem: "../CLAUDE", Outcome: "good"}); err == nil {
 		t.Fatal("경로 순회를 통과시켰다")
 	}
 }
@@ -54,7 +54,7 @@ func TestReviewSupersedesBothSides(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
 	newStem := "alpha-결정-스키마-2026-08-02"
 	oldStem := "alpha-결정-저장엔진-2026-08-01"
-	if err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
 		t.Fatal(err)
 	}
 	read := func(stem string) store.Note {
@@ -89,10 +89,10 @@ func TestReviewSupersedesBothSides(t *testing.T) {
 func TestReviewRejectsBadValues(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
 	stem := "alpha-결정-저장엔진-2026-08-01"
-	if err := Review(l, ReviewRequest{Stem: stem, Outcome: "maybe"}); err == nil {
+	if _, err := Review(l, ReviewRequest{Stem: stem, Outcome: "maybe"}); err == nil {
 		t.Fatal("허용값 밖 outcome 을 통과시켰다")
 	}
-	if err := Review(l, ReviewRequest{Stem: stem, Status: "unknown"}); err == nil {
+	if _, err := Review(l, ReviewRequest{Stem: stem, Status: "unknown"}); err == nil {
 		t.Fatal("허용값 밖 status 를 통과시켰다")
 	}
 	// 파일이 안 망가졌는지

@@ -28,12 +28,18 @@ func newRecallCmd() *cobra.Command {
 			for _, a := range args[1:] {
 				query += " " + a
 			}
-			hits, err := search.Recall(l, c, query, search.Options{
+			hits, skipped, err := search.Recall(l, c, query, search.Options{
 				Cwd: cwd, CrossProject: crossProject, Limit: limit, MinScore: 1,
 			})
 			if err != nil {
 				return err
 			}
+			// 회수 대상에서 빠진 노트를 알린다. 포맷과 무관하게 stderr 다 —
+			// --format inject 의 stdout 은 훅이 에이전트 컨텍스트로 그대로
+			// 넘기는 순수 데이터라 한 줄도 섞이면 안 된다. 그래서 "inject 면
+			// 생략" 이 아니라 "언제나 stderr" 를 택했다: 생략하면 정작 컨텍스트
+			// 주입 경로에서만 침묵하게 되는데, 거기가 가장 알아야 하는 자리다.
+			warnSkipped(cmd.ErrOrStderr(), l, skipped)
 			out := cmd.OutOrStdout()
 			if format == "inject" {
 				fmt.Fprint(out, search.RenderInject(l, hits))

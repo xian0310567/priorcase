@@ -43,6 +43,8 @@ func newCaptureCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"경고: 관련 과거 결정을 찾지 못했다 (기록은 됐다): %v\n", res.RelatedErr)
 			}
+			// 방금 쓴 노트는 색인에 들어갔지만 색인 자체가 불완전할 수 있다.
+			warnSkipped(cmd.ErrOrStderr(), l, res.Skipped)
 			if len(res.Related) > 0 {
 				fmt.Fprintln(out, "\n관련 과거 결정:")
 				for _, h := range res.Related {

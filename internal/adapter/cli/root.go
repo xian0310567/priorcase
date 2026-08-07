@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -45,6 +47,31 @@ func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
 		return nil, nil, err
 	}
 	return c, store.NewLayout(c), nil
+}
+
+// warnSkipped 는 읽지 못해 건너뛴 결정 노트를 알린다. 없으면 아무것도 안 낸다.
+//
+// **항상 stderr 로 낸다.** `cb recall --format inject` 의 stdout 은 훅이 그대로
+// 에이전트 컨텍스트에 밀어넣는 순수 데이터다 — 거기에 경고가 한 줄이라도 섞이면
+// "[과거 결정 참조]" 블록이 오염된다. 그래서 경고 경로를 명령마다 나누지 않고
+// 여기 하나로 모아, 오염될 수 있는 자리를 아예 없앤다. 사람은 터미널에서 보고,
+// 파이프는 받지 않는다.
+//
+// 파일 목록을 다 찍는다(자르지 않는다). "6건 건너뜀" 만으로는 사용자가 무엇을
+// 고쳐야 할지 알 수 없고, 건너뛴 노트는 원래 흔해서는 안 되는 것이라 길어질
+// 일이 정상 상태에는 없다.
+func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
+	if len(skipped) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "경고: 결정 노트 %d건을 읽지 못해 건너뛰었다 — 색인·회수에서 빠진다:\n", len(skipped))
+	for _, s := range skipped {
+		// 원인이 여러 줄일 수 있다 (yaml 은 잉여 키를 한 줄에 하나씩 보고한다).
+		// 이어지는 줄을 들여쓰지 않으면 목록의 "- " 항목 경계가 무너져 어느
+		// 파일의 원인인지 눈으로 못 따라간다.
+		reason := strings.ReplaceAll(strings.TrimRight(fmt.Sprint(s.Reason), "\n"), "\n", "\n      ")
+		fmt.Fprintf(w, "  - %s\n      %s\n", l.RelPath(s.Path), reason)
+	}
 }
 
 // Execute 는 CLI 를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.

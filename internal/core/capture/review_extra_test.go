@@ -68,7 +68,7 @@ func TestReviewValidatesBothNotesBeforeWritingEither(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Review(l, ReviewRequest{
+	_, err = Review(l, ReviewRequest{
 		Stem: newStem, Supersedes: oldStem, Outcome: "허용값-밖",
 	})
 	if err == nil {
@@ -102,7 +102,7 @@ func TestReviewNoOpNormalizesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Review(l, ReviewRequest{Stem: stem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: stem}); err != nil {
 		t.Fatalf("빈 요청인데 실패: %v", err)
 	}
 
@@ -136,10 +136,10 @@ func TestReviewSupersedesTwiceKeepsRelatedUnique(t *testing.T) {
 	newStem := "alpha-결정-스키마-2026-08-02"
 	oldStem := "alpha-결정-저장엔진-2026-08-01"
 
-	if err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
 		t.Fatal(err)
 	}
 

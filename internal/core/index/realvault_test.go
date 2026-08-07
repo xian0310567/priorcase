@@ -44,8 +44,9 @@ func TestRealVault(t *testing.T) {
 	before := snapshot(t, dirs)
 
 	// 1) 모든 결정 노트가 파싱되는지.
-	//    l.List() 는 읽기 실패한 파일을 조용히 건너뛰므로 그것만으로는 알 수 없다.
-	//    파일을 직접 훑어 l.Read 를 걸어야 실패가 드러난다.
+	//    파일을 직접 훑어 l.Read 를 건다. l.List() 도 이제 건너뛴 것을 보고하지만,
+	//    여기서 독립적으로 세어 두어야 3)에서 "List 가 보고한 건너뜀" 과 대조할
+	//    수 있다 — 같은 코드로 세면 그 코드가 틀렸을 때 둘 다 같이 틀린다.
 	files := decisionFiles(t, dirs, l.DecisionMarker())
 	if len(files) == 0 {
 		t.Fatalf("결정 노트를 하나도 못 찾았다 (%s=%q, 표식=%q)", vaultEnv, vault, l.DecisionMarker())
@@ -53,10 +54,14 @@ func TestRealVault(t *testing.T) {
 	t.Logf("실볼트 결정 노트 %d건, 결정 폴더 %d개", len(files), len(dirs))
 
 	var parsed []store.Note
+	unparsable := map[string]bool{}
 	for _, p := range files {
 		n, err := l.Read(p)
 		if err != nil {
-			t.Errorf("파싱 실패: %s\n  %v", l.RelPath(p), err)
+			unparsable[p] = true
+			t.Errorf("파싱 실패: %s\n  %v\n  → 스펙 §12 컷오버 게이트 1번(실볼트 전건 재생성)이 "+
+				"아직 성립하지 않는다. 코드 결함이 아니라 볼트 데이터가 구 스키마라는 뜻이므로, "+
+				"이 노트의 frontmatter 를 10키 정본으로 옮겨야 한다.", l.RelPath(p), err)
 			continue
 		}
 		parsed = append(parsed, n)
@@ -69,17 +74,39 @@ func TestRealVault(t *testing.T) {
 		}
 	}
 
-	// 3) index.Build 가 노트 수만큼 행을 내는지.
-	out, n, err := Build(l)
+	// 3) index.Build 가 노트를 흘리지 않는지 — 그리고 흘린 것을 숨기지 않는지.
+	//
+	//    "흘리지 않는다" 는 행 수 == 파일 수 로는 표현할 수 없다. 구 스키마 노트가
+	//    남아 있는 한 그 등식은 깨지고, 깨진 채로 아무 말도 안 나가는 것이 바로
+	//    이 프로젝트가 없애려는 결함이다. 그래서 등식을 다시 세운다:
+	//
+	//        색인 행 + 건너뛴 노트 == 디스크의 결정 노트
+	//
+	//    이 등식이 성립하면 노트는 색인에 들어갔거나 "빠졌다고 보고됐거나" 둘 중
+	//    하나이고, 조용히 사라진 것은 하나도 없다.
+	out, res, err := Build(l)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if n != len(files) {
-		t.Errorf("Build 가 센 노트 수 = %d, 디스크의 결정 노트 = %d — 색인이 노트를 흘렸다",
-			n, len(files))
+	for _, s := range res.Skipped {
+		t.Logf("색인에서 빠짐(보고됨): %s\n  %v", l.RelPath(s.Path), s.Reason)
 	}
-	if rows := countRows(string(out)); rows != len(files) {
-		t.Errorf("색인 표의 행 수 = %d, 결정 노트 = %d — 방출 단계에서 유실됐다", rows, len(files))
+	if res.Rows+len(res.Skipped) != len(files) {
+		t.Errorf("색인 행 %d + 건너뜀 %d = %d ≠ 디스크의 결정 노트 %d — 노트가 조용히 사라졌다",
+			res.Rows, len(res.Skipped), res.Rows+len(res.Skipped), len(files))
+	}
+	// 건너뜀 보고가 실제 파싱 실패와 정확히 같은 집합인지. 개수만 맞고 대상이
+	// 다르면 엉뚱한 파일을 지목하는 경고가 사용자에게 나간다.
+	if len(res.Skipped) != len(unparsable) {
+		t.Errorf("Build 가 보고한 건너뜀 = %d건, 실제 파싱 실패 = %d건", len(res.Skipped), len(unparsable))
+	}
+	for _, s := range res.Skipped {
+		if !unparsable[s.Path] {
+			t.Errorf("파싱되는 노트를 건너뛴 것으로 보고했다: %s", l.RelPath(s.Path))
+		}
+	}
+	if rows := countRows(string(out)); rows != res.Rows {
+		t.Errorf("색인 표의 행 수 = %d, Build 가 센 행 = %d — 방출 단계에서 유실됐다", rows, res.Rows)
 	}
 
 	// 4) 읽기만 했는지.

@@ -32,21 +32,27 @@ type Options struct {
 	MinScore     int
 }
 
-// Recall 은 프롬프트에 관련된 결정을 점수순으로 준다.
+// Recall 은 프롬프트에 관련된 결정을 점수순으로 주고, 회수 대상에서 아예 빠진
+// (읽지 못한) 노트를 두 번째 값으로 함께 준다.
 //
 // 볼트를 읽지 못하면 에러를 준다 — 빈 결과로 뭉개지 않는다. "관련 결정이 없다"
 // 와 "볼트를 못 읽었다" 는 훅 주입 경로에서 정반대 의미다: 전자는 참이지만
 // 후자를 침묵시키면 에이전트가 과거 결정을 못 본 채 "없다" 로 읽는다.
 // 같은 l.List() 를 부르는 cb index 는 이미 에러로 죽으므로, 두 명령이 같은
 // 에러 정책을 쓰게 맞춘다.
-func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit, error) {
+//
+// 건너뛴 노트도 같은 이유로 돌려준다. 폴더 전체를 못 읽는 것(에러)과 노트
+// 몇 건을 못 읽는 것(건너뜀)은 정도의 차이일 뿐, 둘 다 "이 프롬프트에 관련된
+// 결정이 있었는데 못 봤을 수 있다" 는 같은 사실을 뜻한다. 다만 후자로는 죽지
+// 않는다 — 읽힌 것만이라도 회수하는 편이 낫다.
+func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit, []store.SkippedNote, error) {
 	keywords := ExtractKeywords(prompt)
 	if len(keywords) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	notes, err := l.List()
+	notes, skipped, err := l.List()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cwdDomain := ""
@@ -65,7 +71,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	}
 
 	hits = trim(hits, o)
-	return hits, nil
+	return hits, skipped, nil
 }
 
 func mentionedDomains(c *config.Config, keywords []string) map[string]bool {

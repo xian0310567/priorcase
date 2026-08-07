@@ -216,12 +216,43 @@ func TestRecallReportsVaultReadFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	hits, err := Recall(l, c, "저장 엔진을 무엇으로 골랐지", Options{CrossProject: true, Limit: 3, MinScore: 1})
+	hits, _, err := Recall(l, c, "저장 엔진을 무엇으로 골랐지", Options{CrossProject: true, Limit: 3, MinScore: 1})
 	if err == nil {
 		t.Fatalf("읽을 수 없는 볼트인데 에러가 없다 (hits=%d) — 실패가 빈 결과로 뭉개졌다", len(hits))
 	}
 	if !strings.Contains(err.Error(), "결정 폴더를 읽을 수 없다") {
 		t.Errorf("에러가 원인을 알려주지 않는다: %v", err)
+	}
+}
+
+// TestRecallReportsSkippedNotes 는 회수 대상에서 빠진 노트를 Recall 이
+// 호출자에게 넘기는지 본다. 폴더 전체를 못 읽는 것(에러)과 노트 몇 건을 못 읽는
+// 것(건너뜀)은 훅 주입 경로에서 같은 위험이다 — 어느 쪽이든 에이전트는 있었던
+// 과거 결정을 못 본 채 "없다" 로 읽는다. 다만 후자로는 죽지 않고, 읽힌 것만
+// 회수한 뒤 빠진 목록을 함께 준다.
+func TestRecallReportsSkippedNotes(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+
+	// 검색어에 걸릴 법한 이름을 가진 구 스키마 노트를 심는다.
+	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장엔진구형-2026-01-02.md")
+	body := "---\ntitle: 구 스키마\nproject: alpha\ncreated: 2026-01-02\n---\n\n## 결정\n\n저장 엔진.\n"
+	if err := os.WriteFile(broken, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, skipped, err := Recall(l, c, "저장 엔진을 무엇으로 골랐지",
+		Options{CrossProject: true, Limit: 3, MinScore: 1})
+	if err != nil {
+		t.Fatalf("깨진 노트 한 건 때문에 Recall 이 죽으면 안 된다: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Error("정상 노트 회수까지 멈췄다")
+	}
+	if len(skipped) != 1 || skipped[0].Path != broken {
+		t.Fatalf("건너뛴 노트가 보고되지 않았다: %+v", skipped)
+	}
+	if skipped[0].Reason == nil {
+		t.Error("건너뛴 원인이 비었다")
 	}
 }
 

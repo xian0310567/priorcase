@@ -249,6 +249,27 @@ $ cb --config demo-config.toml index
 `decisions/INDEX.md` (설정의 `naming.index`) 에 날짜 · domain · summary · status ·
 outcome · 링크 표가 생긴다.
 
+#### 읽지 못한 노트는 조용히 사라지지 않는다
+
+frontmatter 가 없거나 스키마가 옛 것이라 파싱에 실패한 노트는 색인에서 빠진다.
+한 건 때문에 색인 전체가 죽지 않게 하려는 것이지만, **빠졌다는 사실은 반드시
+알린다** — 요약 줄에 건수가 박히고, 어느 파일이 왜인지는 stderr 로 나온다.
+
+```
+$ cb --config demo-config.toml index
+색인 47행 생성 (6건 건너뜀 — 색인이 불완전하다)
+경고: 결정 노트 6건을 읽지 못해 건너뛰었다 — 색인·회수에서 빠진다:
+  - synth/decisions/synth-결정-릴스제작-정지영상절충-2026-08-07.md
+      frontmatter 파싱 실패: yaml: unmarshal errors:
+        line 1: field title not found in type store.Meta
+  ...
+```
+
+종료 코드는 그래도 0 이다. 원인은 `cb` 가 고칠 수 있는 것이 아니라 볼트 데이터를
+사람이 정본 10키로 옮겨야 하는 것이고, 훅·크론에서 도는 `cb index` 가 그때까지
+매번 실패하면 무시하는 법만 학습시키기 때문이다. `cb capture` · `cb review` 도
+내부적으로 색인을 다시 쓰므로 같은 경고를 낸다.
+
 ### `cb recall` — 관련 과거 결정을 찾는다
 
 ```
@@ -268,6 +289,10 @@ $ cb --config demo-config.toml recall 회수 키워드
 
 `status: regretted` 이거나 `outcome: bad` 인 결정이 결과에 끼면 `--format inject` 출력
 끝에 회고를 먼저 읽으라는 경고 줄이 붙는다.
+
+회수 대상에서 읽기 실패로 빠진 노트가 있으면 `cb index` 와 같은 경고를 낸다.
+포맷과 무관하게 **항상 stderr** 다 — `--format inject` 의 stdout 은 훅이 그대로
+컨텍스트에 넣는 순수 데이터라 한 줄도 섞이면 안 된다.
 
 ### 유사 slug 는 거부된다
 
@@ -363,7 +388,9 @@ CI 는 `gofmt -l` · `go vet` · `go test -race` 를 돌린다.
     CASEBOOK_TEST_VAULT="$HOME/Documents/Obsidian Vault" go test ./... -run RealVault -v
 
 실볼트를 **읽기만** 한다 — 모든 결정 노트가 파싱되는지, 스키마를 통과하는지,
-`cb index` 가 노트 수만큼 행을 내는지 본다. 전후 스냅샷을 대조해 쓰지 않았음도 확인한다.
+그리고 **색인 행 + 건너뛴 노트 == 디스크의 결정 노트** 가 성립하는지 본다.
+이 등식이 지켜지면 노트는 색인에 들어갔거나 빠졌다고 보고됐거나 둘 중 하나이고,
+조용히 사라진 것은 하나도 없다. 전후 스냅샷을 대조해 쓰지 않았음도 확인한다.
 
 ## 보장 수준
 

@@ -19,9 +19,12 @@ func fixtureLayout(t *testing.T) *Layout {
 
 func TestList(t *testing.T) {
 	l := fixtureLayout(t)
-	notes, err := l.List()
+	notes, skipped, err := l.List()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("정상 픽스처인데 건너뛴 노트가 있다: %+v", skipped)
 	}
 	if len(notes) != 4 {
 		t.Fatalf("노트 %d건, want 4", len(notes))
@@ -69,7 +72,7 @@ func TestDecisionStems(t *testing.T) {
 
 func TestWriteThenRead(t *testing.T) {
 	l := fixtureLayout(t)
-	notes, err := l.List()
+	notes, _, err := l.List()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,14 +98,35 @@ func TestWriteThenRead(t *testing.T) {
 	}
 }
 
-// TestListSkipsBrokenFile 은 List 가 frontmatter 없는(깨진) 파일을 조용히
-// 건너뛰고 나머지 정상 노트는 전부 돌려준다는 걸 못 박는다. vault.go 의 Read
-// 에러 시 continue 하는 동작이 의도된 것임을 테스트로 고정한다 — 노트 한
-// 건이 깨졌다고 List 전체가 죽으면 안 된다는 요구사항이다.
+// oldSchemaNote 는 구 스키마 frontmatter 다 — 실볼트 synth/decisions 의 6건이
+// 이 모양이다(title/project/created/superseded-by). ParseFrontmatter 의
+// KnownFields(true) 가 잉여 키를 거부하므로 이 노트는 파싱에서 떨어진다.
+const oldSchemaNote = `---
+title: 구 스키마로 쓰인 결정
+project: alpha
+created: 2026-01-02
+superseded-by: ""
+---
+
+## 결정
+
+옛 도구가 남긴 형식이다.
+`
+
+// TestListSkipsBrokenFile 은 List 가 읽지 못한 파일을 건너뛰되 **건너뛴 사실을
+// 호출자에게 알린다**는 걸 못 박는다.
+//
+// 건너뛰는 동작 자체는 의도된 것이다 — 노트 한 건이 깨졌다고 List 전체가
+// 죽으면 안 된다. 하지만 예전에는 건너뛴 것을 아무에게도 알리지 않아서,
+// 실볼트 53건 중 6건이 구 스키마로 빠졌는데도 `cb index` 가 아무 말 없이
+// 47행짜리 색인을 만들었다. 그래서 이 테스트는 두 가지를 동시에 고정한다:
+// (1) 정상 노트는 전부 나온다 (2) 빠진 노트가 경로·원인과 함께 보고된다.
+//
+// 두 가지 실패 유형을 다 심는다 — frontmatter 자체가 없는 경우와, 있지만
+// 스키마가 옛 것인 경우. 후자가 실볼트에서 실제로 관측된 유형이다.
 func TestListSkipsBrokenFile(t *testing.T) {
 	l := fixtureLayout(t)
 
-	// alpha 결정 폴더에 frontmatter 가 없는 깨진 파일을 하나 심는다.
 	dir, err := l.decisionsDir("alpha")
 	if err != nil {
 		t.Fatal(err)
@@ -111,18 +135,50 @@ func TestListSkipsBrokenFile(t *testing.T) {
 	if err := os.WriteFile(broken, []byte("frontmatter 가 없는 그냥 텍스트\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	oldSchema := filepath.Join(dir, "alpha-결정-구스키마-2026-08-05.md")
+	if err := os.WriteFile(oldSchema, []byte(oldSchemaNote), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	notes, err := l.List()
+	notes, skipped, err := l.List()
 	if err != nil {
 		t.Fatalf("깨진 파일이 있어도 List 자체는 에러를 내면 안 된다: %v", err)
 	}
 	if len(notes) != 4 {
-		t.Fatalf("깨진 파일 1건을 건너뛰고 정상 4건만 나와야 하는데 %d건", len(notes))
+		t.Fatalf("깨진 파일 2건을 건너뛰고 정상 4건만 나와야 하는데 %d건", len(notes))
 	}
 	for _, n := range notes {
-		if n.Stem == "alpha-결정-깨짐-2026-08-05" {
+		if n.Stem == "alpha-결정-깨짐-2026-08-05" || n.Stem == "alpha-결정-구스키마-2026-08-05" {
 			t.Fatalf("깨진 노트가 결과에 섞였다: %+v", n)
 		}
+	}
+
+	// 여기가 이번 수정의 핵심이다: 건너뛴 것이 침묵되지 않는다.
+	if len(skipped) != 2 {
+		t.Fatalf("건너뛴 노트 %d건, want 2 — 건너뜀이 보고되지 않았다: %+v", len(skipped), skipped)
+	}
+	byPath := map[string]error{}
+	for _, s := range skipped {
+		if s.Reason == nil {
+			t.Errorf("%s: 원인이 비었다 — 왜 빠졌는지 알 수 없다", s.Path)
+		}
+		byPath[s.Path] = s.Reason
+	}
+	if _, ok := byPath[broken]; !ok {
+		t.Errorf("frontmatter 없는 파일이 건너뜀 목록에 없다: %+v", skipped)
+	}
+	reason, ok := byPath[oldSchema]
+	if !ok {
+		t.Fatalf("구 스키마 파일이 건너뜀 목록에 없다: %+v", skipped)
+	}
+	// 원인이 사용자에게 그대로 나가므로, 무엇이 문제인지 읽을 수 있어야 한다.
+	if !strings.Contains(reason.Error(), "field title not found") {
+		t.Errorf("구 스키마의 원인이 잉여 키를 짚어주지 않는다: %v", reason)
+	}
+	// 경로는 SkippedNote.Path 가 들고 있다. 원인에 또 박혀 있으면 호출부가
+	// 볼트 상대 경로로 다듬어 낼 때 절대 경로가 중복으로 찍힌다.
+	if strings.Contains(reason.Error(), dir) {
+		t.Errorf("원인에 경로가 중복으로 들어 있다: %v", reason)
 	}
 }
 
@@ -204,7 +260,7 @@ NFD 로 인코딩된 파일명도 List() 가 찾아내고 Stem 을 NFC 로 돌�
 		t.Skip("파일시스템이 파일명을 NFC 로 정규화해 저장했다 — 이 환경에서는 NFD 경로를 행사할 수 없다")
 	}
 
-	notes, err := l.List()
+	notes, _, err := l.List()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +287,7 @@ NFD 로 인코딩된 파일명도 List() 가 찾아내고 Stem 을 NFC 로 돌�
 // 그동안 테스트로 안 덮여 있었다.
 func TestWriteCreatesParentDirs(t *testing.T) {
 	l := fixtureLayout(t)
-	notes, err := l.List()
+	notes, _, err := l.List()
 	if err != nil {
 		t.Fatal(err)
 	}

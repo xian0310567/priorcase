@@ -1,6 +1,8 @@
 package index
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 
 func TestBuild(t *testing.T) {
 	l := fixtureLayout(t) // fixture_test.go 의 헬퍼
-	out, n, err := Build(l)
+	out, res, err := Build(l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,8 +19,11 @@ func TestBuild(t *testing.T) {
 	if !strings.Contains(s, "| 날짜 | domain | summary | status | outcome | 링크 |") {
 		t.Errorf("헤더가 없다:\n%s", s)
 	}
-	if n != 4 {
-		t.Errorf("행 %d개, want 4:\n%s", n, s)
+	if res.Rows != 4 {
+		t.Errorf("행 %d개, want 4:\n%s", res.Rows, s)
+	}
+	if len(res.Skipped) != 0 {
+		t.Errorf("정상 픽스처인데 건너뛴 노트가 있다: %+v", res.Skipped)
 	}
 	// 최신순 정렬
 	iNew := strings.Index(s, "2026-08-04")
@@ -62,12 +67,12 @@ func TestBuildEscapesPipeAndNewlineInSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, rows, err := Build(l)
+	out, res, err := Build(l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows != 5 {
-		t.Fatalf("행 %d개, want 5 (기존 4 + 방금 추가한 1):\n%s", rows, out)
+	if res.Rows != 5 {
+		t.Fatalf("행 %d개, want 5 (기존 4 + 방금 추가한 1):\n%s", res.Rows, out)
 	}
 	s := string(out)
 
@@ -101,5 +106,67 @@ func TestBuildEscapesPipeAndNewlineInSummary(t *testing.T) {
 	cols := strings.Split(unescaped, "|")
 	if len(cols) != 8 { // 시작/끝 경계의 빈 문자열 2개 + 실제 6개 열
 		t.Errorf("이스케이프에도 불구하고 열이 밀렸다: %d 파트\n원본 행: %s", len(cols), row)
+	}
+}
+
+// TestBuildReportsSkippedNotes 는 읽지 못한 노트가 색인에서 빠질 때 그 사실이
+// Result.Skipped 로 나오는지 본다.
+//
+// 예전에는 Build 가 행 수만 돌려줬다. 그래서 실볼트 53건 중 6건이 구 스키마라
+// 파싱에서 거부됐는데도 "47행 생성" 이라는 참말 하나만 나가고, 그 47이 전부가
+// 아니라는 사실은 어디에도 안 남았다 — 스펙 §1.3 이 셸의 죄목으로 든 "조용히
+// 데이터를 잃는다" 그대로다.
+func TestBuildReportsSkippedNotes(t *testing.T) {
+	l, vault := fixtureLayoutVault(t)
+	dir := filepath.Join(vault, "alpha", "decisions")
+
+	// 실볼트 synth/decisions 의 6건과 같은 구 스키마.
+	old := filepath.Join(dir, "alpha-결정-구스키마-2026-01-02.md")
+	body := "---\ntitle: 구 스키마로 쓰인 결정\nproject: alpha\ncreated: 2026-01-02\nsuperseded-by: \"\"\n---\n\n## 결정\n\n옛 도구가 남긴 형식이다.\n"
+	if err := os.WriteFile(old, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, res, err := Build(l)
+	if err != nil {
+		t.Fatalf("구 스키마 한 건 때문에 Build 가 죽으면 안 된다: %v", err)
+	}
+	if res.Rows != 4 {
+		t.Errorf("행 %d개, want 4 — 구 스키마 노트는 색인에 들어가면 안 된다", res.Rows)
+	}
+	if strings.Contains(string(out), "구스키마") {
+		t.Errorf("파싱 실패한 노트가 색인에 들어갔다:\n%s", out)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Path != old {
+		t.Fatalf("건너뛴 노트가 보고되지 않았다: %+v", res.Skipped)
+	}
+	if res.Skipped[0].Reason == nil {
+		t.Error("건너뛴 원인이 비었다 — 사용자가 무엇을 고쳐야 할지 알 수 없다")
+	}
+}
+
+// TestWriteReportsSkippedNotes 는 Write 가 Build 의 결과(행 수·건너뜀)를 그대로
+// 넘기고, 건너뛴 게 있어도 색인 파일 자체는 쓰는지 본다 — 47행짜리 색인이
+// 색인 없음보다는 낫다.
+func TestWriteReportsSkippedNotes(t *testing.T) {
+	l, vault := fixtureLayoutVault(t)
+	dir := filepath.Join(vault, "alpha", "decisions")
+	old := filepath.Join(dir, "alpha-결정-구스키마-2026-01-02.md")
+	if err := os.WriteFile(old, []byte("---\ntitle: 구 스키마\nproject: alpha\n---\n\n본문\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Write(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows != 4 {
+		t.Errorf("행 %d개, want 4", res.Rows)
+	}
+	if len(res.Skipped) != 1 {
+		t.Fatalf("건너뛴 노트 %d건, want 1: %+v", len(res.Skipped), res.Skipped)
+	}
+	if _, err := os.Stat(l.IndexPath()); err != nil {
+		t.Errorf("건너뛴 게 있다고 색인을 아예 안 썼다: %v", err)
 	}
 }

@@ -66,11 +66,14 @@ func TestEnglishTemplateRoundTrip(t *testing.T) {
 	}
 
 	// 3) recall
-	hits, err := search.Recall(l, c, "storage engine database", search.Options{
+	hits, skipped, err := search.Recall(l, c, "storage engine database", search.Options{
 		CrossProject: true, Limit: 3, MinScore: 1,
 	})
 	if err != nil {
 		t.Fatalf("recall 실패: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("건너뛴 노트가 있다 — 영어 템플릿 볼트는 전부 정본형이다: %+v", skipped)
 	}
 	if len(hits) == 0 {
 		t.Fatal("recall 이 방금 기록한 결정을 못 찾았다")
@@ -101,7 +104,7 @@ func TestEnglishTemplateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Review(l, ReviewRequest{
+	if _, err := Review(l, ReviewRequest{
 		Stem: newNote.Stem, Outcome: "good", Retrospective: "Worked out fine.",
 	}); err != nil {
 		t.Fatalf("review 실패: %v", err)
