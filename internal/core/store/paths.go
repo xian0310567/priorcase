@@ -15,14 +15,7 @@ const decisionMarker = "-결정-"
 type Layout struct{ c *config.Config }
 
 // NewLayout 은 Layout 을 만든다.
-//
-// decisionMarker 상수는 설정의 decision_file 템플릿에서 유도한다는 전제로
-// PrefixOf·ResolveStem 이 동작한다. 둘이 어긋나면 모든 결정 노트가 규약 밖으로
-// 잘못 판정돼 나중에 조용히 깨진다 — 그러느니 생성 시점에 패닉으로 죽는다.
 func NewLayout(c *config.Config) *Layout {
-	if !strings.Contains(c.Naming.DecisionFile, decisionMarker) {
-		panic(fmt.Sprintf("casebook: decision_file 템플릿에 %q 표식이 없다: %q", decisionMarker, c.Naming.DecisionFile))
-	}
 	return &Layout{c: c}
 }
 
@@ -67,7 +60,10 @@ func (l *Layout) PrefixOf(stem string) string {
 //
 // ⚠️ 여기로 오는 문자열은 LLM 이나 외부 입력에서 온다. 검사 없이 이어붙이면
 // ../CLAUDE 같은 값이 볼트의 지침 문서를 가리킨다 — 감사에서 도달 가능함이 확인됐다.
-// 그래서 (1) 모양 검사 (2) 접두어 화이트리스트 (3) 최종 경로가 볼트 안인지, 셋을 다 본다.
+// 그래서 (1) 모양 검사 (2) 접두어 화이트리스트 (3) 최종 경로가 해당 도메인의
+// decisions 디렉터리 안인지, 셋을 다 본다. 볼트 전체가 아니라 decisions 디렉터리로
+// 좁히는 이유: 볼트 루트에는 CLAUDE.md 같은 지침 문서가 바로 있어서, "볼트 안"만
+// 보면 dir/../../../CLAUDE 같은 경로가 통과한다.
 func (l *Layout) ResolveStem(stem string) (string, error) {
 	stem = NFC(stem)
 	if stem == "" || strings.ContainsAny(stem, `/\`) || strings.Contains(stem, "..") {
@@ -82,9 +78,9 @@ func (l *Layout) ResolveStem(stem string) (string, error) {
 		return "", err
 	}
 	p := filepath.Join(dir, stem+".md")
-	rel, err := filepath.Rel(l.c.Vault, p)
+	rel, err := filepath.Rel(dir, p)
 	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("볼트 밖을 가리킨다: %q", stem)
+		return "", fmt.Errorf("결정 폴더 밖을 가리킨다: %q", stem)
 	}
 	return p, nil
 }

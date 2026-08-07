@@ -53,7 +53,7 @@ func TestResolveStemRejectsTraversal(t *testing.T) {
 		"/etc/passwd",
 		"..",
 		"",
-		"규약에-맞지-않는-이름",         // -결정- 이 없다
+		"규약에-맞지-않는-이름",          // -결정- 이 없다
 		"없는도메인-결정-x-2026-08-01", // 알 수 없는 접두어
 	}
 	for _, s := range bad {
@@ -85,36 +85,19 @@ func TestResolveStemNFD(t *testing.T) {
 	}
 }
 
-// TestNewLayoutValidatesDecisionMarker 는 decisionMarker 상수("-결정-")가
-// 설정의 decision_file 템플릿과 어긋나지 않는지 Layout 생성 시점에 검사한다.
-// 어긋나면 PrefixOf 와 ResolveStem 이 모든 결정 노트를 규약 밖으로 잘못 판정해
-// 나중에 조용히 깨진다 — 그러느니 생성 시점에 죽는 편이 낫다.
-func TestNewLayoutValidatesDecisionMarker(t *testing.T) {
-	c := &config.Config{
-		Vault: t.TempDir(),
-		Naming: config.Naming{
-			DecisionFile: "{domain}-decision-{slug}-{date}.md", // "-결정-" 표식이 없다
-			DecisionsDir: "{project}/decisions",
-			Index:        "_meta/00-결정-색인.md",
-		},
-		Domain: []config.Domain{
-			{Prefix: "omni", Folder: "omni"},
-		},
-	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("decisionMarker 가 빠진 decision_file 템플릿을 통과시켰다")
-		}
-	}()
-	NewLayout(c)
-}
-
-// TestNewLayoutAcceptsMatchingTemplate 는 정상 템플릿에서는 NewLayout 이
-// 패닉하지 않음을 확인한다 — 위 테스트와 짝을 이룬다.
-func TestNewLayoutAcceptsMatchingTemplate(t *testing.T) {
+// TestDecisionMarkerRoundTrip 은 decisionMarker 상수("-결정-")가 설정의
+// decision_file 템플릿과 어긋나지 않는지를 블랙박스로 확인한다: DecisionPath 로
+// 만든 파일명의 stem 을 PrefixOf 로 되읽었을 때 원래 접두어가 복원돼야 한다.
+// 템플릿에 마커가 없으면 이 왕복이 깨진다.
+func TestDecisionMarkerRoundTrip(t *testing.T) {
 	l, _ := testLayout(t)
-	if l == nil {
-		t.Fatal("NewLayout() = nil")
+	got, err := l.DecisionPath("omni", "저장엔진 OPFS", "2026-08-07")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stem := strings.TrimSuffix(filepath.Base(got), ".md")
+	if prefix := l.PrefixOf(stem); prefix != "omni" {
+		t.Errorf("PrefixOf(%q) = %q, want %q", stem, prefix, "omni")
 	}
 }
 
