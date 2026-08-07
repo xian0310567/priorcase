@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -78,8 +79,13 @@ func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
 }
 
 // Run 은 조립이 끝난 루트를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
-func Run(root *cobra.Command) error {
-	if err := root.Execute(); err != nil {
+//
+// **ctx 를 받는 이유는 cb watch 다.** ExecuteContext 가 아니라 Execute 를 쓰면
+// cmd.Context() 가 context.Background() 라서 데몬의 ctx.Done() 이 영원히 오지 않고,
+// Ctrl-C 가 정리 없이 프로세스를 죽인다. 락은 커널이 놓아 주지만 진행 중인 스캔은
+// 중간에 끊긴다.
+func Run(ctx context.Context, root *cobra.Command) error {
+	if err := root.ExecuteContext(ctx); err != nil {
 		return fmt.Errorf("cb: %w", err)
 	}
 	return nil

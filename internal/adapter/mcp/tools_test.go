@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/daemon"
 	"github.com/xian0310567/casebook/internal/testutil"
 )
 
@@ -23,10 +25,15 @@ func connect(t *testing.T) (*sdk.ClientSession, *config.Config, *store.Layout) {
 
 func connectWith(t *testing.T, c *config.Config) *sdk.ClientSession {
 	t.Helper()
+	return connectWithState(t, c, t.TempDir())
+}
+
+func connectWithState(t *testing.T, c *config.Config, stateDir string) *sdk.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 	srvT, cliT := sdk.NewInMemoryTransports()
 
-	srv := New(c, store.NewLayout(c), "test")
+	srv := New(c, store.NewLayout(c), "test", stateDir)
 	if _, err := srv.Connect(ctx, srvT, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +67,7 @@ func call(t *testing.T, cs *sdk.ClientSession, name string, args map[string]any)
 	return r
 }
 
-func TestListToolsExposesThree(t *testing.T) {
+func TestListToolsExposesAll(t *testing.T) {
 	cs, _, _ := connect(t)
 	res, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
@@ -73,13 +80,13 @@ func TestListToolsExposesThree(t *testing.T) {
 			t.Errorf("%s 에 설명이 없다 — 모델이 언제 부를지 판단할 근거가 없다", tool.Name)
 		}
 	}
-	for _, want := range []string{"casebook_recall", "casebook_capture", "casebook_review"} {
+	for _, want := range []string{"casebook_recall", "casebook_capture", "casebook_review", "casebook_pending"} {
 		if !got[want] {
 			t.Errorf("%s 가 목록에 없다 (있는 것: %v)", want, got)
 		}
 	}
-	if len(res.Tools) != 3 {
-		t.Errorf("도구 %d개, 3개여야 한다", len(res.Tools))
+	if len(res.Tools) != 4 {
+		t.Errorf("도구 %d개, 4개여야 한다", len(res.Tools))
 	}
 }
 
@@ -181,5 +188,76 @@ func TestReviewUpdatesOutcome(t *testing.T) {
 	}
 	if strings.TrimSpace(out) == "" {
 		t.Error("review 응답이 비었다")
+	}
+}
+
+// ── casebook_pending ────────────────────────────────────────────────────
+
+// pending 을 심고 목록·해소가 실제로 도는지. 데몬과 MCP 는 다른 프로세스이고
+// 상태 파일 하나로만 만난다 — 그 접점이 도는지가 이 테스트의 요지다.
+func seedPending(t *testing.T, dir string) daemon.Pending {
+	t.Helper()
+	s := daemon.NewStore(dir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	p := daemon.Pending{
+		SessionID: "S9", Path: "/t/a.jsonl", Cwd: "/tmp/proj/alpha", Domain: "alpha",
+		Turns: 11, Signals: []string{"결정"}, From: 0, To: 900, At: time.Now().UTC(),
+	}
+	if err := s.AddPending(p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestPendingToolListsAndResolves(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	stateDir := t.TempDir()
+	p := seedPending(t, stateDir)
+	cs := connectWithState(t, c, stateDir)
+
+	out := text(t, call(t, cs, "casebook_pending", map[string]any{}))
+	if !strings.Contains(out, p.ID()) {
+		t.Fatalf("목록에 id 가 없다 — 지울 방법이 없다:\n%s", out)
+	}
+	if !strings.Contains(out, "alpha") {
+		t.Errorf("도메인이 없다:\n%s", out)
+	}
+
+	if r := call(t, cs, "casebook_pending", map[string]any{"resolve": p.ID()}); r.IsError {
+		t.Fatalf("해소 실패: %s", text(t, r))
+	}
+	left, err := daemon.ReadPending(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("해소 후 %d건 남았다", len(left))
+	}
+}
+
+// 없을 때 빈 응답을 내면 모델이 도구가 고장난 것으로 읽는다.
+func TestPendingToolSaysWhenEmpty(t *testing.T) {
+	cs := connectWithState(t, testutil.VaultConfig(t), t.TempDir())
+	out := text(t, call(t, cs, "casebook_pending", map[string]any{}))
+	if strings.TrimSpace(out) == "" {
+		t.Error("빈 응답을 냈다")
+	}
+	if !strings.Contains(out, "없다") {
+		t.Errorf("없다는 사실을 말하지 않는다:\n%s", out)
+	}
+}
+
+// instructions 는 initialize 때 한 번 만들어진다 — 데몬이 심어 둔 pending 이
+// 거기 실려야 세션 진입에서 바로 보인다.
+func TestInitializeCarriesPendingFromDaemon(t *testing.T) {
+	stateDir := t.TempDir()
+	seedPending(t, stateDir)
+	cs := connectWithState(t, testutil.VaultConfig(t), stateDir)
+
+	ins := cs.InitializeResult().Instructions
+	if !strings.Contains(ins, "미확인 구간이 1건") {
+		t.Errorf("세션 진입에 미확인 구간이 안 실렸다:\n%s", ins)
 	}
 }
