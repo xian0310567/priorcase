@@ -3,7 +3,10 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/xian0310567/casebook/internal/testutil"
 )
@@ -87,5 +90,140 @@ func TestListSkipsBrokenFile(t *testing.T) {
 		if n.Stem == "alpha-결정-깨짐-2026-08-05" {
 			t.Fatalf("깨진 노트가 결과에 섞였다: %+v", n)
 		}
+	}
+}
+
+// TestListNormalizesNFDFilenames 는 List() 가 실제 NFD 로 인코딩된 파일명을
+// 찾아내고, 반환된 Stem 이 NFC 로 정규화돼 있는지 못 박는다.
+//
+// 리뷰에서 뮤테이션으로 확인된 문제: vault.go List() 의 `name := NFC(e.Name())`
+// 를 `name := e.Name()` 으로 바꿔도 기존 테스트는 전부 통과했다. testdata/vault
+// 의 픽스처 4개가 전부 NFC 로 커밋돼 있어서 NFD 경로가 한 번도 실행되지
+// 않았기 때문이다. macOS APFS 는 파일명을 준 그대로(NFD 든 NFC 든) 보존해
+// 돌려주고 Linux ext4 는 바이트 정확 매칭이므로, 이 정규화가 없으면 결정
+// 노트가 조용히 List() 결과에서 사라질 수 있다 — 이게 이 프로젝트가 존재하는
+// 이유인 결함 계열이다.
+//
+// 파일명은 NFC 리터럴로 적고 norm.NFD.String 으로 런타임에 분해한다. 소스에
+// NFD 코드포인트를 직접 박으면 에디터/도구가 저장 시 NFC 로 재정규화해
+// 커버리지가 조용히 사라질 위험이 있다.
+func TestListNormalizesNFDFilenames(t *testing.T) {
+	l := fixtureLayout(t)
+	dir, err := l.decisionsDir("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nameNFC := "alpha-결정-정규화확인-2026-08-06.md"
+	nameNFD := norm.NFD.String(nameNFC)
+	if nameNFD == nameNFC {
+		t.Fatal("NFD 변환이 원본과 같다 — 분해 가능한 문자가 없어 테스트가 무의미하다")
+	}
+	if norm.NFC.IsNormalString(nameNFD) {
+		t.Fatal("만든 파일명이 이미 NFC 다 — NFD 픽스처가 아니다")
+	}
+
+	content := `---
+type: decision
+date: 2026-08-06
+domain: [alpha]
+summary: "NFD 파일명 정규화 확인"
+status: active
+outcome: pending
+supersedes: ""
+related: []
+tags: [decision,alpha,nfd]
+source_session: ""
+---
+
+## 결정
+
+NFD 로 인코딩된 파일명도 List() 가 찾아내고 Stem 을 NFC 로 돌려줘야 한다.
+`
+	if err := os.WriteFile(filepath.Join(dir, nameNFD), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// macOS 파일시스템이 이름을 정규화해 저장했을 수 있으니 os.ReadDir 로
+	// 되읽어 실제 온디스크 형태를 확인한다. NFC 로 정규화돼 버렸다면 이
+	// 테스트가 노리는 NFD 경로 자체가 없는 것이므로 무의미하게 통과시키지
+	// 않고 이유를 남기며 건너뛴다.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk string
+	found := false
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if norm.NFC.String(e.Name()) == nameNFC {
+			onDisk = e.Name()
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("방금 쓴 파일을 os.ReadDir 결과에서 못 찾았다")
+	}
+	if norm.NFC.IsNormalString(onDisk) {
+		t.Skip("파일시스템이 파일명을 NFC 로 정규화해 저장했다 — 이 환경에서는 NFD 경로를 행사할 수 없다")
+	}
+
+	notes, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantStem := strings.TrimSuffix(nameNFC, ".md")
+	var got *Note
+	for i := range notes {
+		if notes[i].Stem == wantStem {
+			got = &notes[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("NFD 파일명 노트를 List() 결과에서 못 찾았다 (want stem=%q, notes=%d건)", wantStem, len(notes))
+	}
+	if !norm.NFC.IsNormalString(got.Stem) {
+		t.Errorf("Stem 이 NFC 로 정규화되지 않았다: %q", got.Stem)
+	}
+}
+
+// TestWriteCreatesParentDirs 는 Write() 가 아직 없는 중첩 디렉토리를
+// os.MkdirAll 로 만들어낸 뒤 정상적으로 쓰는지 확인한다.
+// TestWriteThenRead 는 이미 존재하는 디렉토리에만 쓰기 때문에 이 경로가
+// 그동안 테스트로 안 덮여 있었다.
+func TestWriteCreatesParentDirs(t *testing.T) {
+	l := fixtureLayout(t)
+	notes, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := notes[0]
+
+	dir, err := l.decisionsDir("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Path = filepath.Join(dir, "new", "nested", "alpha-결정-새폴더-2026-08-06.md")
+	n.Stem = "alpha-결정-새폴더-2026-08-06"
+
+	if _, err := os.Stat(filepath.Dir(n.Path)); !os.IsNotExist(err) {
+		t.Fatalf("사전조건 실패: 중첩 디렉토리가 이미 존재한다: %v", err)
+	}
+
+	if err := l.Write(n); err != nil {
+		t.Fatalf("없는 부모 디렉토리 아래로 Write() 가 실패했다: %v", err)
+	}
+
+	again, err := l.Read(n.Path)
+	if err != nil {
+		t.Fatalf("MkdirAll 로 만들어진 경로를 Read() 하지 못했다: %v", err)
+	}
+	if again.Meta.Summary != n.Meta.Summary {
+		t.Errorf("왕복 후 summary 가 변했다: got %q, want %q", again.Meta.Summary, n.Meta.Summary)
 	}
 }
