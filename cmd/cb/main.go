@@ -28,9 +28,17 @@ func main() {
 	root.AddCommand(daemon.NewCommand())
 	root.AddCommand(hook.NewCommand())
 	root.AddCommand(hook.NewInitCommand())
+	root.AddCommand(hook.NewDoctorCommand())
 
-	if err := cli.Run(ctx, root); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	err := cli.Run(ctx, root)
+	if err == nil {
+		return
 	}
+	// cb doctor 는 진단 결과를 이미 stdout 에 찍었다. 종료 코드만 옮기고 입을 다문다 —
+	// 여기서 또 내면 같은 말이 두 번 나온다.
+	if code, silent := hook.DiagnosticExit(err); silent {
+		os.Exit(code)
+	}
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
 }
