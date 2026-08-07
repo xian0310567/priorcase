@@ -128,10 +128,16 @@ func filterByDomain(hits []Hit, domain string) []Hit {
 }
 
 // trim 은 정렬 → MinScore 필터 → Limit 절단 순으로 다듬는다.
-// 필터를 절단보다 먼저 해야 한다 — 절단을 먼저 하면 MinScore 미만 항목이
-// Limit 자리를 차지한 채로 잘려 나간 뒤에야 걸러지므로, 그 뒤에 있는
-// (아직 세지 않은) MinScore 이상 항목이 결과에 못 들어가 결과 수가
-// Limit 보다 적어질 수 있다.
+//
+// 정렬 키(Score)와 필터 임계값(MinScore)이 지금은 같은 필드라서, 절단과
+// 필터의 순서를 바꿔도 결과가 같다 — 내림차순으로 정렬된 배열에서 MinScore
+// 이상인 항목은 항상 앞쪽의 연속 구간(prefix)을 이루기 때문이다. 그래서
+// 지금 당장은 이 순서가 관측 가능한 차이를 만들지 않는다(테스트로 순서
+// 자체를 못 박을 수 없는 이유이기도 하다 — search_test.go 의 TestTrim 참고).
+//
+// 하지만 나중에 2차 정렬 키(예: 날짜)나 점수와 무관한 필터(예: 도메인)가
+// 생기면 이 동치는 깨진다. 필터를 절단보다 먼저 두는 쪽이 "Limit 은 유효한
+// 결과의 개수"라는 의미에 맞으므로, 지금부터 이 순서를 지킨다.
 func trim(hits []Hit, o Options) []Hit {
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].Score != hits[j].Score {

@@ -125,26 +125,83 @@ func TestStopwordOnlyPromptMatchesNothing(t *testing.T) {
 	}
 }
 
-// ★ 지시 2: trim() 은 정렬 → MinScore 필터 → Limit 절단 순이어야 한다.
-// 정렬 → Limit 절단 → MinScore 필터 순이면, MinScore 미만 항목이 Limit 자리를
-// 차지한 뒤 걸러져 결과가 Limit 보다 적어질 수 있다. MinScore 를 만족하는
-// 항목이 Limit 개 이상 있으면, 결과는 정확히 Limit 개여야 하고 전부
-// MinScore 이상이어야 한다.
-func TestTrimFillsLimitAfterMinScoreFilter(t *testing.T) {
+// ★ 리뷰 대응 (수정 1): scoreAll 의 "head 히트가 없으면 점수 0" 조기 탈락
+// (`if headHits == 0 { continue }`) 을 실제로 타는 데이터가 픽스처에 없었다
+// — testdata/vault 의 노트들은 본문 키워드를 늘 summary/tags 에도 반복해서
+// 이 경로를 건드리지 못했다(리뷰에서 확인: 이 블록을 통째로 지워도 전체
+// 테스트가 통과했다). 픽스처 파일은 건드리지 않고, t.TempDir() 안에
+// l.Write() 로 본문에만 있고 head(stem·summary·tags·domain)에는 없는
+// 키워드를 가진 노트를 직접 만들어 그 경로를 덮는다.
+func TestBodyOnlyKeywordExcluded(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+
+	// stem/summary/tags/domain 어디에도 없고 다른 픽스처 노트에도 없는 조어.
+	const bodyOnlyKeyword = "그림자백업진단로그"
+
+	path, err := l.DecisionPath("alpha", "임시메모", "2026-08-05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := store.Note{
+		Path: path,
+		Meta: store.Meta{
+			Type:    "decision",
+			Date:    "2026-08-05",
+			Domain:  []string{"alpha"},
+			Summary: "임시로 남기는 메모",
+			Status:  "active",
+			Outcome: "pending",
+			Tags:    []string{"decision"},
+		},
+		Body: []byte("## 메모\n\n" + bodyOnlyKeyword + " 에 대한 상세 기록.\n"),
+	}
+	if err := l.Write(n); err != nil {
+		t.Fatal(err)
+	}
+
+	hits := Recall(l, c, bodyOnlyKeyword, Options{CrossProject: true, Limit: 10, MinScore: 1})
+	if len(hits) != 0 {
+		t.Errorf("본문에만 있는 키워드로 검색했는데 %d건 매칭 — headHits==0 조기 탈락이 안 됐다: %+v", len(hits), hits)
+	}
+}
+
+// ★ 리뷰 대응 (수정 2): 예전 TestTrimFillsLimitAfterMinScoreFilter 는
+// trim() 의 "정렬 → MinScore 필터 → Limit 절단" 순서를 검증한다고 주장했지만
+// 실제로는 아무것도 검증하지 못했다. 정렬 키(Score)와 필터 임계값(MinScore)이
+// 같은 필드라, 내림차순 정렬된 배열에서 MinScore 이상인 항목은 항상 배열
+// 앞쪽의 연속 구간(prefix)을 이룬다 — 그래서 "절단 후 필터"와 "필터 후
+// 절단"은 수학적으로 항상 같은 최종 결과를 낸다. trim() 안의 필터·절단
+// 순서를 실제로 바꿔서 돌려도 이 테스트는 여전히 통과했다(리뷰에서 확인).
+// 즉 이 테스트는 순서가 바뀌어도 절대 실패할 수 없는 테스트였다.
+//
+// 그래서 "순서"를 주장하는 대신, trim() 이 실제로 보장하는 세 가지 계약을
+// 각각 직접 검증한다: (1) MinScore 미만 항목이 제거되는지 (2) Limit 이
+// 지켜지는지 (3) 동점(Score 같음) 정렬이 결정적인지(Path 내림차순).
+func TestTrim(t *testing.T) {
 	hits := []Hit{
 		{Note: store.Note{Path: "a-low"}, Score: 2}, // MinScore 미만
 		{Note: store.Note{Path: "b-hi"}, Score: 10},
 		{Note: store.Note{Path: "c-hi"}, Score: 9},
 		{Note: store.Note{Path: "d-hi"}, Score: 8},
+		{Note: store.Note{Path: "z-tie"}, Score: 8}, // d-hi 와 동점, Path 로만 갈린다
 		{Note: store.Note{Path: "e-low"}, Score: 1}, // MinScore 미만
 	}
 	out := trim(hits, Options{Limit: 3, MinScore: 5})
+
 	if len(out) != 3 {
-		t.Fatalf("MinScore 이상이 3건 이상인데 Limit=3 결과가 %d건: %+v", len(out), out)
+		t.Fatalf("Limit=3 인데 결과가 %d건: %+v", len(out), out)
 	}
 	for _, h := range out {
 		if h.Score < 5 {
 			t.Errorf("MinScore(5) 미만 항목이 결과에 섞였다: %+v", h)
+		}
+	}
+	// 정렬 결과는 b-hi(10), c-hi(9), z-tie(8, Path>"d-hi"라 우선), d-hi(8) 순이다.
+	// Limit=3 이 앞의 세 개만 남긴다 — 동점 정렬이 결정적이지 않으면 이 순서가 흔들린다.
+	wantPaths := []string{"b-hi", "c-hi", "z-tie"}
+	for i, want := range wantPaths {
+		if out[i].Note.Path != want {
+			t.Errorf("%d번째 결과가 %q 가 아니다(동점 정렬이 결정적이지 않다): %s", i, want, out[i].Note.Path)
 		}
 	}
 }
