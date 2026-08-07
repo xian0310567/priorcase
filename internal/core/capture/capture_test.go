@@ -67,6 +67,109 @@ func TestDoReturnsRelated(t *testing.T) {
 	}
 }
 
+// TestDoSupersedesBothSides 는 cb capture --supersedes 가 cb review 와 같은
+// 일을 하는지 본다: 새 노트의 supersedes 가 "[[stem]]" 형식이고, 옛 노트가
+// superseded 로 바뀌고 related 에 후속 문서가 들어간다. 예전에는 capture 가
+// 날문자열을 그대로 넣기만 해서 옛 노트가 active 로 남았고, 이미 뒤집힌 결정이
+// 회수에서 감점 없이 계속 1위로 올라왔다.
+func TestDoSupersedesBothSides(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	oldStem := "alpha-결정-저장엔진-2026-08-01"
+
+	res, err := Do(l, c, Request{
+		Domain: "alpha", Slug: "저장엔진 재선정", Summary: "저장 엔진을 다시 고른다",
+		Date: "2026-08-07", Supersedes: oldStem, Body: []byte("## 결정\n"),
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+
+	newNote, err := l.Read(res.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "[[" + oldStem + "]]"; newNote.Meta.Supersedes != want {
+		t.Errorf("새 노트 supersedes = %q, want %q (review 와 같은 형식이어야 한다)",
+			newNote.Meta.Supersedes, want)
+	}
+
+	oldPath, err := l.ResolveStem(oldStem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := l.Read(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Meta.Status != "superseded" {
+		t.Errorf("옛 노트 status = %q, want superseded — 회수 감점이 안 걸린다", old.Meta.Status)
+	}
+	backlink := "[[" + newNote.Stem + "]]"
+	found := false
+	for _, rel := range old.Meta.Related {
+		if rel == backlink {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("옛 노트 related 에 후속 문서(%s)가 없다: %v", backlink, old.Meta.Related)
+	}
+}
+
+// TestDoRejectsSupersedesTraversal 은 --supersedes 로 들어온 경로 순회 문자열이
+// 거부되는지 본다. 예전에는 검증 없이 frontmatter 에 그대로 안착해서,
+// ResolveStem 이 막아 놓은 경로 순회가 이 경로로 통째로 우회됐다.
+func TestDoRejectsSupersedesTraversal(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	for _, bad := range []string{"../../CLAUDE", "../CLAUDE", "규약없음", "없는도메인-결정-x-2026-08-01"} {
+		res, err := Do(l, c, Request{
+			Domain: "alpha", Slug: "순회 시도 " + bad, Summary: "s",
+			Date: "2026-08-07", Supersedes: bad, Body: []byte("## 결정\n"),
+		})
+		if err == nil {
+			t.Errorf("--supersedes %q 를 통과시켰다 → %s", bad, res.Path)
+			continue
+		}
+		if !strings.Contains(err.Error(), "supersedes") {
+			t.Errorf("--supersedes %q 의 에러가 원인을 알려주지 않는다: %v", bad, err)
+		}
+	}
+}
+
+// TestDoValidatesBothNotesBeforeWritingEither 는 Review 와 같은 불변식이
+// Do 에도 있는지 본다: 새 노트 검증이 실패하면 옛 노트는 손대지 않는다.
+// 순서가 뒤집히면 "뒤집은 결정은 없는데 옛 결정만 superseded" 인 반쪽 상태가
+// 디스크에 남는다.
+func TestDoValidatesBothNotesBeforeWritingEither(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	oldStem := "alpha-결정-저장엔진-2026-08-01"
+	oldPath, err := l.ResolveStem(oldStem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// summary 가 비면 새 노트가 스키마 검증에서 걸린다.
+	if _, err := Do(l, c, Request{
+		Domain: "alpha", Slug: "요약 없는 결정", Summary: "",
+		Date: "2026-08-07", Supersedes: oldStem, Body: []byte("## 결정\n"),
+	}); err == nil {
+		t.Fatal("summary 가 빈 요청을 통과시켰다")
+	}
+
+	after, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("새 노트 검증이 실패했는데 옛 노트가 이미 쓰였다(부분 실패):\nbefore:\n%s\nafter:\n%s",
+			before, after)
+	}
+}
+
 func TestDoUpdatesIndex(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
 	if _, err := Do(l, c, Request{

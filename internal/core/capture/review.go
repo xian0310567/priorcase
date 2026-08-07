@@ -40,18 +40,11 @@ func Review(l *store.Layout, r ReviewRequest) error {
 	var old store.Note
 	hasOld := false
 	if r.Supersedes != "" {
-		oldPath, err := l.ResolveStem(r.Supersedes)
+		link, o, err := supersede(l, r.Supersedes, n.Stem)
 		if err != nil {
-			return fmt.Errorf("supersedes 대상이 잘못됐다: %w", err)
+			return err
 		}
-		old, err = l.Read(oldPath)
-		if err != nil {
-			return fmt.Errorf("대상 없음: %s (%w)", r.Supersedes, err)
-		}
-		n.Meta.Supersedes = "[[" + r.Supersedes + "]]"
-		old.Meta.Status = "superseded"
-		old.Meta.Related = appendUnique(old.Meta.Related, "[["+r.Stem+"]]")
-		hasOld = true
+		n.Meta.Supersedes, old, hasOld = link, o, true
 	}
 	if r.Retrospective != "" {
 		n.Body = appendRetrospective(n.Body, r.Retrospective)
@@ -78,8 +71,12 @@ func Review(l *store.Layout, r ReviewRequest) error {
 	if err := l.Write(n); err != nil {
 		return err
 	}
-	_, err = index.Write(l)
-	return err
+	// Do 와 같은 안내를 낸다 — 여기도 노트를 이미 쓴 뒤라, 색인만 낡았다는
+	// 사실을 알려주지 않으면 사용자는 갱신 자체가 안 된 줄 알고 다시 시도한다.
+	if _, err := index.Write(l); err != nil {
+		return fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
+	}
+	return nil
 }
 
 func appendUnique(ss []string, v string) []string {

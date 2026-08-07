@@ -56,8 +56,29 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	m := store.Meta{
 		Type: "decision", Date: r.Date, Domain: []string{r.Domain},
 		Summary: r.Summary, Status: "active", Outcome: "pending",
-		Supersedes: r.Supersedes, Related: r.Related,
-		Tags: ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
+		Related: r.Related,
+		Tags:    ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
+	}
+
+	// --supersedes 는 cb review 와 같은 로직(supersede)을 탄다 — 대상 검증,
+	// "[[stem]]" 형식, 옛 노트의 status·related 갱신이 두 명령에서 동일하다.
+	var old store.Note
+	hasOld := false
+	if r.Supersedes != "" {
+		link, o, err := supersede(l, r.Supersedes, stem)
+		if err != nil {
+			return Result{}, err
+		}
+		m.Supersedes, old, hasOld = link, o, true
+	}
+
+	// Review 와 같은 불변식: 두 노트를 모두 검증한 뒤에야 쓰기 시작한다.
+	// 새 노트 검증이 실패했는데 옛 노트가 이미 superseded 로 바뀌어 있으면,
+	// 뒤집은 결정은 없는데 옛 결정만 뒤집힌 반쪽 상태가 디스크에 남는다.
+	if hasOld {
+		if err := schema.Validate(l.DecisionMarker(), old.Stem, old.Meta); err != nil {
+			return Result{}, fmt.Errorf("옛 노트 검증 실패: %w", err)
+		}
 	}
 	if err := schema.Validate(l.DecisionMarker(), stem, m); err != nil {
 		return Result{}, fmt.Errorf("스키마 검증 실패: %w", err)
@@ -74,6 +95,11 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	body := r.Body
 	if len(body) == 0 {
 		body = []byte("## 결정\n\n## 근거\n\n## 고려한 대안\n\n## 예상 리스크\n\n## 회고\n")
+	}
+	if hasOld {
+		if err := l.Write(old); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := l.Write(store.Note{Path: path, Stem: stem, Meta: m, Body: body}); err != nil {
 		return Result{}, err
