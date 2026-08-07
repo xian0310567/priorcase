@@ -29,10 +29,23 @@ func TestTruncateRunesKeepsValidUTF8(t *testing.T) {
 // 이는 알려진 한계이고 파일명 용도로는 허용된다 — 여기서 검증할 것은
 // grapheme 보존이 아니라 "유효한 UTF-8 이 나오는가" 뿐이다.
 func TestTruncateRunesCombiningAndEmoji(t *testing.T) {
-	// 한 는 NFD 한(ᄒ+ᅡ+ᆫ), "é" 는 결합 악센트 e(e+́),
+	// NFD 자모와 결합 악센트는 TestNFC 처럼 코드포인트 이스케이프로 쓴다.
+	// 소스에 실제 문자로 적으면 에디터·git 필터·머지 도구가 NFC 로 정규화해도
+	// 테스트가 그대로 PASS 해버려 이 케이스의 커버리지가 조용히 사라지므로,
+	// TestNFC 처럼 NFC 형태와 다르다는 선행 단언을 둔다.
+	hangulNFD := "\u1112\u1161\u11ab" // 한 (NFD, 초성+중성+종성)
+	hangulNFC := "\ud55c"             // 한 (NFC)
+	if hangulNFD == hangulNFC {
+		t.Fatal("한 NFD 리터럴이 NFC 와 같다 — 테스트가 무의미하다")
+	}
+	eNFD := "e\u0301" // e + 결합 악센트(U+0301) 로 만든 é 의 NFD
+	eNFC := "\u00e9"  // é 의 NFC
+	if eNFD == eNFC {
+		t.Fatal("e NFD 리터럴이 NFC 와 같다 — 테스트가 무의미하다")
+	}
 	// 나머지는 4바이트 이모지: 피부톤 수정자 붙은 👍🏽, 일반 이모지 😀,
 	// 지역표시 문자 쌍으로 만들어진 국기 🇰🇷.
-	s := "한" + "é" + "\U0001F44D\U0001F3FD\U0001F600\U0001F1F0\U0001F1F7"
+	s := hangulNFD + eNFD + "\U0001F44D\U0001F3FD\U0001F600\U0001F1F0\U0001F1F7"
 	n := utf8.RuneCountInString(s)
 	for i := 0; i <= n+5; i++ {
 		got := TruncateRunes(s, i)
@@ -45,8 +58,8 @@ func TestTruncateRunesCombiningAndEmoji(t *testing.T) {
 func TestNFC(t *testing.T) {
 	// NFD 는 반드시 코드포인트 이스케이프로 쓴다. 소스에 한글을 직접 적으면
 	// 에디터·도구가 NFC 로 정규화해 테스트가 같은 문자열끼리 비교하며 무의미해진다.
-	nfd := "\u1112\u1161\u11ab" // ᄒ + ᅡ + ᆫ
-	nfc := "\ud55c"               // 한
+	nfd := "\u1112\u1161\u11ab" // U+1112 + U+1161 + U+11AB
+	nfc := "\ud55c"             // 한
 	if nfd == nfc {
 		t.Fatal("NFD 리터럴이 NFC 와 같다 — 테스트가 무의미하다")
 	}
@@ -60,11 +73,11 @@ func TestNFC(t *testing.T) {
 
 func TestSlugify(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"저장엔진 OPFS", "저장엔진-OPFS"},                       // 저장엔진 OPFS -> 저장엔진-OPFS
+		{"저장엔진 OPFS", "저장엔진-OPFS"}, // 저장엔진 OPFS -> 저장엔진-OPFS
 		{"a/b:c*d?e", "a-b-c-d-e"},
-		{"  앞뒤 공백  ", "앞뒤-공백"},                           // 앞뒤 공백 -> 앞뒤-공백
-		{"--앞뒤 하이픈--", "앞뒤-하이픈"},                // 앞뒤 하이픈 -> 앞뒤-하이픈
-		{"연속   공백", "연속-공백"},                              // 연속 공백 -> 연속-공백
+		{"  앞뒤 공백  ", "앞뒤-공백"},   // 앞뒤 공백 -> 앞뒤-공백
+		{"--앞뒤 하이픈--", "앞뒤-하이픈"}, // 앞뒤 하이픈 -> 앞뒤-하이픈
+		{"연속   공백", "연속-공백"},     // 연속 공백 -> 연속-공백
 	}
 	for _, tt := range tests {
 		if got := Slugify(tt.in); got != tt.want {
