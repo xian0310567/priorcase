@@ -73,7 +73,7 @@ func Run(ctx context.Context, o Options) error {
 	// 감사 결함 3 — 단일 인스턴스. flock 은 프로세스가 죽으면 커널이 알아서 놓아
 	// 주므로 pid 파일처럼 죽은 락이 남지 않는다.
 	lk := flock.New(filepath.Join(o.StateDir, lockFile))
-	got, err := lk.TryLock()
+	got, err := acquireLock(ctx, lk)
 	if err != nil {
 		return fmt.Errorf("락을 잡을 수 없다: %w", err)
 	}
@@ -310,4 +310,32 @@ func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string) (
 	}
 	r, err = Scan(st, c, l, path)
 	return r, true, err
+}
+
+// lockWait 는 "이미 돌고 있다" 고 단정하기 전에 기다리는 시간이다.
+//
+// 훅(cb hook stop 등)도 데몬이 없을 때 같은 락을 잡는다. 그 스캔은 밀리초 단위지만,
+// 하필 그 순간 사용자가 cb watch 를 띄우면 **아무도 안 도는데 "이미 돌고 있다" 고
+// 말한다.** 틀린 진단은 사용자를 엉뚱한 데로 보낸다. 잠깐 기다려 보고 판정한다.
+//
+// 진짜로 데몬이 돌고 있으면 이 시간만큼 에러가 늦어지는데, 장기 실행 프로세스의
+// 기동에서 1.5초는 없는 것과 같다.
+const lockWait = 1500 * time.Millisecond
+
+func acquireLock(ctx context.Context, lk *flock.Flock) (bool, error) {
+	deadline := time.Now().Add(lockWait)
+	for {
+		got, err := lk.TryLock()
+		if err != nil || got {
+			return got, err
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }

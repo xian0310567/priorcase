@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+
+	"github.com/gofrs/flock"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,5 +274,48 @@ func TestNoSignalsWarnsLoudly(t *testing.T) {
 	}
 	if !found {
 		t.Error("시그널이 없는데 아무 경고도 없다 — 데몬이 조용히 무동작한다")
+	}
+}
+
+// 훅이 잠깐 잡은 락 때문에 "이미 돌고 있다" 고 잘못 말하면 안 된다.
+// 훅 스캔은 밀리초 단위인데, 하필 그때 cb watch 를 띄운 사용자는 아무도 안 도는데
+// 도는 줄 알고 엉뚱한 데를 뒤진다.
+//
+// 락을 **명시적으로 붙잡아** 결정적으로 만든다 — ScanOnce 를 반복 호출하는 식으로는
+// 창이 너무 좁아 재현되지 않는다(실제로 그렇게 썼다가 변이가 안 잡혔다).
+func TestTransientLockDoesNotLookLikeRunningDaemon(t *testing.T) {
+	o := baseOpts(t)
+	if err := os.MkdirAll(o.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	lk := flock.New(filepath.Join(o.StateDir, lockFile))
+	got, err := lk.TryLock()
+	if err != nil || !got {
+		t.Fatalf("테스트가 락을 못 잡았다: got=%v err=%v", got, err)
+	}
+	// 훅 한 번이 잡고 있는 시간을 흉내 낸다. lockWait(1.5초)보다 훨씬 짧다.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = lk.Unlock()
+	}()
+
+	start(t, o) // 락이 잡힌 채로 띄운다 — 기다렸다가 떠야 한다
+}
+
+// 반대로 **진짜로** 돌고 있으면 기다린 뒤 정확히 알려야 한다.
+func TestHeldLockStillReportsAlreadyRunning(t *testing.T) {
+	o := baseOpts(t)
+	if err := os.MkdirAll(o.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lk := flock.New(filepath.Join(o.StateDir, lockFile))
+	if got, err := lk.TryLock(); err != nil || !got {
+		t.Fatalf("테스트가 락을 못 잡았다: got=%v err=%v", got, err)
+	}
+	t.Cleanup(func() { _ = lk.Unlock() })
+
+	if err := Run(context.Background(), o); !errors.Is(err, ErrAlreadyRunning) {
+		t.Errorf("락이 계속 잡혀 있는데 %v 를 냈다", err)
 	}
 }
