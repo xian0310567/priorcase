@@ -110,6 +110,37 @@ func TestRenderInject(t *testing.T) {
 	}
 }
 
+// TestRenderInjectWarnsOnRegrettedAlone 는 경고 조건의 앞 절
+// (status == "regretted") 만으로도 경고 줄이 붙는지 본다.
+//
+// RenderInject 의 조건은 `status == "regretted" || outcome == "bad"` 인데
+// 픽스처 볼트에는 outcome: bad 인 노트만 있어서 뒤 절만 테스트되고 있었다.
+// 앞 절을 지워도 전체 테스트가 통과하는 상태였다는 뜻이다 — 사용자에게 나가는
+// 경고 문구라 조용히 사라지면 회고를 읽어야 할 자리에서 아무 신호도 안 뜬다.
+// 두 절의 독립성을 보이려고 outcome 은 일부러 good 으로 둔다.
+func TestRenderInjectWarnsOnRegrettedAlone(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	hits := []Hit{{
+		Score: 9,
+		Note: store.Note{
+			Path: filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-후회한선택-2026-08-05.md"),
+			Stem: "alpha-결정-후회한선택-2026-08-05",
+			Meta: store.Meta{
+				Type: "decision", Date: "2026-08-05", Domain: []string{"alpha"},
+				Summary: "후회한 선택", Status: "regretted", Outcome: "good",
+			},
+		},
+	}}
+
+	out := RenderInject(l, hits)
+	if !strings.Contains(out, "(regretted/good)") {
+		t.Fatalf("status/outcome 표기가 기대와 다르다:\n%s", out)
+	}
+	if !strings.Contains(out, warnLine) {
+		t.Errorf("status: regretted 만으로는 경고가 붙지 않았다 (outcome 은 bad 가 아니다):\n%s", out)
+	}
+}
+
 func TestRenderInjectEmpty(t *testing.T) {
 	if out := RenderInject(nil, nil); out != "" {
 		t.Errorf("매칭 없을 때 출력이 있다: %q", out)
