@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/index"
@@ -145,5 +146,65 @@ func TestMissingVaultIsFail(t *testing.T) {
 	}
 	if r.Worst() != Fail {
 		t.Errorf("Worst = %v, Fail 이어야 한다", r.Worst())
+	}
+}
+
+// ★ **파싱과 검증은 다르다.** List() 는 frontmatter 가 10키인지만 보고, 접두어와
+// domain 첫 값이 같은지·status 가 허용값인지는 안 본다. `cb capture` 는 이걸 검증하지만
+// **손으로 쓰면 통째로 우회된다** — 여기가 그 그물이다.
+func TestSchemaViolationIsCaught(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	// 접두어(alpha)와 domain 첫 값(beta)이 어긋난 노트를 손으로 심는다.
+	bad := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-어긋남-2026-08-08.md")
+	body := "---\ntype: decision\ndate: 2026-08-08\ndomain: [beta]\nsummary: \"x\"\n" +
+		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
+		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
+	if err := os.WriteFile(bad, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Vault(c, store.NewLayout(c))
+	if got := find(t, r, "결정 노트"); got.Level != OK {
+		t.Errorf("파싱은 됐어야 한다 (검증과 다르다): %s", got.Detail)
+	}
+	got := find(t, r, "스키마")
+	if got.Level != Fail {
+		t.Fatalf("Level = %v, Fail 이어야 한다 — 파싱만 보면 이 노트는 정상으로 보인다", got.Level)
+	}
+	if !strings.Contains(got.Detail, "어긋남") {
+		t.Errorf("어느 노트인지 안 알려 준다: %s", got.Detail)
+	}
+}
+
+// 감사 결함 4 — 하이픈·대소문자만 다른 중복. cb capture 는 거부하지만 손으로 쓰면 우회된다.
+func TestSimilarSlugIsCaught(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	dup := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장-엔진-2026-08-01.md")
+	body := "---\ntype: decision\ndate: 2026-08-01\ndomain: [alpha]\nsummary: \"x\"\n" +
+		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
+		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
+	if err := os.WriteFile(dup, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 픽스처의 alpha-결정-저장엔진-2026-08-01 과 하이픈 하나 차이, 같은 날짜다.
+	// (날짜가 다르면 capture 도 안 잡는다 — 후속 결정일 수 있기 때문이다.)
+	got := find(t, Vault(c, store.NewLayout(c)), "유사 slug")
+	if got.Level != Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "↔") {
+		t.Errorf("무엇과 무엇이 겹치는지 안 보여 준다: %s", got.Detail)
+	}
+}
+
+func TestRecentDecisionsCounts(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	l := store.NewLayout(c)
+	// 픽스처는 2026-08-01~04 다.
+	if got := RecentDecisions(l, time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC), 7); got != 4 {
+		t.Errorf("RecentDecisions = %d, 4여야 한다", got)
+	}
+	if got := RecentDecisions(l, time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), 7); got != 0 {
+		t.Errorf("RecentDecisions = %d, 0이어야 한다 (전부 오래됐다)", got)
 	}
 }

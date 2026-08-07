@@ -21,6 +21,15 @@ type DoctorOptions struct {
 	Binary string
 	// Now 는 pending 나이를 재는 기준이다. 비면 현재 시각.
 	Now time.Time
+	// RecentDecisions 는 최근 7일 결정 노트 수다. **nil 이면 모른다는 뜻이다.**
+	//
+	// 포인터인 이유가 있다. int 로 두면 안 채운 호출자가 0을 주게 되는데, 0은
+	// "기록이 하나도 없다" 는 가장 심각한 신호라 **거짓 경보가 울린다.**
+	// 제로값이 최악의 판정을 뜻하면 안 된다.
+	//
+	// 미확인 구간 수와 나란히 놓아야 회고를 판정할 수 있다 — 기록이 0인데 표시만
+	// 쌓이면 에이전트가 cb capture 를 안 부르고 있다는 뜻이다.
+	RecentDecisions *int
 }
 
 // Wiring 은 훅 배선과 데몬 상태를 검사해 core 검사 뒤에 붙인다.
@@ -217,8 +226,13 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 		mode = "데몬(cb watch)이 돌고 있다"
 	}
 
+	act := ""
+	if o.RecentDecisions != nil {
+		act = fmt.Sprintf(" · 최근 7일 기록 %d건", *o.RecentDecisions)
+	}
+
 	if len(items) == 0 {
-		add(r, "안전망", health.OK, mode+" · 미확인 구간 없음", "")
+		add(r, "안전망", health.OK, mode+act+" · 미확인 구간 없음", "")
 		return
 	}
 	stale := 0
@@ -227,10 +241,18 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 			stale++
 		}
 	}
-	lv, fix := health.Warn, "확인하고 실제 결정이면 cb capture 로 남겨라"
-	detail := fmt.Sprintf("%s · 미확인 구간 %d건", mode, len(items))
-	if stale > 0 {
-		detail += fmt.Sprintf(" (그중 %d건은 7일 넘게 방치 — 기록이 안 되고 있다는 신호다)", stale)
+	detail := fmt.Sprintf("%s%s · 미확인 구간 %d건", mode, act, len(items))
+	lv := health.Warn
+	fix := "확인하고 실제 결정이면 cb capture 로 남겨라"
+
+	// **이 조합이 회고의 판정이다.** 표시는 쌓이는데 기록이 0이면 에이전트가
+	// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
+	if o.RecentDecisions != nil && *o.RecentDecisions == 0 {
+		lv = health.Fail
+		detail += " — **기록이 0인데 표시만 쌓인다.** 결정을 내리고도 안 남기고 있다"
+		fix = "결정 시점에 cb capture 를 불러라. 미확인 구간부터 확인하라"
+	} else if stale > 0 {
+		detail += fmt.Sprintf(" (그중 %d건은 7일 넘게 방치)", stale)
 	}
 	add(r, "안전망", lv, detail, fix)
 }

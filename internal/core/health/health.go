@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/index"
+	"github.com/xian0310567/casebook/internal/core/schema"
 	"github.com/xian0310567/casebook/internal/core/store"
 )
 
@@ -75,8 +78,96 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkDomainFolders(r, l)
 	checkUndeclared(r, l)
 	notes := checkNotes(r, l)
+	checkSchema(r, l, notes)
+	checkSimilarSlugs(r, notes)
 	checkIndex(r, l, notes)
 	return r
+}
+
+// RecentDecisions 는 최근 days 일 안에 날짜가 찍힌 결정 수다.
+//
+// 컷오버 회고의 한쪽 축이다 — 다른 쪽은 미확인 구간 수이고, 둘을 나란히 놓아야
+// "기록이 되고 있는가" 를 판정할 수 있다.
+func RecentDecisions(l *store.Layout, now time.Time, days int) int {
+	notes, _, err := l.List()
+	if err != nil {
+		return -1
+	}
+	cut := now.AddDate(0, 0, -days).Format("2006-01-02")
+	n := 0
+	for _, note := range notes {
+		if note.Meta.Date >= cut {
+			n++
+		}
+	}
+	return n
+}
+
+// checkSchema 는 **`cb capture` 가 거부했을 노트를 찾는다.**
+//
+// 파싱과 검증은 다르다. List() 는 frontmatter 가 10키인지만 보고, 접두어와 domain
+// 첫 값이 같은지·status/outcome 이 허용값인지·날짜 형식이 맞는지는 안 본다.
+// 손으로 쓴 노트는 이 검증을 통째로 우회하므로, 여기가 그 그물이다.
+func checkSchema(r *Report, l *store.Layout, notes []store.Note) {
+	var bad []string
+	for _, n := range notes {
+		if err := schema.Validate(l.DecisionMarker(), n.Stem, n.Meta); err != nil {
+			bad = append(bad, fmt.Sprintf("%s (%v)", n.Stem, err))
+		}
+	}
+	if len(bad) == 0 {
+		r.add("스키마", OK, fmt.Sprintf("%d건 전부 통과", len(notes)), "")
+		return
+	}
+	sort.Strings(bad)
+	r.add("스키마", Fail, strings.Join(bad, " · "),
+		"cb capture 를 거치면 애초에 거부된다. 손으로 고치거나 다시 만들어라")
+}
+
+// checkSimilarSlugs 는 하이픈·공백·밑줄·대소문자만 다른 결정을 찾는다.
+//
+// 감사 결함 4 다 — 옛 구현의 유일한 방어가 "완전히 동일한 파일명이면 스킵" 이라
+// slug 가 한 글자만 달라도 중복 노트가 생겼다. `cb capture` 는 이걸 거부하지만
+// **손으로 쓰면 우회된다.**
+func checkSimilarSlugs(r *Report, notes []store.Note) {
+	groups := map[string][]string{}
+	for _, n := range notes {
+		groups[slugKey(n.Stem)] = append(groups[slugKey(n.Stem)], n.Stem)
+	}
+	var dups []string
+	for _, v := range groups {
+		if len(v) > 1 {
+			sort.Strings(v)
+			dups = append(dups, strings.Join(v, " ↔ "))
+		}
+	}
+	if len(dups) == 0 {
+		r.add("유사 slug", OK, "없다", "")
+		return
+	}
+	sort.Strings(dups)
+	r.add("유사 slug", Warn, strings.Join(dups, " · "),
+		"둘 중 하나를 지우거나 cb review --supersedes 로 엮어라")
+}
+
+// slugKey 는 유사 비교용 정규화 키다. **capture.slugKey 와 같은 규칙이어야 한다** —
+// 한쪽만 고치면 capture 가 거부한 것을 doctor 가 못 보거나 그 반대가 된다.
+//
+// stem 전체(날짜 포함)를 쓰므로 날짜가 다르면 키가 갈린다. capture 도 그렇게 한다 —
+// 며칠 뒤의 같은 주제는 중복이 아니라 후속 결정일 수 있기 때문이다.
+func slugKey(stem string) string {
+	out := make([]rune, 0, len(stem))
+	for _, r := range stem {
+		switch r {
+		case '-', '_', ' ':
+		default:
+			if r >= 'A' && r <= 'Z' {
+				r += 32
+			}
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }
 
 func checkVaultDir(r *Report, c *config.Config) {

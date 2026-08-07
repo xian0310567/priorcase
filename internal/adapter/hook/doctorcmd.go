@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -64,7 +65,11 @@ func NewDoctorCommand() *cobra.Command {
 					stateDir = d
 				}
 			}
-			Wiring(r, DoctorOptions{SettingsPath: settingsPath, StateDir: stateDir})
+			Wiring(r, DoctorOptions{
+				SettingsPath:    settingsPath,
+				StateDir:        stateDir,
+				RecentDecisions: recentPtr(health.RecentDecisions(l, time.Now(), 7)),
+			})
 			return report(out, r)
 		},
 	}
@@ -134,4 +139,13 @@ func DiagnosticExit(err error) (code int, silent bool) {
 		return 1, true
 	}
 	return 2, true
+}
+
+// recentPtr 는 최근 기록 수를 포인터로 감싼다. 음수(집계 실패)는 nil 로 — 모르는 것과
+// 0건은 다른 사실이고, 후자만 경보 대상이다.
+func recentPtr(n int) *int {
+	if n < 0 {
+		return nil
+	}
+	return &n
 }

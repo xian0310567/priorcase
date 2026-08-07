@@ -153,8 +153,8 @@ func TestDoctorFlagsStalePending(t *testing.T) {
 	if !strings.Contains(got.Detail, "방치") {
 		t.Errorf("방치된 구간을 안 알린다: %s", got.Detail)
 	}
-	if !strings.Contains(got.Detail, "기록이 안 되고 있다") {
-		t.Errorf("그게 무슨 뜻인지 안 알려 준다: %s", got.Detail)
+	if !strings.Contains(got.Detail, "방치") {
+		t.Errorf("방치된 구간을 안 알린다: %s", got.Detail)
 	}
 }
 
@@ -242,3 +242,54 @@ func TestDoctorDetectsDifferentCbOnPath(t *testing.T) {
 		t.Errorf("무엇이 다른지 설명하지 않는다: %s", got.Detail)
 	}
 }
+
+// ★ **회고 판정이 이 한 줄이다.** 표시는 쌓이는데 기록이 0이면 에이전트가
+// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
+func TestDoctorFailsWhenPendingGrowsButNothingRecorded(t *testing.T) {
+	stateDir := t.TempDir()
+	s := daemon.NewStore(stateDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	if err := s.AddPending(daemon.Pending{Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, At: now}); err != nil {
+		t.Fatal(err)
+	}
+	self, _ := os.Executable()
+
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: stateDir, Now: now,
+		RecentDecisions: ptr(0)}), "안전망")
+
+	if got.Level != health.Fail {
+		t.Fatalf("Level = %v, Fail 이어야 한다 — 기록 0 + 표시 누적은 설계 실패 신호다", got.Level)
+	}
+	if !strings.Contains(got.Detail, "기록이 0") {
+		t.Errorf("무슨 뜻인지 안 알려 준다: %s", got.Detail)
+	}
+}
+
+// 기록이 있으면 표시가 있어도 경고에 그친다 — 정상 운영 중이다.
+func TestDoctorWarnsOnlyWhenRecordingHappens(t *testing.T) {
+	stateDir := t.TempDir()
+	s := daemon.NewStore(stateDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	if err := s.AddPending(daemon.Pending{Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, At: now}); err != nil {
+		t.Fatal(err)
+	}
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: stateDir, Now: now,
+		RecentDecisions: ptr(5)}), "안전망")
+	if got.Level != health.Warn {
+		t.Errorf("Level = %v, Warn 이어야 한다: %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "기록 5건") {
+		t.Errorf("기록 활동을 안 보여 준다: %s", got.Detail)
+	}
+}
+
+func ptr(n int) *int { return &n }
