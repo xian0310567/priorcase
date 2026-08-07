@@ -180,3 +180,65 @@ func TestDisplayWidthCountsHangulAsTwo(t *testing.T) {
 		}
 	}
 }
+
+// ★ **PATH 검사가 없으면 진단 자체가 무용지물이다.**
+//
+// cb doctor 가 내는 모든 → 는 `cb 무엇무엇` 을 치라는 것인데, PATH 에 없으면 사용자는
+// 그중 하나도 실행할 수 없다. 훅은 절대 경로로 배선되므로 **시스템은 멀쩡히 도는데
+// 사람만 손을 못 대는** 상태가 된다.
+//
+// 실제로 그랬다 — 개발 내내 절대 경로로 불러서 못 봤고, 사용자가 `cb doctor` 를 쳤을 때
+// "command not found" 로 처음 드러났다.
+func TestDoctorDetectsCbNotOnPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // cb 가 없는 PATH
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: writeSettings(t, realisticSettings), StateDir: t.TempDir()}), "PATH")
+
+	if got.Level != health.Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다", got.Level)
+	}
+	if !strings.Contains(got.Detail, "사람이 명령을 칠 수 없다") {
+		t.Errorf("무엇이 문제인지 설명하지 않는다: %s", got.Detail)
+	}
+	if !strings.Contains(got.Fix, "ln -s") {
+		t.Errorf("고치는 법이 실행 가능한 명령이 아니다: %s", got.Fix)
+	}
+}
+
+// PATH 에 있으면 정상이다.
+func TestDoctorAcceptsCbOnPath(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(exe, filepath.Join(dir, "cb")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: writeSettings(t, realisticSettings), StateDir: t.TempDir()}), "PATH")
+	if got.Level != health.OK {
+		t.Errorf("Level = %v, OK 여야 한다: %s", got.Level, got.Detail)
+	}
+}
+
+// PATH 의 cb 가 지금 도는 것과 다르면 옛 사본을 부르고 있다는 뜻이다.
+func TestDoctorDetectsDifferentCbOnPath(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "cb")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: writeSettings(t, realisticSettings), StateDir: t.TempDir()}), "PATH")
+	if got.Level != health.Warn {
+		t.Errorf("Level = %v, Warn 이어야 한다: %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "다르다") {
+		t.Errorf("무엇이 다른지 설명하지 않는다: %s", got.Detail)
+	}
+}

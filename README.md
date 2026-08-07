@@ -14,6 +14,15 @@
 go install …` 로 부르거나 `brew upgrade go` 를 하면 된다. Releases 바이너리는
 영향을 받지 않는다.
 
+**`go install` 뒤에 `cb` 가 PATH 에 있는지 확인하라.** Go 는 `$GOPATH/bin`(보통
+`~/go/bin`)에 넣는데 그게 PATH 에 없는 환경이 흔하다. 그러면 훅은 절대 경로로 멀쩡히
+도는데 **사람만 `cb` 를 못 친다** — 아래 두 방법 중 하나면 된다.
+
+    export PATH="$HOME/go/bin:$PATH"        # 셸 설정에 추가
+    ln -s "$HOME/go/bin/cb" ~/.local/bin/cb # 이미 PATH 에 있는 자리로 링크
+
+`cb doctor` 가 이걸 검사한다.
+
 또는 [GitHub Releases](https://github.com/xian0310567/casebook/releases) 에서
 `casebook_<os>_<arch>.tar.gz` 를 받아 `cb` 를 PATH 에 둔다. darwin/linux × amd64/arm64.
 
@@ -632,6 +641,8 @@ $ cb doctor
   종료 코드 0으로 아무 일도 안 하면서 정상으로 보인다.
 - **미확인 구간 누적** — 7일 넘게 방치된 것이 있으면 따로 센다. 쌓인다는 것은
   `cb capture` 가 안 불리고 있다는 뜻이다.
+- **PATH** — `cb` 를 그냥 칠 수 있는가. 이게 안 되면 진단이 내는 모든 `→` 를
+  실행할 수 없어서 진단 자체가 무용지물이 된다.
 
 경고마다 `→` 로 고치는 법을 준다. 진단만 하고 무엇을 하라는 말이 없으면
 사용자는 그 경고를 무시하는 법을 배운다.

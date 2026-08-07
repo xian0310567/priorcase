@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -32,8 +33,39 @@ func Wiring(r *health.Report, o DoctorOptions) {
 	if o.Now.IsZero() {
 		o.Now = time.Now()
 	}
+	checkPath(r)
 	checkHooks(r, o)
 	checkDaemon(r, o)
+}
+
+// checkPath 는 사용자가 `cb` 를 그냥 칠 수 있는지 본다.
+//
+// **이게 없으면 진단 자체가 무용지물이다.** cb doctor 가 내는 모든 → 는 `cb 무엇무엇`
+// 을 치라는 것인데, PATH 에 없으면 사용자는 그중 하나도 실행할 수 없다. 훅은 절대
+// 경로로 배선되므로 **시스템은 멀쩡히 도는데 사람만 손을 못 대는** 상태가 된다.
+//
+// 실제로 그랬다 — 개발 내내 절대 경로로 불러서 이 구멍을 못 봤고, 사용자가
+// `cb doctor` 를 쳤을 때 "command not found" 로 처음 드러났다.
+func checkPath(r *health.Report) {
+	exe, err := os.Executable()
+	if err != nil {
+		return // 자기 경로를 모르면 비교할 것이 없다
+	}
+	found, lerr := exec.LookPath("cb")
+	if lerr != nil {
+		add(r, "PATH", health.Warn,
+			fmt.Sprintf("`cb` 를 PATH 에서 찾을 수 없다 (지금 것: %s) — "+
+				"훅은 절대 경로로 돌지만 사람이 명령을 칠 수 없다", exe),
+			"PATH 에 있는 디렉토리로 링크하라 (예: ln -s "+exe+" ~/.local/bin/cb)")
+		return
+	}
+	if !sameFile(found, exe) {
+		add(r, "PATH", health.Warn,
+			fmt.Sprintf("PATH 의 cb(%s)가 지금 도는 것(%s)과 다르다", found, exe),
+			"오래된 사본을 지우거나 링크를 다시 걸어라")
+		return
+	}
+	add(r, "PATH", health.OK, found, "")
 }
 
 func checkHooks(r *health.Report, o DoctorOptions) {

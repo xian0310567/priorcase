@@ -35,7 +35,7 @@ func TestSafetyNetScansWhenDaemonIsNotRunning(t *testing.T) {
 	for _, ev := range []Event{EventStop, EventPreCompact, EventSessionEnd} {
 		t.Run(string(ev), func(t *testing.T) {
 			sd := t.TempDir()
-			r := exec(t, cfg(t), sd, ev, Input{
+			r := runHook(t, cfg(t), sd, ev, Input{
 				Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: tp})
 			if r.e != nil {
 				t.Fatal(r.e)
@@ -89,7 +89,7 @@ func TestSafetyNetYieldsToRunningDaemon(t *testing.T) {
 	}
 	t.Cleanup(func() { cancel(); <-done })
 
-	r := exec(t, cfg(t), stateDir, EventStop, Input{
+	r := runHook(t, cfg(t), stateDir, EventStop, Input{
 		Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: tp})
 	if r.e != nil {
 		t.Fatal(r.e)
@@ -114,7 +114,7 @@ func TestSafetyNetYieldsToRunningDaemon(t *testing.T) {
 func TestSafetyNetStopsOnStopHookActive(t *testing.T) {
 	sd := t.TempDir()
 	tp := writeTranscript(t, t.TempDir(), 8)
-	r := exec(t, cfg(t), sd, EventStop, Input{
+	r := runHook(t, cfg(t), sd, EventStop, Input{
 		Cwd: "/tmp/proj/alpha", TranscriptPath: tp, StopHookActive: true})
 	if r.e != nil {
 		t.Fatal(r.e)
@@ -127,7 +127,7 @@ func TestSafetyNetStopsOnStopHookActive(t *testing.T) {
 
 // transcript_path 가 없으면 할 일이 없다. 조용히 끝낸다.
 func TestSafetyNetWithoutTranscriptIsNoop(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventStop, Input{Cwd: "/tmp/proj/alpha"})
+	r := runHook(t, cfg(t), t.TempDir(), EventStop, Input{Cwd: "/tmp/proj/alpha"})
 	if r.e != nil {
 		t.Errorf("transcript 가 없다고 에러를 냈다: %v", r.e)
 	}
@@ -140,7 +140,7 @@ func TestSafetyNetWithoutTranscriptIsNoop(t *testing.T) {
 func TestSafetyNetReportsToStderrOnly(t *testing.T) {
 	sd := t.TempDir()
 	tp := writeTranscript(t, t.TempDir(), 8)
-	r := exec(t, cfg(t), sd, EventStop, Input{
+	r := runHook(t, cfg(t), sd, EventStop, Input{
 		Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: tp})
 	if !strings.Contains(r.err, "훑음") {
 		t.Errorf("훑고도 아무 말이 없다:\n%s", r.err)
