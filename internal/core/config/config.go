@@ -49,14 +49,33 @@ func DefaultPath() (string, error) {
 	return filepath.Join(dir, "casebook", "config.toml"), nil
 }
 
-// Load 는 설정을 읽는다. path 가 비면 DefaultPath 를 쓴다.
+// PathEnv 는 설정 파일 경로를 덮어쓰는 환경변수 이름이다.
+const PathEnv = "CASEBOOK_CONFIG"
+
+// ResolvePath 는 실제로 열 설정 파일 경로를 정한다.
+// 우선순위는 인자(--config 플래그) > CASEBOOK_CONFIG > XDG 기본 경로다.
+//
+// 환경변수가 필요한 이유: casebook 은 CLI 로만 불리는 물건이 아니다. Claude Code
+// 훅과 데몬 어댑터(Plan 3~4)는 실행 명령줄을 우리가 못 정하는 자리가 있어서
+// --config 를 붙일 수 없다. 그 경로들이 기본 XDG 경로가 아닌 설정을 가리키려면
+// 환경변수가 유일한 통로다. 스펙 §5 도 이 변수를 전제로 쓰여 있다.
+func ResolvePath(path string) (string, error) {
+	if path != "" {
+		return path, nil
+	}
+	if p := os.Getenv(PathEnv); p != "" {
+		return p, nil
+	}
+	return DefaultPath()
+}
+
+// Load 는 설정을 읽는다. path 가 비면 ResolvePath 가 정한 경로를 쓴다
+// (CASEBOOK_CONFIG → XDG 기본 경로).
 // CASEBOOK_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
 func Load(path string) (*Config, error) {
-	if path == "" {
-		var err error
-		if path, err = DefaultPath(); err != nil {
-			return nil, err
-		}
+	path, err := ResolvePath(path)
+	if err != nil {
+		return nil, err
 	}
 	f, err := os.Open(path)
 	if err != nil {

@@ -148,6 +148,72 @@ func TestLoadVaultEnvOverride(t *testing.T) {
 	}
 }
 
+// TestLoadUsesConfigEnv 는 --config 플래그 없이도 CASEBOOK_CONFIG 가 설정
+// 경로를 정하는지 확인한다. 플래그를 붙일 수 없는 훅·데몬 어댑터가 이 통로만
+// 쓴다 — 여기가 막히면 그쪽은 XDG 기본 경로 하나에 묶인다.
+func TestLoadUsesConfigEnv(t *testing.T) {
+	p := write(t, sample)
+	t.Setenv(PathEnv, p)
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("CASEBOOK_CONFIG 를 무시했다: %v", err)
+	}
+	if c.Vault != "/tmp/vault" {
+		t.Errorf("Vault = %q, want %q", c.Vault, "/tmp/vault")
+	}
+}
+
+// TestLoadFlagBeatsConfigEnv 는 --config 플래그가 환경변수를 이기는지 본다.
+// 환경변수에는 존재하지 않는 경로를 넣어, 플래그를 무시하면 반드시 실패하게 한다.
+func TestLoadFlagBeatsConfigEnv(t *testing.T) {
+	p := write(t, sample)
+	t.Setenv(PathEnv, filepath.Join(t.TempDir(), "없는-설정.toml"))
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("플래그가 환경변수에 밀렸다: %v", err)
+	}
+	if c.Vault != "/tmp/vault" {
+		t.Errorf("Vault = %q, want %q", c.Vault, "/tmp/vault")
+	}
+}
+
+// TestResolvePathFallsBackToDefault 는 플래그도 환경변수도 없으면 XDG 기본
+// 경로로 떨어지는지 확인한다.
+func TestResolvePathFallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv(PathEnv, "")
+
+	got, err := ResolvePath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "casebook", "config.toml")
+	if got != want {
+		t.Errorf("ResolvePath(\"\") = %q, want %q", got, want)
+	}
+}
+
+// TestResolvePathPriority 는 세 출처의 우선순위를 한자리에서 못 박는다.
+func TestResolvePathPriority(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	envPath := filepath.Join(dir, "from-env.toml")
+	flagPath := filepath.Join(dir, "from-flag.toml")
+
+	t.Setenv(PathEnv, envPath)
+	if got, _ := ResolvePath(flagPath); got != flagPath {
+		t.Errorf("플래그가 있을 때 = %q, want %q", got, flagPath)
+	}
+	if got, _ := ResolvePath(""); got != envPath {
+		t.Errorf("환경변수만 있을 때 = %q, want %q", got, envPath)
+	}
+	t.Setenv(PathEnv, "")
+	if got, _ := ResolvePath(""); got != filepath.Join(dir, "casebook", "config.toml") {
+		t.Errorf("둘 다 없을 때 = %q, want XDG 기본 경로", got)
+	}
+}
+
 // TestDecisionMarkerIsDerivedFromTemplate 는 결정 표식이 코드 상수가 아니라
 // decision_file 템플릿에서 유도된다는 사실을 못박는다. 템플릿을 바꾸면 표식이
 // 따라 바뀌어야 국제화가 열린다 (스펙 §5).
