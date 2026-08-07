@@ -352,3 +352,86 @@ func TestVaultReadFailureStillFlags(t *testing.T) {
 		t.Error("볼트 대조에 실패했다고 표시를 건너뛰었다 — 안전망이 조용히 꺼진다")
 	}
 }
+
+// 세션 대조는 날짜·도메인과 무관하게 성립한다 — 자정을 넘긴 세션이나 도메인이 바뀐
+// 경우도 잡는다. 날짜 폴백만 있으면 이런 건 놓친다.
+func TestSessionMatchSuppressesAcrossDays(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	l := store.NewLayout(vc)
+
+	// 픽스처에 없는 날짜(2026-08-07)의 대화인데, 그 세션으로 기록된 노트를 심는다.
+	note := filepath.Join(vc.Vault, "alpha", "decisions", "alpha-결정-세션기록-2026-01-01.md")
+	body := "---\ntype: decision\ndate: 2026-01-01\ndomain: [alpha]\nsummary: \"x\"\n" +
+		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
+		"source_session: \"S1\"\n---\n\n## 결정\n\nx\n"
+	if err := os.WriteFile(note, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // sessionId=S1, 2026-08-07
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Recorded {
+		t.Error("같은 세션으로 기록된 노트가 있는데 못 알아봤다")
+	}
+	if r.Flagged {
+		t.Error("이미 기록된 세션인데 표시했다")
+	}
+}
+
+// 다른 세션의 기록은 이 세션을 가려 주지 않는다 (날짜·도메인이 다를 때).
+func TestDifferentSessionDoesNotSuppress(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	vc.Domain = append(vc.Domain, config.Domain{Prefix: "gamma", Folder: "gamma", Paths: []string{"/tmp/proj/gamma"}})
+	l := store.NewLayout(vc)
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	var lines []string
+	for i := 0; i < 8; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"assistant","cwd":"/tmp/proj/gamma","sessionId":"다른세션","timestamp":"2026-12-31T01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"여기서 결정했다"}]}}`+"\n", i))
+	}
+	writeLines(t, tp, lines...)
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recorded {
+		t.Error("다른 세션·다른 날·다른 도메인인데 억제됐다")
+	}
+	if !r.Flagged {
+		t.Error("표시했어야 한다")
+	}
+}
+
+// pending 은 **대화가 오간 날짜**를 담아야 한다. 표시 시각(At)을 보여 주면 에이전트가
+// 엉뚱한 날을 뒤진다 — 데몬이 며칠 뒤에 켜졌거나 훅이 밀린 구간을 뒤늦게 훑으면
+// 둘이 크게 벌어진다.
+func TestPendingCarriesConversationDate(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
+
+	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+		t.Fatal(err)
+	}
+	p := s.Pending()[0]
+	if len(p.Days) == 0 || p.Days[0] != "2026-08-07" {
+		t.Errorf("Days = %v, 대화 날짜 2026-08-07 이어야 한다", p.Days)
+	}
+	if got := p.When(); got != "2026-08-07" {
+		t.Errorf("When() = %q, 대화 날짜여야 한다 (표시 시각이 아니라)", got)
+	}
+}

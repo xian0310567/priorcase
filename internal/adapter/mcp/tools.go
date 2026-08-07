@@ -96,6 +96,7 @@ type captureArgs struct {
 	Related    []string `json:"related,omitempty" jsonschema:"관련 문서의 위키링크 또는 stem"`
 	Supersedes string   `json:"supersedes,omitempty" jsonschema:"이 결정이 뒤집는 기존 결정의 stem"`
 	Date       string   `json:"date,omitempty" jsonschema:"YYYY-MM-DD (기본: 오늘)"`
+	SessionID  string   `json:"session_id,omitempty" jsonschema:"이 결정이 나온 대화의 세션 id. 세션 진입 컨텍스트에 적혀 있으면 그대로 넘긴다"`
 }
 
 func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captureArgs) (*sdk.CallToolResult, noOutput, error) {
@@ -105,7 +106,7 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 		Summary:       a.Summary,
 		Date:          a.Date,
 		Supersedes:    a.Supersedes,
-		SourceSession: sessionID(req),
+		SourceSession: a.SessionID,
 		Tags:          a.Tags,
 		Related:       a.Related,
 		Body:          []byte(a.Body),
@@ -196,14 +197,10 @@ func textResult(s string) *sdk.CallToolResult {
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: s}}}
 }
 
-// sessionID 는 결정 노트의 source_session 에 남길 값이다. 세션을 알 수 없는
-// 전송에서는 빈 문자열이고, 그때는 frontmatter 도 빈 값으로 남는다.
-func sessionID(req *sdk.CallToolRequest) string {
-	if req == nil || req.Session == nil {
-		return ""
-	}
-	return req.Session.ID()
-}
+// **stdio MCP 에는 세션 id 가 없다.** 예전에는 req.Session.ID() 를 source_session 에
+// 넣었는데 실측으로 언제나 빈 문자열이었다 — SDK 의 세션 id 는 HTTP 전송에서만 붙는다.
+// 죽은 배선이라 걷어내고, 대신 에이전트가 인자로 넘기게 했다. 세션 진입 컨텍스트
+// (Claude Code 훅 또는 이 서버의 instructions)가 그 값을 알려 준다.
 
 // ── pending ─────────────────────────────────────────────────────────────
 
@@ -239,7 +236,7 @@ func (s *server) pending(ctx context.Context, req *sdk.CallToolRequest, a pendin
 			domain = "(도메인 미상)"
 		}
 		fmt.Fprintf(&b, "\n- id: %s\n  때: %s · 도메인: %s · 발화 %d · 시그널 %s\n  대화: %s (바이트 %d~%d)\n",
-			p.ID(), p.At.Format("2006-01-02 15:04"), domain, p.Turns,
+			p.ID(), p.When(), domain, p.Turns,
 			strings.Join(p.Signals, "·"), p.Path, p.From, p.To)
 	}
 	b.WriteString("\n각 구간의 대화를 확인하고, 실제 결정이면 casebook_capture 로 남긴 뒤 " +

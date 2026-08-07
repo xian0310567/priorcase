@@ -25,12 +25,10 @@ go install …` 로 부르거나 `brew upgrade go` 를 하면 된다. Releases �
 
 ## 현재 상태
 
-**Plan 1 (코어 + CLI) · Plan 2 (MCP 서버) · Plan 3 (데몬) 구현 완료.**
-`cb index` · `cb recall` · `cb capture` · `cb review` · `cb mcp` · `cb watch`
-여섯 서브커맨드가 동작한다.
+**v1 구현 완료.** `cb index` · `cb recall` · `cb capture` · `cb review` ·
+`cb mcp` · `cb watch` · `cb hook` · `cb init` 여덟 서브커맨드가 동작한다.
 
-Claude Code 훅 어댑터와 `cb init`(훅 배선·데몬 등록)은 아직 없다 (Plan 4). 그래서
-데몬은 사람이 직접 띄워야 하고, 주제 전환 시 회수 강제도 아직 없다.
+`cb rollup`(작업 로그 요약)과 다른 호스트 파서, 임베딩 검색은 v2 다.
 
 ## 설정
 
@@ -545,6 +543,64 @@ quiesce_seconds = 3
 `signals` 가 비면 **어떤 구간도 표시되지 않는다.** 그 상태로도 데몬은 정상 기동한
 것처럼 보이므로, 그때는 기동 시 경고를 낸다.
 
+## Claude Code 훅
+
+`cb init` 이 배선한다. **기본은 계획만 보여 준다** — 이 설정 파일은 casebook 만의 것이
+아니라 다른 도구들과 공유하는 자리라, 실수로 한 번 돌려서 남의 훅이 사라지면 안 된다.
+
+```
+$ cb init
+설정 파일: /home/t/.claude/settings.json
+백업:      /home/t/.claude/settings.json.casebook-backup-20260807-235038
+
+걷어낼 훅:
+  - SessionStart: /home/t/.claude/hooks/second-brain/session-start.sh
+  ...
+
+심을 훅:
+  + SessionStart: CASEBOOK_HOOK=1 "/usr/local/bin/cb" hook session-start
+  ...
+
+손대지 않는 훅: 11개
+
+계획만 보여 줬다. 실제로 바꾸려면 --apply 를 붙인다.
+```
+
+`--apply` 가 수정 전에 백업을 남기고, `cb init --revert` 가 **바이트 그대로** 되돌린다.
+
+| 지키는 것 | 어떻게 |
+|---|---|
+| 남의 훅을 안 지운다 | `CASEBOOK_HOOK=1` 마커와 `--remove-matching` 에 걸리는 것만 지운다 |
+| 모르는 설정 키를 안 잃는다 | 설정 전체를 map 으로 읽고 `hooks` 만 손댄다 |
+| 깨진 설정을 안 덮어쓴다 | JSON 이 아니면 손대기 전에 멈춘다 |
+| 두 번 돌려도 안전 | 마커로 자기 것을 먼저 걷어내고 다시 심는다 |
+| 기존 설정 파일을 안 건드린다 | `config.toml` 은 **없을 때만** 만든다 |
+
+### 각 훅이 하는 일
+
+| 이벤트 | 하는 일 |
+|---|---|
+| `user-prompt-submit` | **관련 과거 결정을 강제 주입한다.** 이 어댑터의 존재 이유다 |
+| `session-start` | 도메인 · 최근 결정 · 미확인 구간 · 기록 계약 |
+| `stop` · `pre-compact` · `session-end` | 데몬이 안 돌면 대신 훑는다 |
+
+### 데몬 없이도 안전망이 돈다
+
+`cb watch` 는 상태 디렉토리에 락을 잡고 산다. 훅이 그 락을 시도해서 **얻으면 데몬이 없는
+것**이므로 자기가 훑고 놓는다. 못 얻으면 데몬이 주인이라 건너뛴다.
+
+소유자가 언제나 하나뿐이라 중복 처리가 구조적으로 불가능하고, **데몬 등록에 실패한
+사용자도 턴 경계마다 안전망을 얻는다.** 그래서 `cb init` 은 launchd·systemd 에 서비스를
+등록하지 않는다 — 되돌리기 어려운 일을 필수도 아닌 것에 하지 않는다.
+
+### 세 가지 규율
+
+1. **무슨 일이 있어도 종료 코드 0.** 훅이 실패해서 대화가 막히면, 사용자는 casebook 을
+   고치는 게 아니라 지운다.
+2. **stdout 은 에이전트 컨텍스트다.** `user-prompt-submit`·`session-start` 의 stdout 은
+   그대로 주입되므로 경고·에러가 한 줄도 섞이지 않는다. 설정 파일이 없을 때조차 그렇다.
+3. **실패를 조용히 넘기지 않는다.** stdout 이 비어도 stderr 에는 반드시 남는다.
+
 ## 개발
 
     make build   # go build -trimpath -ldflags="-s -w" -o cb ./cmd/cb
@@ -579,11 +635,12 @@ CI 는 `gofmt -l` · `go vet` · `go test -race` 를 돌린다.
 | 세션 진입 컨텍스트 | 훅 (보장) | `initialize.instructions` (사실상 동등) |
 | 주제 전환 시 회수 | 훅 (강제) | 계약 + 편승 (유도) |
 
-MCP 에는 서버가 대화 중간에 텍스트를 밀어넣는 채널이 없다. 마지막 줄이 유일한 차이다.
+MCP 에는 서버가 대화 중간에 텍스트를 밀어넣는 채널이 없다. 마지막 줄이 유일한 차이고,
+**그 차이는 v1 에서 닫히지 않는다** — 프로토콜의 한계이지 구현의 게으름이 아니다.
+Claude Code 에서는 `cb hook user-prompt-submit` 이 매 프롬프트마다 관련 결정을 밀어넣고,
+그 밖의 호스트에서는 `initialize.instructions` 의 행동 계약과 도구 응답 편승으로 유도한다.
 
-"놓친 기록 줍기" 줄도 이제 동작한다 (`cb watch`). 남은 것은 Claude Code 훅
-어댑터(Plan 4)뿐이고, 그래서 **굵은 칸의 "훅 (강제)" 는 아직 없다** — 지금은 모든
-호스트가 "계약 + 편승 (유도)" 수준이다.
+네 칸 모두 이제 실제로 동작한다.
 
 ### 안전망이 실제로 볼 수 있는 것
 

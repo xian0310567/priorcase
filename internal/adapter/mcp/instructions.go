@@ -101,7 +101,7 @@ func (v pendingView) render() string {
 			domain = "(도메인 미상)"
 		}
 		fmt.Fprintf(&b, "  - %s %s · 발화 %d · 시그널 %s\n",
-			p.At.Format("2006-01-02"), domain, p.Turns, strings.Join(p.Signals, "·"))
+			p.When(), domain, p.Turns, strings.Join(p.Signals, "·"))
 	}
 	return b.String()
 }
