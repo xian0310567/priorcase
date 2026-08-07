@@ -168,3 +168,38 @@ func (l *Layout) UndeclaredDecisionDirs() ([]string, error) {
 	sort.Strings(out)
 	return out, nil
 }
+
+// WorklogPath 는 도메인의 작업 로그 경로다.
+func (l *Layout) WorklogPath(prefix string) (string, error) {
+	return l.projectFile(prefix, l.c.Naming.Worklog)
+}
+
+// RollupPath 는 도메인의 주간 요약 파일 경로다.
+//
+// naming.rollup 은 선택 키라 비어 있을 수 있다. 그때는 조용히 기본값을 쓰지 않고
+// 에러를 낸다 — 코드에 파일명 리터럴을 숨기면 설정이 정본이라는 전제가 깨진다.
+func (l *Layout) RollupPath(prefix string) (string, error) {
+	if strings.TrimSpace(l.c.Naming.Rollup) == "" {
+		return "", fmt.Errorf("[naming] 에 rollup 이 없다 — 설정에 한 줄 넣어라 " +
+			`(예: rollup = "98-{project}-작업-로그-요약.md")`)
+	}
+	return l.projectFile(prefix, l.c.Naming.Rollup)
+}
+
+func (l *Layout) projectFile(prefix, template string) (string, error) {
+	folder, ok := l.c.FolderFor(prefix)
+	if !ok {
+		return "", fmt.Errorf("알 수 없는 도메인 접두어: %q", prefix)
+	}
+	name := strings.ReplaceAll(template, "{project}", folder)
+	return filepath.Join(l.c.Vault, folder, name), nil
+}
+
+// Prefixes 는 설정에 선언된 도메인 접두어를 순서대로 준다.
+func (l *Layout) Prefixes() []string {
+	out := make([]string, 0, len(l.c.Domain))
+	for _, d := range l.c.Domain {
+		out = append(out, d.Prefix)
+	}
+	return out
+}
