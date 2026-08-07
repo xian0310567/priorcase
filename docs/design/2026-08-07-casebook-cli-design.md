@@ -104,6 +104,7 @@ casebook/
 ```toml
 # ~/.config/casebook/config.toml   (XDG. CASEBOOK_CONFIG 로 오버라이드)
 vault = "~/Documents/Obsidian Vault"
+exclude = ["~/project/NOI"]
 
 [naming]
 decision_file = "{domain}-결정-{slug}-{date}.md"
@@ -111,18 +112,27 @@ decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-작업-로그.md"
 index         = "_meta/00-결정-색인.md"
 
-[[domain]]
-prefix = "omni"; folder = "omni"; paths = ["~/project/omni"]
-[[domain]]
-prefix = "occ";  folder = "OCC";  paths = ["~/Documents/automation-dropshipping"]
-
-exclude = ["~/project/NOI"]
-
 [capture]
 signals = ["결정", "선택", "하기로", "채택", "대신", "전략", "포기", "변경"]
 min_turns = 6
 quiesce_seconds = 3
+
+[[domain]]
+prefix = "omni"
+folder = "omni"
+paths  = ["~/project/omni"]
+
+[[domain]]
+prefix = "occ"
+folder = "OCC"
+paths  = ["~/Documents/automation-dropshipping"]
 ```
+
+> **키 배치가 의미를 바꾼다.** TOML 에서 테이블 헤더 뒤의 bare key 는 그 테이블에 속하므로,
+> `exclude` 를 `[[domain]]` 뒤에 두면 **top-level 이 아니라 마지막 domain 의 필드가 된다**
+> — 파서 에러 없이 조용히. 그래서 top-level 키(`vault`·`exclude`)를 파일 맨 위에,
+> 배열 테이블(`[[domain]]`)을 맨 아래에 둔다. 세미콜론은 TOML 구분자가 아니므로
+> 키 하나당 한 줄이다. 두 실수 모두 strict 모드(`DisallowUnknownFields`)가 잡는다.
 
 - **`CASEBOOK_VAULT` 가 볼트 경로를 덮어쓴다.** 개발 중 테스트 볼트 격리가 이 한 줄.
 - 도메인·제외·키워드·파일명 규약이 전부 설정. 새 프로젝트 추가가 "코드 3곳 수정"에서
@@ -243,11 +253,36 @@ JSONL 파서 · 데몬
 | 140자 한글 slug 절단 → 깨진 UTF-8 없음 (rune 기준) | `cut -c` 로케일 함정 |
 | NFD 파일명 입력 → NFC 정규화 후 매칭 | tar 복원 함정 |
 | `../CLAUDE` 등 경로 순회 → 거부 | 감사에서 도달 가능 확인 |
-| frontmatter 라운드트립: 읽고 다시 쓰면 바이트 동일 | 방출기 이원화 |
+| **frontmatter 정본형 멱등성** (아래) | 방출기 이원화 |
 | 접두어 ≠ domain 첫 값 → 거부 | 스키마 강제 |
 
-`testdata/` 에 실볼트 42건의 사본을 골든으로 넣는다. 파서·검증·색인이 실데이터에서
-깨지지 않는 것을 CI 가 매번 확인한다.
+### 라운드트립 테스트의 정확한 형태
+
+"읽고 다시 쓰면 바이트 동일"은 **기존 볼트를 대상으로는 달성 불가능**하다. 실측:
+실볼트 46건에 대해 `yaml.Node` 경로가 8/46, `map` 경로가 0/46 이다. 실패 38건의 원인은
+전부 flow 시퀀스 콤마 뒤 공백 하나이고, 그건 라이브러리 탓이 아니라 **볼트에 두 방출기의
+산출물이 섞여 있어서**다 — `tags: [a,b,c]`(39건)와 `tags: [a, b, c]`(7건)가 공존한다.
+스펙 §4.1 이 지적한 "방출기 이원화"의 실증이다.
+
+그래서 테스트는 **정본형 멱등성**으로 쓴다:
+
+```
+emit(parse(emit(parse(doc)))) == emit(parse(doc))
+```
+
+실볼트 46건에 대해 46/46 통과가 확인됐다. `cb index` 가 46건을 정본형으로 한 번
+재기록하면 그 뒤로는 진짜 바이트 동일이 성립한다.
+
+### testdata 는 합성 픽스처로 만든다
+
+**실볼트 사본을 저장소에 넣지 않는다.** 볼트 결정에는 개인 내용이 들어 있어(synth 도메인의
+타겟 오디언스·수위 설정 등) 공개 저장소에 그대로 공개된다.
+
+- `testdata/vault/` 에는 실볼트의 **구조만** 재현한 합성 픽스처를 둔다 — 10키 frontmatter,
+  파일명 규약, 4개 도메인, 그리고 실볼트에는 없는 엣지 케이스(NFD 파일명, 140자 초과 한글
+  slug, `related: []`, 두 배열 형식 혼재)를 의도적으로 심는다. 골든으로는 오히려 낫다.
+- 실볼트 대조는 **로컬 전용**으로 남긴다. `CASEBOOK_TEST_VAULT` 가 설정됐을 때만 도는
+  테스트로 두고 CI 에서는 건너뛴다.
 
 ## 12. 컷오버
 
@@ -261,7 +296,7 @@ JSONL 파서 · 데몬
 
 **게이트 조건**
 
-- [ ] 실볼트 42건을 `cb index` 가 손실·왜곡 없이 재생성
+- [ ] 실볼트 46건을 `cb index` 가 손실·왜곡 없이 재생성
 - [ ] `cb recall` 상위 3건이 기존 훅 결과와 실질 동등
 - [ ] 결정 순간 `cb capture` → 규약 파일명·스키마로 생성
 - [ ] 데몬이 놓친 결정을 pending 으로 잡고, 다음 세션 `instructions` 에 노출
@@ -270,9 +305,51 @@ JSONL 파서 · 데몬
 
 기존 훅 5개는 3단계까지 손대지 않는다. 삭제는 4단계에서 한 번에.
 
-## 13. 배포
+## 13. 빌드와 배포
 
-goreleaser 로 크로스 컴파일 → GitHub Releases · `brew tap` · `go install`.
+### 툴체인 — 착수 전 해결해야 할 블로커
+
+개발 머신은 Homebrew Go 1.23.3 이고 **Homebrew 는 `GOTOOLCHAIN` 기본값을 `local` 로 박아
+배포한다.** 이 조합에서 `go mod tidy` 조차 실패한다 — 최신 `golang.org/x/text` 가
+`go >= 1.25` 를 요구하기 때문이다. Go MCP SDK 도 v1.4.0 부터 1.24/1.25 를 요구한다
+(v1.0.0~v1.3.1 은 1.23.0).
+
+셋 중 하나를 착수 첫 스텝으로 명시한다. **(A) 를 권한다.**
+
+- **(A) 툴체인 상향** — `brew upgrade go`, 또는 저장소에서 `GOTOOLCHAIN=auto` 를 고정.
+  후자는 실측으로 go1.25.12 를 자동 내려받아 빌드 성공을 확인했다.
+- (B) 1.23.3 유지 + 의존성 핀 고정 — 아래 세트가 tidy·build·크로스컴파일까지 통과한다.
+- (C) MCP SDK 를 v1.3.1 로 고정 (구버전 API 감수)
+
+### 의존성 (실측 검증된 세트)
+
+| 용도 | 모듈 | 버전 |
+|---|---|---|
+| CLI | `github.com/spf13/cobra` | v1.10.2 |
+| TOML | `github.com/pelletier/go-toml/v2` | v2.4.3 |
+| YAML(파싱만) | `go.yaml.in/yaml/v3` | v3.0.5 |
+| 파일 락 | `github.com/gofrs/flock` | v0.12.1 |
+| 파일 감시 | `github.com/fsnotify/fsnotify` | v1.10.1 |
+| 유니코드 정규화 | `golang.org/x/text` | v0.28.0 |
+
+**`gopkg.in/yaml.v3` 는 2025-04 에 아카이브됐다.** YAML 조직이 유지하는 포크
+`go.yaml.in/yaml/v3` 를 쓴다(API drop-in, cobra 도 이미 이쪽으로 옮겼다).
+
+**YAML 은 파싱에만 쓰고 방출은 직접 한다.** 10키를 리터럴 순서로 찍는 함수 하나.
+어떤 라이브러리도 기존 볼트와 바이트 동일을 못 내므로 정본 형식을 어차피 정해야 하고,
+정하고 나면 순서·스타일 보존 기계가 과잉이다. 방출 순서가 함수 본문의 리터럴이 되면
+§4.1 이 노린 "방출기 이원화 구조적 불가능"이 코드로 강제된다.
+단, **이스케이프는 손으로 짜지 않는다** — `yaml.Node{Style: DoubleQuotedStyle}` 를
+단독 마샬해 큰따옴표 스칼라 조각만 얻어 붙인다.
+
+**XDG 경로는 직접 구현한다(~25줄).** `adrg/xdg` 와 `os.UserConfigDir()` 은 macOS 에서
+`~/Library/Application Support` 를 반환하는데, casebook 은 셸 훅 시절과 같은 자리
+(`~/.config`, `~/.local/state`)를 요구한다. 라이브러리 품질이 아니라 정책이 다른 것이다.
+
+### 배포
+
+goreleaser 로 크로스 컴파일(`CGO_ENABLED=0`) → GitHub Releases · `brew tap` ·
+`go install`. 실측 바이너리 크기: darwin/arm64 2.80 MB, linux/amd64 static 2.70 MB.
 런타임 의존이 0이라 설치 안내가 한 줄이다.
 
 ## 14. 채택하지 않은 대안
@@ -288,6 +365,17 @@ goreleaser 로 크로스 컴파일 → GitHub Releases · `brew tap` · `go inst
 | 같은 볼트에서 구·신 병행 | 결정이 중복 생성된다 |
 
 ## 15. 미해결 항목
+
+- **★ 교차 프로젝트 회상이 현행 코드에서 실제로는 막혀 있다.** 1차 도메인 필터가
+  "cwd 도메인 폴더 결과가 **완전히 비었을 때만**" 전체로 넓힌다. 그래서 cwd 도메인에
+  결정이 1건이라도 있으면 절대 넓어지지 않는다. 실측: `cwd=~/project/casebook` 에서
+  *"macOS 셸 한글 로케일 지뢰 처리"* → `no-match`. 같은 프롬프트를 `cwd=/tmp` 로 주면
+  common 문서가 22점 1위로 나온다. 주석은 "교차 프로젝트 회상이 이 시스템의 존재 이유"라고
+  쓰여 있는데 코드는 반대로 동작한다.
+  → **이식하면서 고칠지, 동작 보존 후 별도로 고칠지 결정해야 한다.** 어느 쪽이든 골든
+  스코어가 바뀌므로 테스트로 먼저 고정한다. 이건 회수 품질의 핵심이라 v1 안에서 다뤄야 한다.
+- **정본 배열 형식 선택** — 실볼트에 `[a,b,c]`(39건)와 `[a, b, c]`(7건)가 섞여 있다.
+  Go 단일 방출기가 어느 쪽을 정본으로 삼든 나머지는 첫 재기록 때 바이트가 바뀐다.
 
 - **데몬 수명주기 등록 방식** — launchd(macOS) / systemd(Linux) / MCP 서버가 자동 기동.
   `cb init` 이 무엇을 하는지 구현 단계에서 확정한다.
