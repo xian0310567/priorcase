@@ -31,6 +31,13 @@ type Request struct {
 type Result struct {
 	Path    string
 	Related []search.Hit
+	// RelatedErr 는 편승 검색이 실패한 원인이다.
+	//
+	// 기록은 성공했는데 편승 검색만 실패한 경우 기록까지 실패시키지는 않는다 —
+	// 노트는 이미 디스크에 있고, 실패한 것은 곁다리 정보뿐이다. 대신 조용히
+	// 넘어가지도 않는다: 호출부가 이 값을 사용자에게 알려야 "관련 결정이 없다"
+	// 와 "찾아보지 못했다" 가 구별된다.
+	RelatedErr error
 }
 
 // Do 는 결정 노트를 만들고 색인을 갱신한 뒤, 관련 과거 결정을 함께 준다.
@@ -59,8 +66,9 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 		return Result{}, fmt.Errorf("같은 경로에 이미 결정이 있다: %s", l.RelPath(path))
 	}
 
-	// 편승: 쓰기 **전에** 검색한다 — 자기 자신이 결과에 끼지 않게
-	related := search.Recall(l, c, r.Summary+" "+r.Slug,
+	// 편승: 쓰기 **전에** 검색한다 — 자기 자신이 결과에 끼지 않게.
+	// 여기서 실패해도 기록은 계속한다. 대신 원인을 Result 에 실어 보낸다.
+	related, relatedErr := search.Recall(l, c, r.Summary+" "+r.Slug,
 		search.Options{CrossProject: true, Limit: 3, MinScore: 1})
 
 	body := r.Body
@@ -73,7 +81,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if _, err := index.Write(l); err != nil {
 		return Result{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
 	}
-	return Result{Path: path, Related: related}, nil
+	return Result{Path: path, Related: related, RelatedErr: relatedErr}, nil
 }
 
 // ensureDecisionTag 는 decision 태그를 보장한다. 회수의 1차 구분자다.

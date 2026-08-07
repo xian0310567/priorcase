@@ -33,14 +33,20 @@ type Options struct {
 }
 
 // Recall 은 프롬프트에 관련된 결정을 점수순으로 준다.
-func Recall(l *store.Layout, c *config.Config, prompt string, o Options) []Hit {
+//
+// 볼트를 읽지 못하면 에러를 준다 — 빈 결과로 뭉개지 않는다. "관련 결정이 없다"
+// 와 "볼트를 못 읽었다" 는 훅 주입 경로에서 정반대 의미다: 전자는 참이지만
+// 후자를 침묵시키면 에이전트가 과거 결정을 못 본 채 "없다" 로 읽는다.
+// 같은 l.List() 를 부르는 cb index 는 이미 에러로 죽으므로, 두 명령이 같은
+// 에러 정책을 쓰게 맞춘다.
+func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit, error) {
 	keywords := ExtractKeywords(prompt)
 	if len(keywords) == 0 {
-		return nil
+		return nil, nil
 	}
 	notes, err := l.List()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	cwdDomain := ""
@@ -59,7 +65,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) []Hit {
 	}
 
 	hits = trim(hits, o)
-	return hits
+	return hits, nil
 }
 
 func mentionedDomains(c *config.Config, keywords []string) map[string]bool {

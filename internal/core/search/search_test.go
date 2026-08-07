@@ -1,6 +1,8 @@
 package search
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 
 func TestRecallScoring(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	hits := Recall(l, c, "저장 엔진을 무엇으로 골랐지", Options{Limit: 3, MinScore: 1})
+	hits := mustRecall(t, l, c, "저장 엔진을 무엇으로 골랐지", Options{Limit: 3, MinScore: 1})
 	if len(hits) == 0 {
 		t.Fatal("매칭이 없다")
 	}
@@ -20,7 +22,7 @@ func TestRecallScoring(t *testing.T) {
 
 func TestRecallNoMatchReturnsEmpty(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	if hits := Recall(l, c, "완전히 무관한 주제 짜장면", Options{Limit: 3, MinScore: 1}); len(hits) != 0 {
+	if hits := mustRecall(t, l, c, "완전히 무관한 주제 짜장면", Options{Limit: 3, MinScore: 1}); len(hits) != 0 {
 		t.Errorf("무관한 프롬프트에 %d건 매칭: %+v", len(hits), hits)
 	}
 }
@@ -37,7 +39,7 @@ func TestSupersededPenalty(t *testing.T) {
 	// 빼면 sup 의 head/body 히트가 각각 1건씩 줄어(raw 11→7, -5=2) act(6)
 	// 보다 확실히 낮아진다. 감점 로직 자체는 옳고 픽스처와의 조합에서만
 	// 우연히 동점이 났던 것이라 프롬프트를 조정했다.
-	hits := Recall(l, c, "스키마 단일 저장 엔진", Options{CrossProject: true, Limit: 10, MinScore: 1})
+	hits := mustRecall(t, l, c, "스키마 단일 저장 엔진", Options{CrossProject: true, Limit: 10, MinScore: 1})
 	var sup, act *Hit
 	for i := range hits {
 		switch hits[i].Note.Meta.Status {
@@ -80,8 +82,8 @@ func TestCrossProjectRecall(t *testing.T) {
 	prompt := "저장 엔진 로케일 바이트"
 	cwd := "/tmp/proj/alpha"
 
-	off := Recall(l, c, prompt, Options{Cwd: cwd, CrossProject: false, Limit: 3, MinScore: 1})
-	on := Recall(l, c, prompt, Options{Cwd: cwd, CrossProject: true, Limit: 3, MinScore: 1})
+	off := mustRecall(t, l, c, prompt, Options{Cwd: cwd, CrossProject: false, Limit: 3, MinScore: 1})
+	on := mustRecall(t, l, c, prompt, Options{Cwd: cwd, CrossProject: true, Limit: 3, MinScore: 1})
 
 	if len(on) == 0 {
 		t.Fatal("CrossProject=true 인데 common 문서를 못 찾았다")
@@ -94,7 +96,7 @@ func TestCrossProjectRecall(t *testing.T) {
 
 func TestRenderInject(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	hits := Recall(l, c, "로케일 의존 도구 바이트", Options{CrossProject: true, Limit: 3, MinScore: 1})
+	hits := mustRecall(t, l, c, "로케일 의존 도구 바이트", Options{CrossProject: true, Limit: 3, MinScore: 1})
 	out := RenderInject(l, hits)
 	if !strings.HasPrefix(out, "[과거 결정 참조]\n") {
 		t.Errorf("헤더가 없다:\n%s", out)
@@ -119,7 +121,7 @@ func TestRenderInjectEmpty(t *testing.T) {
 // ExtractKeywords 가 빈 결과를 주고 Recall 은 즉시 nil 을 반환해야 한다.
 func TestStopwordOnlyPromptMatchesNothing(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
-	hits := Recall(l, c, "결정", Options{CrossProject: true, Limit: 10, MinScore: 1})
+	hits := mustRecall(t, l, c, "결정", Options{CrossProject: true, Limit: 10, MinScore: 1})
 	if len(hits) != 0 {
 		t.Errorf("불용어 '결정' 만으로 %d건 매칭 — stem 의 '-결정-' 표식이 새고 있다: %+v", len(hits), hits)
 	}
@@ -159,9 +161,36 @@ func TestBodyOnlyKeywordExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hits := Recall(l, c, bodyOnlyKeyword, Options{CrossProject: true, Limit: 10, MinScore: 1})
+	hits := mustRecall(t, l, c, bodyOnlyKeyword, Options{CrossProject: true, Limit: 10, MinScore: 1})
 	if len(hits) != 0 {
 		t.Errorf("본문에만 있는 키워드로 검색했는데 %d건 매칭 — headHits==0 조기 탈락이 안 됐다: %+v", len(hits), hits)
+	}
+}
+
+// TestRecallReportsVaultReadFailure 는 볼트를 읽지 못했을 때 Recall 이
+// 침묵하지 않는지 본다. 예전에는 l.List() 에러를 nil 로 버려서, 결정 폴더가
+// 읽기 불가여도 "관련 결정 없음" 과 똑같이 보였다 — 훅 주입 경로에서 에이전트가
+// 과거 결정을 못 본 채 "없다" 로 읽는다. cb index 는 같은 List() 에서 죽는데
+// cb recall 만 rc=0 으로 조용히 넘어가던 비대칭도 여기서 사라진다.
+func TestRecallReportsVaultReadFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root 는 디렉토리 퍼미션을 무시하므로 이 테스트가 성립하지 않는다")
+	}
+	l, c := fixtureLayoutConfig(t)
+
+	// 픽스처의 alpha 결정 폴더에서 읽기 권한을 뺏는다.
+	dir := filepath.Join(c.Vault, "alpha", "decisions")
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	hits, err := Recall(l, c, "저장 엔진을 무엇으로 골랐지", Options{CrossProject: true, Limit: 3, MinScore: 1})
+	if err == nil {
+		t.Fatalf("읽을 수 없는 볼트인데 에러가 없다 (hits=%d) — 실패가 빈 결과로 뭉개졌다", len(hits))
+	}
+	if !strings.Contains(err.Error(), "결정 폴더를 읽을 수 없다") {
+		t.Errorf("에러가 원인을 알려주지 않는다: %v", err)
 	}
 }
 

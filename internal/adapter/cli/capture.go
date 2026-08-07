@@ -40,6 +40,13 @@ func newCaptureCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "기록됨: %s\n", l.RelPath(res.Path))
+			// 편승 검색 실패는 기록을 실패시키지 않는다 — 노트는 이미 저장됐다.
+			// 그래도 조용히 넘어가지는 않는다: 여기서 알리지 않으면 "관련 결정이
+			// 없다" 와 "찾아보지 못했다" 가 구별되지 않는다.
+			if res.RelatedErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"경고: 관련 과거 결정을 찾지 못했다 (기록은 됐다): %v\n", res.RelatedErr)
+			}
 			if len(res.Related) > 0 {
 				fmt.Fprintln(out, "\n관련 과거 결정:")
 				for _, h := range res.Related {

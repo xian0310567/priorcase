@@ -32,9 +32,12 @@ func newRecallCmd() *cobra.Command {
 			for _, a := range args[1:] {
 				query += " " + a
 			}
-			hits := search.Recall(l, c, query, search.Options{
+			hits, err := search.Recall(l, c, query, search.Options{
 				Cwd: cwd, CrossProject: crossProject, Limit: limit, MinScore: 1,
 			})
+			if err != nil {
+				return err
+			}
 			out := cmd.OutOrStdout()
 			if format == "inject" {
 				fmt.Fprint(out, search.RenderInject(l, hits))
