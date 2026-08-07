@@ -14,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gofrs/flock"
 	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/store"
 	"github.com/xian0310567/casebook/internal/transcript/claudecode"
 )
 
@@ -86,13 +87,23 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 
-	d := &watcher{o: o, st: st, dirty: map[string]bool{}}
+	d0 := &watcher{o: o}
+	// 시그널이 하나도 없으면 어떤 구간도 표시되지 않는다 — 데몬이 돌긴 도는데
+	// **아무 일도 안 한다.** 설정에 [capture] 절을 안 쓰면 이 상태가 되는데, 겉으로는
+	// 정상 기동으로 보여서 "안전망이 켜져 있다" 고 믿게 된다. 무동작을 조용히 두지 않는다.
+	if len(o.Config.Capture.Signals) == 0 {
+		d0.emit(Event{Kind: "error", Note: "설정에 [capture] signals 가 없다 — " +
+			"어떤 구간도 표시되지 않는다. 데몬이 사실상 아무 일도 하지 않는다"})
+	}
+
+	d := &watcher{o: o, st: st, l: store.NewLayout(o.Config), dirty: map[string]bool{}}
 	return d.run(ctx)
 }
 
 type watcher struct {
 	o     Options
 	st    *Store
+	l     *store.Layout
 	mu    sync.Mutex
 	dirty map[string]bool
 }
@@ -113,7 +124,7 @@ func (d *watcher) run(ctx context.Context) error {
 	if err := d.watchTree(w, d.o.TranscriptRoot); err != nil {
 		return err
 	}
-	d.seed()
+	d.startupPass()
 	d.emit(Event{Kind: "ready", Note: fmt.Sprintf("감시 시작 (%s)", d.o.TranscriptRoot)})
 
 	// 디바운스 타이머. 처음에는 멈춰 있다.
@@ -197,16 +208,18 @@ func (d *watcher) watchTree(w *fsnotify.Watcher, root string) error {
 	})
 }
 
-// seed 는 첫 기동에서 **이미 있던** 파일의 체크포인트를 현재 끝으로 옮긴다.
+// startupPass 는 기동 시 한 번 도는 정리다. 파일마다 둘 중 하나를 한다.
 //
-// 데몬이 켜지기 전의 대화는 안전망 대상이 아니다. 실측으로 기존 transcript 가
-// 1173개였는데 그걸 다 훑으면 pending 이 쏟아진다. 기동 후에 새로 생기는 파일은
-// 체크포인트가 없어도 시딩되지 않으므로 처음부터 읽힌다 — seed 는 여기서 한 번만 돈다.
-func (d *watcher) seed() {
-	if d.o.Backfill {
-		d.emit(Event{Kind: "seed", Note: "--backfill — 기존 파일도 처음부터 훑는다"})
-		return
-	}
+//   - **처음 보는 파일이면 끝으로 시딩한다.** 데몬이 켜지기 전의 대화는 안전망 대상이
+//     아니다. 실측으로 기존 transcript 가 1173개였는데 그걸 다 훑으면 pending 이
+//     쏟아지고, 안전망이 소음이 되면 에이전트가 무시하는 법을 배운다.
+//     (--backfill 이면 시딩하지 않고 훑는다.)
+//   - **이미 아는 파일이면 훑는다.** 데몬이 꺼져 있는 동안 자란 구간이 있을 수 있다.
+//     이걸 안 하면 데몬이 죽어 있는 사이에 끝난 세션은 **영원히** 검토되지 않는다 —
+//     그 파일은 다시 바뀌지 않으므로 fsnotify 이벤트가 두 번 다시 오지 않는다.
+//
+// 기동 후에 새로 생기는 파일은 여기 오지 않으므로 체크포인트가 없어도 0부터 읽힌다.
+func (d *watcher) startupPass() {
 	paths, unreadable, err := claudecode.List(d.o.TranscriptRoot)
 	if err != nil {
 		d.emit(Event{Kind: "error", Err: err})
@@ -215,25 +228,32 @@ func (d *watcher) seed() {
 	if unreadable > 0 {
 		d.emit(Event{Kind: "error", Note: fmt.Sprintf("디렉토리 %d개를 읽지 못했다", unreadable)})
 	}
-	n := 0
+
+	seeded, queued := 0, 0
 	for _, p := range paths {
-		if d.st.Checkpoint(p) != 0 {
-			continue // 이전 기동에서 이미 본 파일
-		}
-		fi, err := os.Stat(p)
-		if err != nil {
+		known := d.st.Checkpoint(p) != 0
+		if !known && !d.o.Backfill {
+			fi, err := os.Stat(p)
+			if err != nil || fi.Size() == 0 {
+				continue
+			}
+			if err := d.st.Advance(p, fi.Size(), fi.Size()); err != nil {
+				d.emit(Event{Kind: "error", Path: p, Err: err})
+				continue
+			}
+			seeded++
 			continue
 		}
-		if fi.Size() == 0 {
-			continue
-		}
-		if err := d.st.Advance(p, fi.Size(), fi.Size()); err != nil {
-			d.emit(Event{Kind: "error", Path: p, Err: err})
-			continue
-		}
-		n++
+		d.mu.Lock()
+		d.dirty[p] = true
+		d.mu.Unlock()
+		queued++
 	}
-	d.emit(Event{Kind: "seed", Note: fmt.Sprintf("기존 transcript %d개를 현재 지점부터 감시한다 (%d개 중)", n, len(paths))})
+	d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
+		"transcript %d개 — 현재 지점부터 감시 %d개 · 밀린 구간 확인 %d개", len(paths), seeded, queued)})
+	if queued > 0 {
+		d.drain()
+	}
 }
 
 // drain 은 쌓인 파일을 훑는다.
@@ -247,7 +267,7 @@ func (d *watcher) drain() {
 	d.mu.Unlock()
 
 	for _, p := range paths {
-		r, err := Scan(d.st, d.o.Config, p)
+		r, err := Scan(d.st, d.o.Config, d.l, p)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
 			continue

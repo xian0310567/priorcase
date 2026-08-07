@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -135,24 +136,63 @@ func TestExistingFilesAreSeededNotScanned(t *testing.T) {
 	}
 }
 
-// --backfill 은 그 반대다.
-func TestBackfillScansExistingFiles(t *testing.T) {
+// --backfill 은 그 반대다. **기동만으로** 훑어야 한다 — 뒤에 파일을 건드려서
+// 훑히는 것은 backfill 이 아니라 그냥 평소 동작이다.
+func TestBackfillScansExistingFilesAtStartup(t *testing.T) {
 	o := baseOpts(t)
 	o.Backfill = true
 	old := filepath.Join(o.TranscriptRoot, "proj-a", "old.jsonl")
 	writeLines(t, old, turns(t, 20, "여기서 결정했다", "/tmp/proj/alpha")...)
 
-	h := start(t, o)
-	// backfill 은 시딩을 건너뛸 뿐이므로, 파일이 건드려질 때 훑힌다.
-	writeLines(t, old, turns(t, 1, "덧붙임", "/tmp/proj/alpha")...)
-	waitFor(t, 3*time.Second, "backfill 스캔", func() bool { return len(h.col.of("scan")) > 0 })
+	start(t, o) // 기동만 하고 아무것도 건드리지 않는다
 
 	s := NewStore(o.StateDir)
-	if err := s.Load(); err != nil {
+	waitFor(t, 3*time.Second, "backfill 스캔", func() bool {
+		if err := s.Load(); err != nil {
+			return false
+		}
+		return len(s.Pending()) > 0
+	})
+}
+
+// ★ 데몬이 꺼져 있는 동안 자란 구간을 기동 시 훑어야 한다.
+//
+// 안 하면 **데몬이 죽어 있는 사이에 끝난 세션은 영원히 검토되지 않는다** — 그 파일은
+// 다시 바뀌지 않으므로 fsnotify 이벤트가 두 번 다시 오지 않는다. 안전망이 조용히
+// 구멍을 내는 자리다.
+func TestGrowthDuringDowntimeIsScannedAtStartup(t *testing.T) {
+	o := baseOpts(t)
+	tp := filepath.Join(o.TranscriptRoot, "proj-a", "s.jsonl")
+
+	// 지난 기동에서 앞부분까지 봤다.
+	writeLines(t, tp, turns(t, 3, "잡담", "/tmp/proj/alpha")...)
+	fi, err := os.Stat(tp)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Pending()) == 0 {
-		t.Error("--backfill 인데 기존 내용이 표시되지 않았다")
+	pre := NewStore(o.StateDir)
+	if err := pre.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pre.Advance(tp, fi.Size(), fi.Size()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 데몬이 꺼진 사이에 세션이 이어지고 끝났다.
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+
+	start(t, o) // 다시 켠다. 파일은 이제 아무도 건드리지 않는다.
+
+	s := NewStore(o.StateDir)
+	waitFor(t, 3*time.Second, "밀린 구간 스캔", func() bool {
+		if err := s.Load(); err != nil {
+			return false
+		}
+		return len(s.Pending()) > 0
+	})
+	p := s.Pending()
+	if p[0].From != fi.Size() {
+		t.Errorf("From = %d, 지난 체크포인트(%d)부터여야 한다", p[0].From, fi.Size())
 	}
 }
 
@@ -213,4 +253,24 @@ func TestNewProjectDirectoryIsWatched(t *testing.T) {
 	writeLines(t, filepath.Join(newDir, "s.jsonl"), turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
 
 	waitFor(t, 3*time.Second, "새 프로젝트 스캔", func() bool { return len(h.col.of("scan")) > 0 })
+}
+
+// 시그널이 없으면 데몬은 돌긴 도는데 아무것도 표시하지 않는다. 겉으로는 정상
+// 기동으로 보이므로 사용자는 안전망이 켜져 있다고 믿는다 — 조용한 무동작이다.
+func TestNoSignalsWarnsLoudly(t *testing.T) {
+	o := baseOpts(t)
+	c := *o.Config
+	c.Capture.Signals = nil
+	o.Config = &c
+
+	h := start(t, o)
+	var found bool
+	for _, e := range h.col.of("error") {
+		if strings.Contains(e.Note, "signals") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("시그널이 없는데 아무 경고도 없다 — 데몬이 조용히 무동작한다")
+	}
 }

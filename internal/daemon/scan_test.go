@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/testutil"
 )
 
 func scanCfg() *config.Config {
@@ -67,7 +69,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r1, err := Scan(s, c, tp)
+	r1, err := Scan(s, c, nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 
 	// 4턴 더. 누적 8턴이 보여야 한다.
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r2, err := Scan(s, c, tp)
+	r2, err := Scan(s, c, nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestOverThresholdWithoutSignalAdvancesWithoutFlag(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "그냥 잡담이다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, scanCfg(), tp)
+	r, err := Scan(s, scanCfg(), nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func TestCorruptLineBlocksAdvance(t *testing.T) {
 	lines = append(lines, "{이건 JSON 이 아니다\n")
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, scanCfg(), tp)
+	r, err := Scan(s, scanCfg(), nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +156,7 @@ func TestRepeatedScanOfBlockedSegmentDoesNotPileUp(t *testing.T) {
 	writeLines(t, tp, lines...)
 
 	for i := 0; i < 3; i++ {
-		if _, err := Scan(s, c, tp); err != nil {
+		if _, err := Scan(s, c, nil, tp); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -171,7 +173,7 @@ func TestExcludedCwdIsNotFlagged(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/secret")...)
-	r, err := Scan(s, scanCfg(), tp)
+	r, err := Scan(s, scanCfg(), nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +191,7 @@ func TestPendingCarriesDomainAndSignals(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "이 방식을 채택하기로 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, scanCfg(), tp); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()
@@ -215,12 +217,12 @@ func TestNothingNewIsNoop(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, c, tp); err != nil {
+	if _, err := Scan(s, c, nil, tp); err != nil {
 		t.Fatal(err)
 	}
 	before := len(s.Pending())
 
-	r, err := Scan(s, c, tp)
+	r, err := Scan(s, c, nil, tp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,5 +231,124 @@ func TestNothingNewIsNoop(t *testing.T) {
 	}
 	if len(s.Pending()) != before {
 		t.Error("새 내용이 없는데 pending 이 바뀌었다")
+	}
+}
+
+// ★ 이미 기록된 결정이 있으면 표시하지 않는다.
+//
+// 원본 명세 4-B 의 "INDEX 대조로 이미 기록된 결정과의 중복을 방지한다" 다. 판별 LLM 을
+// 걷어내면서 그 안에 있던 이 검사까지 같이 사라졌었다.
+//
+// 없으면 안전망이 소음이 된다 — 실측으로 실 transcript 1173개 중 발화 6개를 넘는
+// 585개의 **99%(578개)** 가 시그널에 걸린다. 기본 시그널이 "변경"·"선택"·"대신" 처럼
+// 흔한 낱말이라 사실상 모든 실질 세션이 표시된다.
+func TestAlreadyRecordedIsNotFlagged(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	l := store.NewLayout(vc)
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+
+	// 픽스처 볼트의 alpha 도메인에는 2026-08-01·08-02 결정이 있다.
+	// 그날 대화라면 에이전트가 제 할 일을 한 것이다.
+	line := func(i int, day string) string {
+		return fmt.Sprintf(
+			`{"type":"assistant","cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"%sT01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"여기서 결정했다"}]}}`+"\n",
+			day, i)
+	}
+	var recorded []string
+	for i := 0; i < 8; i++ {
+		recorded = append(recorded, line(i, "2026-08-01"))
+	}
+	writeLines(t, tp, recorded...)
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Recorded {
+		t.Error("그날 그 도메인에 결정 노트가 있는데 Recorded 가 false 다")
+	}
+	if r.Flagged {
+		t.Error("이미 기록된 날인데 표시했다 — 제 할 일을 한 세션까지 표시하면 무시하는 법을 배운다")
+	}
+	if !r.Advanced {
+		t.Error("다 봤으면 전진해야 한다")
+	}
+}
+
+// 기록이 없는 날이면 표시한다 — 안전망이 실제로 일하는 경우다.
+func TestUnrecordedDayIsFlagged(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	l := store.NewLayout(vc)
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recorded {
+		t.Error("그날 결정 노트가 없는데 Recorded 가 true 다")
+	}
+	if !r.Flagged {
+		t.Error("기록 없는 날인데 표시하지 않았다 — 안전망이 일하지 않는다")
+	}
+}
+
+// 다른 도메인의 기록은 이 도메인을 가려 주지 않는다.
+func TestOtherDomainRecordDoesNotSuppress(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	vc.Domain = append(vc.Domain, config.Domain{Prefix: "gamma", Folder: "gamma", Paths: []string{"/tmp/proj/gamma"}})
+	l := store.NewLayout(vc)
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	// 08-01 은 alpha 에 기록이 있는 날이지만 이 대화는 gamma 다.
+	var lines []string
+	for i := 0; i < 8; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"assistant","cwd":"/tmp/proj/gamma","sessionId":"S1","timestamp":"2026-08-01T01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"여기서 결정했다"}]}}`+"\n", i))
+	}
+	writeLines(t, tp, lines...)
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recorded {
+		t.Error("다른 도메인(alpha)의 기록이 gamma 를 가렸다")
+	}
+	if !r.Flagged {
+		t.Error("gamma 에는 기록이 없는데 표시하지 않았다")
+	}
+}
+
+// 볼트를 못 읽으면 표시하는 쪽으로 기운다 — 대조 실패로 안전망이 조용히 꺼지면 안 된다.
+func TestVaultReadFailureStillFlags(t *testing.T) {
+	vc := testutil.VaultConfig(t)
+	vc.Vault = filepath.Join(t.TempDir(), "없는볼트")
+	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	l := store.NewLayout(vc)
+
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+
+	r, err := Scan(s, vc, l, tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Flagged {
+		t.Error("볼트 대조에 실패했다고 표시를 건너뛰었다 — 안전망이 조용히 꺼진다")
 	}
 }
