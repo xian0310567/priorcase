@@ -275,3 +275,39 @@ func (d *watcher) drain() {
 		d.emit(Event{Kind: "scan", Path: p, Result: r})
 	}
 }
+
+// ScanOnce 는 데몬이 돌고 있지 않을 때만 파일 하나를 훑는다.
+//
+// **이것이 데몬 없이도 안전망이 도는 이유다.** cb watch 는 상태 디렉토리에 flock 을
+// 잡고 산다. 훅이 TryLock 을 해서 **얻으면 데몬이 없는 것**이므로 자기가 훑고 놓는다.
+// 못 얻으면 데몬이 돌고 있으므로 건너뛴다. 소유자가 언제나 하나뿐이라 중복 처리가
+// 구조적으로 불가능하고(감사 결함 3 과 같은 방어), 데몬 등록에 실패한 사용자도
+// 턴 경계마다 안전망을 얻는다.
+//
+// owned 가 false 면 아무것도 안 한 것이다 — 실패가 아니라 "주인이 따로 있다" 는 뜻이다.
+// 이걸 에러로 만들면 훅이 매번 시끄러워진다.
+func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string) (r ScanResult, owned bool, err error) {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return r, false, err
+	}
+	lk := flock.New(filepath.Join(stateDir, lockFile))
+	got, err := lk.TryLock()
+	if err != nil {
+		return r, false, fmt.Errorf("락을 잡을 수 없다: %w", err)
+	}
+	if !got {
+		return r, false, nil // cb watch 가 돌고 있다
+	}
+	defer func() {
+		if uerr := lk.Unlock(); uerr != nil && err == nil {
+			err = uerr
+		}
+	}()
+
+	st := NewStore(stateDir)
+	if err := st.Load(); err != nil {
+		return r, true, err
+	}
+	r, err = Scan(st, c, l, path)
+	return r, true, err
+}

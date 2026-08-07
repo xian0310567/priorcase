@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/xian0310567/casebook/internal/adapter/cli"
+	"github.com/xian0310567/casebook/internal/adapter/hook"
 	"github.com/xian0310567/casebook/internal/adapter/mcp"
 	"github.com/xian0310567/casebook/internal/daemon"
 )
@@ -25,6 +26,7 @@ func main() {
 	root := cli.NewRootCmd()
 	root.AddCommand(mcp.NewCommand(cli.Version))
 	root.AddCommand(daemon.NewCommand())
+	root.AddCommand(hook.NewCommand())
 
 	if err := cli.Run(ctx, root); err != nil {
 		fmt.Fprintln(os.Stderr, err)

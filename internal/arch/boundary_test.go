@@ -57,7 +57,7 @@ func TestCoreDoesNotImportAdapters(t *testing.T) {
 // 어댑터 A 가 어댑터 B 를 부르기 시작하면 B 의 출력 규약이 A 의 요구에 끌려다니고,
 // 결국 "CLI 용" 과 "MCP 용" 이 한 함수 안에서 분기하게 된다.
 func TestAdaptersDoNotImportEachOther(t *testing.T) {
-	adapters := []string{"cli", "mcp"}
+	adapters := []string{"cli", "mcp", "hook"}
 	for _, a := range adapters {
 		for _, d := range deps(t, mod+"/internal/adapter/"+a) {
 			for _, other := range adapters {
@@ -105,7 +105,7 @@ func TestDaemonDoesNotImportAdapters(t *testing.T) {
 // 어댑터는 core 를 부르라고 있는 것이다. core 를 하나도 안 부르는 어댑터가 있다면
 // 로직을 자기가 들고 있다는 뜻이고, 그게 쓰기 경로가 갈라지는 시작점이다.
 func TestAdaptersDoCallCore(t *testing.T) {
-	for _, a := range []string{"cli", "mcp"} {
+	for _, a := range []string{"cli", "mcp", "hook"} {
 		found := false
 		for _, d := range deps(t, mod+"/internal/adapter/"+a) {
 			if strings.HasPrefix(d, "internal/core/") {
