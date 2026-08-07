@@ -170,3 +170,42 @@ func TestWriteReportsSkippedNotes(t *testing.T) {
 		t.Errorf("건너뛴 게 있다고 색인을 아예 안 썼다: %v", err)
 	}
 }
+
+// 색인 머리의 요약 줄. **`아쉬운 결과` 가 이 줄의 존재 이유다** — 뒤집혔거나 나쁘게
+// 끝난 결정이 몇 건인지가 표를 끝까지 읽지 않아도 보여야 한다.
+//
+// 셸 구현에는 있었는데 이관하면서 빠졌고, 실볼트 컷오버 대조에서 발견했다.
+func TestIndexHeaderCountsOutcomes(t *testing.T) {
+	got, res, err := Build(fixtureLayout(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 픽스처 4건: alpha-스키마가 superseded, common-로케일함정이 outcome bad.
+	want := "전체 4건 · active 3건 · 아쉬운 결과(regretted/bad) 1건"
+	if !strings.Contains(string(got), want) {
+		lines := strings.Split(string(got), "\n")
+		if len(lines) > 12 {
+			lines = lines[:12]
+		}
+		t.Errorf("요약 줄이 없거나 틀리다. want %q\n--- 머리 ---\n%s", want, strings.Join(lines, "\n"))
+	}
+	if res.Rows != 4 {
+		t.Errorf("Rows = %d, 4여야 한다", res.Rows)
+	}
+}
+
+// 같은 볼트를 두 번 색인하면 **바이트가 같아야 한다.** 생성 시각을 넣으면 이게 깨진다.
+func TestIndexIsDeterministic(t *testing.T) {
+	l := fixtureLayout(t)
+	a, _, err := Build(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := Build(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Error("같은 볼트인데 두 번의 색인이 다르다 — 멱등성이 깨졌다")
+	}
+}
