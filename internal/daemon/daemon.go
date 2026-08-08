@@ -339,3 +339,23 @@ func acquireLock(ctx context.Context, lk *flock.Flock) (bool, error) {
 		}
 	}
 }
+
+// IsRunning 은 cb watch 가 돌고 있는지 본다.
+//
+// 락 **파일의 존재**는 증거가 아니다 — flock 이 풀려도 파일은 남는다. 잡아 보고
+// 바로 놓는 것만이 확실하다. 잡히면 아무도 안 잡고 있는 것이므로 false 다.
+//
+// 잡는 순간이 훅의 스캔과 겹치면 "돌고 있다" 로 잘못 나올 수 있는데, 진단 표시일
+// 뿐이라 Run 처럼 기다리지 않는다 — 기다리면 cb doctor 가 1.5초 멎는다.
+func IsRunning(stateDir string) bool {
+	lk := flock.New(filepath.Join(stateDir, lockFile))
+	got, err := lk.TryLock()
+	if err != nil {
+		return false
+	}
+	if got {
+		_ = lk.Unlock()
+		return false
+	}
+	return true
+}

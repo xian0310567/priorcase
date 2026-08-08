@@ -2,7 +2,9 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -100,7 +102,10 @@ func (l *Layout) IndexPath() string {
 	return filepath.Join(l.c.Vault, l.c.Naming.Index)
 }
 
-// DecisionDirs 는 실제로 존재하는 결정 폴더를 전부 준다.
+// DecisionDirs 는 **설정에 선언된** 결정 폴더의 경로를 전부 준다.
+//
+// 존재 여부는 보지 않는다 — 폴더는 그 도메인의 첫 결정을 쓸 때 만들어지므로,
+// 아직 없는 것이 정상이다. 존재를 알고 싶으면 호출자가 stat 한다.
 func (l *Layout) DecisionDirs() []string {
 	var out []string
 	for _, d := range l.c.Domain {
@@ -117,4 +122,84 @@ func (l *Layout) RelPath(p string) string {
 		return rel
 	}
 	return p
+}
+
+// UndeclaredDecisionDirs 는 볼트에 있는데 **설정에 없는** 결정 폴더를 준다.
+//
+// 이게 조용한 데이터 손실의 입구다. 색인과 회수는 설정에 선언된 도메인만 훑으므로,
+// 볼트에 폴더를 만들고 설정에 안 적으면 그 프로젝트의 결정이 **전부** 빠진다.
+// 그런데 색인은 정상적으로 생성되고 회수도 에러를 내지 않는다 — 그냥 없는 것처럼 군다.
+//
+// 탐색은 decisions_dir 템플릿에서 유도한다(`{project}/decisions` → `*/decisions`).
+// 템플릿을 바꿔 써도 따라온다.
+func (l *Layout) UndeclaredDecisionDirs() ([]string, error) {
+	pattern := strings.ReplaceAll(l.c.Naming.DecisionsDir, "{project}", "*")
+	matches, err := filepath.Glob(filepath.Join(l.c.Vault, pattern))
+	if err != nil {
+		return nil, err
+	}
+
+	declared := map[string]bool{}
+	for _, d := range l.DecisionDirs() {
+		declared[NFC(d)] = true
+	}
+
+	var out []string
+	for _, m := range matches {
+		fi, err := os.Stat(m)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		if declared[NFC(m)] {
+			continue
+		}
+		// 결정 노트가 실제로 들어 있는 폴더만 알린다. 빈 폴더는 소음이다.
+		ents, err := os.ReadDir(m)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				out = append(out, m)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// WorklogPath 는 도메인의 작업 로그 경로다.
+func (l *Layout) WorklogPath(prefix string) (string, error) {
+	return l.projectFile(prefix, l.c.Naming.Worklog)
+}
+
+// RollupPath 는 도메인의 주간 요약 파일 경로다.
+//
+// naming.rollup 은 선택 키라 비어 있을 수 있다. 그때는 조용히 기본값을 쓰지 않고
+// 에러를 낸다 — 코드에 파일명 리터럴을 숨기면 설정이 정본이라는 전제가 깨진다.
+func (l *Layout) RollupPath(prefix string) (string, error) {
+	if strings.TrimSpace(l.c.Naming.Rollup) == "" {
+		return "", fmt.Errorf("[naming] 에 rollup 이 없다 — 설정에 한 줄 넣어라 " +
+			`(예: rollup = "98-{project}-작업-로그-요약.md")`)
+	}
+	return l.projectFile(prefix, l.c.Naming.Rollup)
+}
+
+func (l *Layout) projectFile(prefix, template string) (string, error) {
+	folder, ok := l.c.FolderFor(prefix)
+	if !ok {
+		return "", fmt.Errorf("알 수 없는 도메인 접두어: %q", prefix)
+	}
+	name := strings.ReplaceAll(template, "{project}", folder)
+	return filepath.Join(l.c.Vault, folder, name), nil
+}
+
+// Prefixes 는 설정에 선언된 도메인 접두어를 순서대로 준다.
+func (l *Layout) Prefixes() []string {
+	out := make([]string, 0, len(l.c.Domain))
+	for _, d := range l.c.Domain {
+		out = append(out, d.Prefix)
+	}
+	return out
 }

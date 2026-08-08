@@ -18,12 +18,27 @@ type Naming struct {
 	DecisionsDir string `toml:"decisions_dir"`
 	Worklog      string `toml:"worklog"`
 	Index        string `toml:"index"`
+	// Rollup 은 주간 요약 파일 이름이다 (예: `98-{project}-작업-로그-요약.md`).
+	//
+	// **선택 키다.** 없으면 `cb rollup` 이 무엇을 적으라고 알려 주고 멈춘다.
+	// 코드에 기본값을 숨기지 않는 이유는 스펙 §5 다 — 개인 설정 리터럴을 0으로 둔다.
+	// 여기 한국어 파일명을 박으면 영어권 사용자에게 조용히 이상한 파일이 생긴다.
+	Rollup string `toml:"rollup"`
 }
 
 type Capture struct {
 	Signals        []string `toml:"signals"`
 	MinTurns       int      `toml:"min_turns"`
 	QuiesceSeconds int      `toml:"quiesce_seconds"`
+
+	// JudgePath 는 자동 승격에 쓸 판별기 명령이다. 비면 자동으로 찾는다
+	// (~/.local/bin/claude → PATH 의 claude). 못 찾으면 자동 승격이 꺼진다.
+	//
+	// **API 키를 직접 읽지 않는다.** 호스트 CLI 만 쓴다 — 키 등록은 진짜 장벽이고,
+	// 사용자가 모르는 사이에 과금되는 경로를 만들지 않기 위해서다.
+	JudgePath string `toml:"judge_path"`
+	// JudgeModel 은 판별에 쓸 모델이다. 비면 haiku.
+	JudgeModel string `toml:"judge_model"`
 }
 
 type Domain struct {

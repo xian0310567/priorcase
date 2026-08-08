@@ -6,6 +6,7 @@ import (
 
 	"github.com/xian0310567/casebook/internal/core/search"
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/daemon"
 )
 
 // minPromptLen 은 이보다 짧은 프롬프트에서는 회수하지 않는다.
@@ -42,7 +43,63 @@ func (o Options) userPromptSubmit() error {
 	if s := search.RenderInject(o.Layout, hits); s != "" {
 		fmt.Fprint(o.Out, s)
 	}
+	fmt.Fprint(o.Out, o.nudge())
 	return nil
+}
+
+// nudgeExcerpt 는 주입에 실을 발췌의 상한이다. 매 프롬프트에 들어가므로 짧아야 한다 —
+// 길면 그 자체가 컨텍스트를 잡아먹고, 그러면 무시하는 법을 배운다.
+const nudgeExcerpt = 700
+
+// nudge 는 **기록되지 않은 결정이 있다고 매 프롬프트마다 들이민다.**
+//
+// 세션 진입 안내는 세션당 한 번뿐이라 그 뒤에 생긴 구간을 못 알린다. 회수 주입은
+// 매 프롬프트마다 도는 유일한 통로이고, 그래서 여기에 얹는다.
+//
+// **발췌를 같이 싣는 것이 핵심이다.** "미확인 구간 1건" 만 알리면 에이전트가 확인하려고
+// transcript 를 다시 읽어야 하는데, 그 비용이 크면 그냥 넘어간다. 무엇을 기록할지
+// 눈앞에 있으면 부르는 것이 읽는 것보다 싸진다.
+func (o Options) nudge() string {
+	if o.StateDir == "" || o.Config == nil {
+		return ""
+	}
+	items, err := daemon.ReadPending(o.StateDir)
+	if err != nil || len(items) == 0 {
+		return ""
+	}
+	domain := o.Config.DomainForCwd(o.Input.Cwd)
+
+	// 지금 작업 중인 프로젝트 것만 들이민다. 다른 프로젝트의 미확인 구간을 여기서
+	// 꺼내면 맥락에 안 맞고, 맥락에 안 맞는 경고가 무시를 학습시킨다.
+	var mine []daemon.Pending
+	for _, p := range items {
+		if p.Domain == domain && domain != "" {
+			mine = append(mine, p)
+		}
+	}
+	if len(mine) == 0 {
+		return ""
+	}
+	p := mine[len(mine)-1] // 가장 최근 것 하나만
+
+	ex := strings.TrimSpace(p.Excerpt)
+	if r := []rune(ex); len(r) > nudgeExcerpt {
+		ex = "…" + string(r[len(r)-nudgeExcerpt:])
+	}
+
+	var b strings.Builder
+	b.WriteString("\n[기록되지 않은 결정]\n")
+	fmt.Fprintf(&b, "%s 의 %s 구간(발화 %d)에서 결정 시그널이 잡혔는데 결정 노트가 없다.\n",
+		p.Domain, p.When(), p.Turns)
+	if len(mine) > 1 {
+		fmt.Fprintf(&b, "이런 구간이 %d건 더 있다.\n", len(mine)-1)
+	}
+	if ex != "" {
+		b.WriteString("\n--- 그 구간 ---\n" + ex + "\n---\n")
+	}
+	b.WriteString("\n실제 결정이면 지금 `cb capture` 로 남겨라. 결정이 아니면 " +
+		"`cb pending --resolve` 로 지워라. 그대로 두면 매번 다시 뜬다.\n")
+	return b.String()
 }
 
 // warnSkipped 는 읽지 못한 노트를 stderr 로 알린다. cli 의 같은 이름 함수와 문구가

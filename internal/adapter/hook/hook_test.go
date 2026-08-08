@@ -18,7 +18,7 @@ type run struct {
 	e        error
 }
 
-func exec(t *testing.T, c *config.Config, stateDir string, ev Event, in Input) run {
+func runHook(t *testing.T, c *config.Config, stateDir string, ev Event, in Input) run {
 	t.Helper()
 	var out, errb strings.Builder
 	e := Run(context.Background(), Options{
@@ -33,7 +33,23 @@ func cfg(t *testing.T) *config.Config {
 	c := testutil.VaultConfig(t)
 	c.Exclude = []string{"/tmp/proj/secret"}
 	c.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	// **판별기를 끈다.** 안 그러면 테스트가 진짜 LLM 을 부른다 — 느리고 결정적이지
+	// 않다. 실제로 이 줄이 없었을 때 훅 테스트가 13초 걸렸다.
+	// 승격을 시험하는 테스트는 stubJudge 로 켠다.
+	c.Capture.JudgePath = "/casebook-test-판별기없음"
 	return c
+}
+
+// stubJudge 는 정해진 JSON 을 뱉는 가짜 판별기다. 실제 LLM 없이 승격 경로 전체를
+// 검증한다 — 판별기 호출은 exec 라 인터페이스로 갈아 끼울 수 없다.
+func stubJudge(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "judge")
+	script := "#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n" + body + "\nJSON\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // ── 입력 파싱 ────────────────────────────────────────────────────────────
@@ -61,7 +77,7 @@ func TestParseInputTolerates(t *testing.T) {
 }
 
 func TestUnknownEventIsReportedNotSilent(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), Event("존재하지않는이벤트"), Input{})
+	r := runHook(t, cfg(t), t.TempDir(), Event("존재하지않는이벤트"), Input{})
 	if r.e == nil {
 		t.Error("알 수 없는 이벤트를 조용히 넘겼다 — 배선이 틀려도 정상으로 보인다")
 	}
@@ -73,7 +89,7 @@ func TestUnknownEventIsReportedNotSilent(t *testing.T) {
 // ── user-prompt-submit — 이 어댑터의 존재 이유 ────────────────────────────
 
 func TestRecallInjectsRelatedDecisions(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
 		Input{Cwd: "/tmp/proj/alpha", Prompt: "저장 엔진을 무엇으로 할지 다시 보자"})
 	if r.e != nil {
 		t.Fatal(r.e)
@@ -93,7 +109,7 @@ func TestRecallKeepsStdoutPure(t *testing.T) {
 	if err := os.WriteFile(broken, []byte("---\ntitle: 구 스키마\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := exec(t, c, t.TempDir(), EventUserPromptSubmit,
+	r := runHook(t, c, t.TempDir(), EventUserPromptSubmit,
 		Input{Cwd: "/tmp/proj/alpha", Prompt: "저장 엔진을 무엇으로 할지 다시 보자"})
 
 	if strings.Contains(r.out, "경고") || strings.Contains(r.out, "깨짐") {
@@ -106,7 +122,7 @@ func TestRecallKeepsStdoutPure(t *testing.T) {
 
 // "고마워" 같은 프롬프트에도 발동하던 것이 옛 구현의 소음원이었다.
 func TestRecallSkipsShortPrompts(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
 		Input{Cwd: "/tmp/proj/alpha", Prompt: "고마워"})
 	if r.out != "" {
 		t.Errorf("짧은 프롬프트에 주입했다: %q", r.out)
@@ -114,7 +130,7 @@ func TestRecallSkipsShortPrompts(t *testing.T) {
 }
 
 func TestRecallSilentWhenNoMatch(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
 		Input{Cwd: "/tmp/proj/alpha", Prompt: "zzzz전혀관계없는주제zzzz 에 대해 알려줘"})
 	if r.out != "" {
 		t.Errorf("맞는 결정이 없는데 주입했다 — 컨텍스트를 낭비한다: %q", r.out)
@@ -124,7 +140,7 @@ func TestRecallSilentWhenNoMatch(t *testing.T) {
 // **제외 구역에서도 회수한다.** 쓰기만 막는 것이지 읽기까지 막을 이유가 없다.
 // 자체 스키마를 쓰는 저장소에서도 common 교훈은 꺼내 써야 한다.
 func TestRecallWorksInExcludedDir(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
 		Input{Cwd: "/tmp/proj/secret", Prompt: "저장 엔진을 무엇으로 할지 다시 보자"})
 	if !strings.Contains(r.out, "저장 엔진") {
 		t.Errorf("제외 구역이라고 회수까지 막았다:\n%s", r.out)
@@ -134,7 +150,7 @@ func TestRecallWorksInExcludedDir(t *testing.T) {
 // ── session-start ────────────────────────────────────────────────────────
 
 func TestSessionStartCarriesDomainAndContract(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	r := runHook(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
 	for _, want := range []string{"alpha", "cb capture", "최근 결정"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("세션 진입에 %q 가 없다:\n%s", want, r.out)
@@ -144,7 +160,7 @@ func TestSessionStartCarriesDomainAndContract(t *testing.T) {
 
 // 제외 구역에서는 기록 계약을 심으면 안 된다 — 그 저장소의 규약을 깨라고 시키는 것이다.
 func TestSessionStartInExcludedDirForbidsCapture(t *testing.T) {
-	r := exec(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/secret"})
+	r := runHook(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/secret"})
 	if !strings.Contains(r.out, "제외 구역") {
 		t.Errorf("제외 구역임을 안 알린다:\n%s", r.out)
 	}
@@ -166,7 +182,7 @@ func TestSessionStartShowsPending(t *testing.T) {
 		Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, Signals: []string{"결정"}}); err != nil {
 		t.Fatal(err)
 	}
-	r := exec(t, cfg(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	r := runHook(t, cfg(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
 	if !strings.Contains(r.out, "미확인 구간이 1건") {
 		t.Errorf("미확인 구간을 안 알린다:\n%s", r.out)
 	}
@@ -178,11 +194,72 @@ func TestSessionStartDistinguishesBrokenStateFromZero(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte("{깨짐"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := exec(t, cfg(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	r := runHook(t, cfg(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
 	if !strings.Contains(r.out, "확인할 수 없다") {
 		t.Errorf("상태 파일이 깨졌는데 조용하다:\n%s", r.out)
 	}
 	if !strings.Contains(r.out, "꺼져 있다") {
 		t.Errorf("안전망이 꺼졌다는 사실을 안 알린다:\n%s", r.out)
+	}
+}
+
+// ── ② 훅 주입 강화 ───────────────────────────────────────────────────────
+
+// ★ **매 프롬프트마다 들이민다.** 세션 진입 안내는 세션당 한 번뿐이라 그 뒤에 생긴
+// 구간을 못 알린다. 회수 주입이 매 프롬프트마다 도는 유일한 통로다.
+func TestNudgeRidesOnEveryPrompt(t *testing.T) {
+	c := cfg(t)
+	sd := t.TempDir()
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, Days: []string{"2026-08-08"},
+		Signals: []string{"결정"},
+		Excerpt: "에이전트: SQLite 로 하기로 결정했다"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runHook(t, c, sd, EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "이제 인덱스 전략을 정하자"})
+
+	if !strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Fatalf("주입되지 않았다:\n%s", r.out)
+	}
+	// ★ 발췌가 같이 실려야 한다. "1건 있다" 만 알리면 확인 비용이 커서 그냥 넘어간다.
+	if !strings.Contains(r.out, "SQLite 로 하기로") {
+		t.Errorf("발췌가 없다 — 무엇을 기록할지 모르면 안 부른다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "cb capture") {
+		t.Errorf("무엇을 하라는지 없다:\n%s", r.out)
+	}
+}
+
+// 다른 프로젝트의 미확인 구간은 들이밀지 않는다 — 맥락에 안 맞는 경고가 무시를 학습시킨다.
+func TestNudgeOnlyForCurrentProject(t *testing.T) {
+	c := cfg(t)
+	sd := t.TempDir()
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t/b.jsonl", Domain: "beta", Turns: 9, Excerpt: "베타 이야기"}); err != nil {
+		t.Fatal(err)
+	}
+	r := runHook(t, c, sd, EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "알파 작업을 계속하자"})
+	if strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Errorf("다른 프로젝트 것을 들이밀었다:\n%s", r.out)
+	}
+}
+
+// 표시가 없으면 조용하다.
+func TestNoNudgeWhenNothingPending(t *testing.T) {
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "저장 엔진 이야기를 다시 해 보자"})
+	if strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Errorf("표시가 없는데 들이밀었다:\n%s", r.out)
 	}
 }

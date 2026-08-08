@@ -3,6 +3,7 @@ package hook
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -88,6 +89,11 @@ func NewInitCommand() *cobra.Command {
 			}
 			fmt.Fprintln(out, "\n데몬은 자동 등록하지 않는다 — 필요하면 `cb watch` 를 직접 띄운다.")
 			fmt.Fprintln(out, "안 띄워도 훅이 턴 경계마다 대신 훑으므로 안전망은 동작한다.")
+			if _, err := exec.LookPath("cb"); err != nil {
+				// 훅은 절대 경로로 돌지만 사람은 못 친다. 배선한 직후가 알려 줄 자리다.
+				fmt.Fprintf(out, "\n⚠️ `cb` 가 PATH 에 없다. 훅은 돌지만 명령을 직접 칠 수 없다:\n"+
+					"   ln -s %s ~/.local/bin/cb   (또는 PATH 에 그 디렉토리를 추가)\n", binaryPath())
+			}
 			return nil
 		},
 	}
@@ -143,4 +149,12 @@ quiesce_seconds = 3
 # paths  = ["%s/project/work"]
 `, vault, os.Getenv("HOME"))
 	return store.WriteFileAtomic(path, []byte(body), 0o600)
+}
+
+// binaryPath 는 지금 도는 cb 의 경로다. 안내 문구에 쓴다.
+func binaryPath() string {
+	if exe, err := os.Executable(); err == nil {
+		return exe
+	}
+	return "cb"
 }
