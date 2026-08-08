@@ -1,10 +1,12 @@
 package judge
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseAcceptsPlainJSON(t *testing.T) {
@@ -139,5 +141,37 @@ func TestPromptTeachesRetrievalStructure(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("지시문에 %q 가 없다 — 판별기가 tags 를 주제 분류로 쓴다", want)
 		}
+	}
+}
+
+// ★ claude CLI 는 실패를 **stdout 에** 쓴다 ("Not logged in · Please run /login").
+// stderr 만 보면 `exit status 1` 뒤가 비어서 사용자가 무엇을 해야 할지 알 수 없다.
+// 새 사용자 시뮬레이션에서 실제로 그 상태를 만났다.
+func TestFailureMessageIncludesStdout(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "judge")
+	script := "#!/bin/sh\ncat >/dev/null\necho 'Not logged in · Please run /login'\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &CLI{Path: bin, Model: "m", Timeout: 10 * time.Second}
+	_, err := c.Decide(context.Background(), Request{Excerpt: "x", Domain: "alpha"})
+	if err == nil {
+		t.Fatal("실패했어야 한다")
+	}
+	if !strings.Contains(err.Error(), "Not logged in") {
+		t.Errorf("stdout 의 실패 이유가 안 보인다 — 사용자가 뭘 해야 할지 모른다: %v", err)
+	}
+}
+
+// 아무 출력도 없이 실패하면 그것도 말해 준다 — 빈 메시지는 진단이 아니다.
+func TestFailureMessageNeverEmpty(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "judge")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat >/dev/null\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &CLI{Path: bin, Model: "m", Timeout: 10 * time.Second}
+	_, err := c.Decide(context.Background(), Request{Excerpt: "x"})
+	if err == nil || !strings.Contains(err.Error(), "출력 없음") {
+		t.Errorf("빈 실패를 설명하지 않는다: %v", err)
 	}
 }

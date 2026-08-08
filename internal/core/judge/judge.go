@@ -151,13 +151,26 @@ func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 	// 부른다. 옛 셸 구현이 SECOND_BRAIN_SCRIBE 로 막던 것과 같은 자리다.
 	cmd.Env = append(os.Environ(), "CASEBOOK_JUDGE=1")
 
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	var o, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &o, &errb
 	if err := cmd.Run(); err != nil {
-		return Verdict{}, fmt.Errorf("판별기 실행 실패 (%s): %w — %s",
-			c.Path, err, strings.TrimSpace(errb.String()))
+		// **stdout 도 같이 보여 준다.** claude CLI 는 "Not logged in · Please run /login"
+		// 같은 실패를 stdout 에 쓴다 — stderr 만 보면 `exit status 1` 뒤가 비어서
+		// 사용자가 무엇을 해야 할지 알 수 없다. 실제로 새 사용자 시뮬레이션에서
+		// 그 상태를 만났다.
+		msg := strings.TrimSpace(errb.String())
+		if out := strings.TrimSpace(head(o.String(), 300)); out != "" {
+			if msg != "" {
+				msg += " / "
+			}
+			msg += out
+		}
+		if msg == "" {
+			msg = "(출력 없음)"
+		}
+		return Verdict{}, fmt.Errorf("판별기 실행 실패 (%s): %w — %s", c.Path, err, msg)
 	}
-	return parse(out.String())
+	return parse(o.String())
 }
 
 // parse 는 응답에서 JSON 을 꺼낸다. 모델이 앞뒤에 말을 붙여도 견딘다.
@@ -241,4 +254,37 @@ JSON 하나만 출력하라. 설명·인사·코드펜스를 붙이지 마라.
 	b.WriteString(req.Excerpt)
 	b.WriteString("\n--- 끝 ---\n")
 	return b.String()
+}
+
+// head 는 앞부분만 자른다. 룬 경계를 지켜 한글이 깨지지 않게 한다.
+func head(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// Check 는 판별기가 **실제로 답하는지** 본다. 있기만 한 것과 쓸 수 있는 것은 다르다 —
+// claude CLI 는 설치돼 있어도 로그인이 안 됐을 수 있고, 그러면 세션이 끝나는
+// 순간에야 실패를 알게 된다. cb doctor 가 미리 물어본다.
+func (c *CLI) Check(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Path, "--print", "--model", c.Model, "--max-turns", "1")
+	cmd.Stdin = strings.NewReader(`{"ok":true} 를 그대로 출력하라. 다른 말은 하지 마라.`)
+	cmd.Env = append(os.Environ(), "CASEBOOK_JUDGE=1")
+	var o, e bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &o, &e
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(e.String())
+		if s := strings.TrimSpace(head(o.String(), 200)); s != "" {
+			if msg != "" {
+				msg += " / "
+			}
+			msg += s
+		}
+		return fmt.Errorf("%w — %s", err, msg)
+	}
+	return nil
 }

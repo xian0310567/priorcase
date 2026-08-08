@@ -75,7 +75,7 @@ func (r *Report) Worst() Level {
 func Vault(c *config.Config, l *store.Layout) *Report {
 	r := &Report{}
 	checkVaultDir(r, c)
-	checkDomainFolders(r, l)
+	checkDomainFolders(r, c, l)
 	checkUndeclared(r, l)
 	notes := checkNotes(r, l)
 	checkSchema(r, l, notes)
@@ -188,7 +188,30 @@ func checkVaultDir(r *Report, c *config.Config) {
 // **Fail 이 아니다.** 폴더는 그 도메인의 첫 결정을 쓸 때 만들어지므로, 결정이 아직
 // 없는 프로젝트는 폴더가 없는 게 정상이다. 그래도 세어서 보여 주는 이유는 오타를
 // 잡기 위해서다 — folder 이름을 잘못 적으면 영원히 "아직 없음" 으로 남는다.
-func checkDomainFolders(r *Report, l *store.Layout) {
+func checkDomainFolders(r *Report, c *config.Config, l *store.Layout) {
+	// **도메인이 0개면 아무것도 기록할 수 없다.** 그런데 겉으로는 조용하다 —
+	// 훅은 돌고 안전망은 표시까지 하는데 승격 단계에서 막힌다. 새 사용자가 정확히
+	// 이 상태로 시작하므로 가장 크게 알려야 한다.
+	if len(c.Domain) == 0 {
+		r.add("도메인", Fail, "설정에 [[domain]] 이 하나도 없다 — 아무것도 기록되지 않는다",
+			"프로젝트마다 [[domain]] 블록을 추가하거나, 최소한 default_domain 을 적어라")
+		return
+	}
+	if c.DefaultDomain == "" {
+		r.add("도메인", Warn,
+			fmt.Sprintf("%d개 · default_domain 이 없다 — 어느 paths 에도 안 걸리는 곳에서는 기록되지 않는다",
+				len(c.Domain)),
+			`default_domain = "common" 처럼 폴백을 적어라`)
+	} else if !hasPrefix(c, c.DefaultDomain) {
+		r.add("도메인", Fail,
+			fmt.Sprintf("default_domain = %q 인데 그런 [[domain]] 이 없다", c.DefaultDomain),
+			"오타이거나 블록이 빠졌다")
+		return
+	} else {
+		r.add("도메인", OK,
+			fmt.Sprintf("%d개 · 폴백 %s", len(c.Domain), c.DefaultDomain), "")
+	}
+
 	dirs := l.DecisionDirs()
 	var missing []string
 	for _, d := range dirs {
@@ -275,4 +298,13 @@ func checkIndex(r *Report, l *store.Layout, notes []store.Note) {
 		return
 	}
 	r.add("색인", OK, fmt.Sprintf("%d건과 일치한다", len(notes)), "")
+}
+
+func hasPrefix(c *config.Config, prefix string) bool {
+	for _, d := range c.Domain {
+		if d.Prefix == prefix {
+			return true
+		}
+	}
+	return false
 }

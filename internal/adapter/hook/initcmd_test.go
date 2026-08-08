@@ -129,3 +129,44 @@ func TestRevertWithoutBackupFails(t *testing.T) {
 		t.Error("백업이 없는데 성공했다고 한다")
 	}
 }
+
+// ★ **새 사용자가 바로 쓸 수 있어야 한다.**
+//
+// 예전에는 [[domain]] 을 전부 주석으로 두었다. 그러면 도메인이 0개인 채로 시작하고
+// 아무것도 기록되지 않는데 — 훅은 돌고 안전망은 표시까지 해서 **정상으로 보인다.**
+// 실제로 그 상태를 재현해 확인했다.
+func TestStarterConfigIsImmediatelyUsable(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	vault := filepath.Join(dir, "볼트")
+
+	if err := writeStarterConfig(cfgPath, vault); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("만든 설정을 스스로 읽지 못한다: %v", err)
+	}
+
+	if len(c.Domain) == 0 {
+		t.Fatal("도메인이 0개다 — 아무것도 기록되지 않는다")
+	}
+	if c.DefaultDomain == "" {
+		t.Fatal("default_domain 이 없다 — 프로젝트 밖에서는 기록되지 않는다")
+	}
+	// 폴백이 실제로 동작해야 한다: 아무 경로에서나 도메인이 나와야 한다.
+	if got := c.DomainForCwd("/어디에도/없는/경로"); got != c.DefaultDomain {
+		t.Errorf("DomainForCwd = %q, 폴백 %q 여야 한다", got, c.DefaultDomain)
+	}
+	// 볼트가 실제로 있어야 한다 — 없는 경로를 가리키면 첫 실행부터 빨간불이다.
+	if fi, err := os.Stat(c.Vault); err != nil || !fi.IsDir() {
+		t.Errorf("볼트를 안 만들었다: %v", err)
+	}
+	// rollup·judge 키가 있어야 cb rollup 과 자동 기록이 바로 된다.
+	if c.Naming.Rollup == "" {
+		t.Error("naming.rollup 이 없다 — cb rollup 이 실패한다")
+	}
+	if c.Capture.JudgeModel == "" {
+		t.Error("judge_model 이 없다")
+	}
+}

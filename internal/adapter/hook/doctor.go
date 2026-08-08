@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -227,6 +228,12 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 		add(r, "자동 기록", health.Warn,
 			"판별기를 찾지 못했다 — 에이전트가 cb capture 를 부를 때만 기록된다",
 			"claude CLI 를 PATH 에 두거나 [capture] judge_path 를 적어라")
+		return
+	}
+	if err := j.Check(context.Background()); err != nil {
+		add(r, "자동 기록", health.Fail,
+			fmt.Sprintf("%s 를 찾았지만 답하지 않는다: %v", j.Path, err),
+			"판별기에 로그인했는지 확인하라 (claude 라면 `claude` 를 한 번 띄워 /login)")
 		return
 	}
 	add(r, "자동 기록", health.OK,

@@ -50,9 +50,17 @@ type Domain struct {
 type Config struct {
 	Vault   string   `toml:"vault"`
 	Exclude []string `toml:"exclude"`
-	Naming  Naming   `toml:"naming"`
-	Capture Capture  `toml:"capture"`
-	Domain  []Domain `toml:"domain"`
+	// DefaultDomain 은 어느 [[domain]] 의 paths 에도 안 걸릴 때 쓸 도메인이다.
+	//
+	// **이게 없으면 새 사용자는 아무것도 기록하지 못한다.** 설정에 프로젝트를 하나도
+	// 안 적은 상태가 정상 출발점인데, 그때 DomainForCwd 가 빈 문자열을 주면 기록 경로가
+	// 통째로 막힌다 — 그런데 겉으로는 아무 에러도 안 난다.
+	//
+	// 옛 셸 구현에는 "그 외 → common" 폴백이 있었는데 이관하면서 빠졌다.
+	DefaultDomain string   `toml:"default_domain"`
+	Naming        Naming   `toml:"naming"`
+	Capture       Capture  `toml:"capture"`
+	Domain        []Domain `toml:"domain"`
 }
 
 // DefaultPath 는 XDG 기준 설정 파일 경로다.
@@ -256,7 +264,9 @@ func (c *Config) DomainForCwd(cwd string) string {
 			}
 		}
 	}
-	return ""
+	// 어디에도 안 걸리면 폴백이다. 없으면 빈 문자열 — 그건 기록이 막힌다는 뜻이고
+	// cb doctor 가 그 상태를 알린다.
+	return c.DefaultDomain
 }
 
 func (c *Config) IsExcluded(cwd string) bool {

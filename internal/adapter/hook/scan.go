@@ -80,6 +80,10 @@ func (o Options) promote(ctx context.Context) {
 
 	for _, p := range items {
 		if p.Domain == "" {
+			// 조용히 넘기면 "안전망이 도는데 아무것도 안 남는" 상태가 된다.
+			// 새 사용자가 정확히 이 상태에 빠진다 — 설정에 도메인이 없으면 그렇다.
+			fmt.Fprintf(o.Err, "cb hook %s: 도메인을 알 수 없어 기록하지 못했다 (%s) — "+
+				"설정에 [[domain]] 을 추가하거나 default_domain 을 적어라\n", o.Event, p.ID())
 			continue
 		}
 		day := p.When()

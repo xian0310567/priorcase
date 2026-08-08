@@ -22,6 +22,9 @@ func VaultConfig(t *testing.T) *config.Config {
 	}
 	return &config.Config{
 		Vault: dst,
+		// 폴백 도메인 — 실제 설정과 같은 모양으로 둔다. 없으면 어느 paths 에도
+		// 안 걸리는 cwd 에서 기록이 막히는데, 그건 픽스처의 의도가 아니다.
+		DefaultDomain: "common",
 		Naming: config.Naming{
 			DecisionFile: "{domain}-결정-{slug}-{date}.md",
 			DecisionsDir: "{project}/decisions",

@@ -109,6 +109,11 @@ func NewInitCommand() *cobra.Command {
 
 // writeStarterConfig 는 설정 파일이 없을 때만 만든다. **있으면 절대 안 건드린다** —
 // 사용자의 도메인 매핑을 덮어쓰는 것은 되돌리기 어렵다.
+//
+// **바로 쓸 수 있는 설정을 만든다.** 예전에는 [[domain]] 을 전부 주석으로 두었는데,
+// 그러면 새 사용자는 도메인이 0개인 채로 시작하고 아무것도 기록되지 않는다 —
+// 훅은 돌고 안전망은 표시까지 하는데 승격에서 조용히 막힌다. 실제로 그 상태를
+// 재현해 확인했다.
 func writeStarterConfig(path, vault string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
@@ -120,20 +125,31 @@ func writeStarterConfig(path, vault string) error {
 		}
 		vault = filepath.Join(home, "Documents", "Obsidian Vault")
 	}
+	// 볼트가 없으면 만든다. 없는 경로를 가리키는 설정은 첫 실행부터 빨간불이다.
+	if err := os.MkdirAll(filepath.Join(vault, "common", "decisions"), 0o755); err != nil {
+		return fmt.Errorf("볼트를 만들 수 없다 (%s): %w", vault, err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+
+	home, _ := os.UserHomeDir()
 	body := fmt.Sprintf(`# casebook 설정. 자세한 것은 README 를 보라.
 vault = %q
 
 # 여기 적힌 경로에서는 결정을 기록하지 않는다 (회수는 계속 동작한다).
 exclude = []
 
+# 어느 [[domain]] 의 paths 에도 안 걸릴 때 쓸 도메인.
+# **이걸 비우면 그런 자리에서는 아무것도 기록되지 않는다.**
+default_domain = "common"
+
 [naming]
 decision_file = "{domain}-결정-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-작업-로그.md"
 index         = "_meta/00-결정-색인.md"
+rollup        = "98-{project}-작업-로그-요약.md"
 
 # 데몬(cb watch)과 훅이 쓰는 값이다.
 # signals 가 비면 어떤 구간도 표시되지 않는다.
@@ -142,12 +158,23 @@ signals = ["결정", "선택", "하기로", "채택", "대신", "전략", "포�
 min_turns = 6
 quiesce_seconds = 3
 
-# 프로젝트마다 한 블록. paths 안에서 작업하면 그 도메인으로 기록된다.
+# 자동 기록 — 세션 끝에 판별기가 기록되지 않은 결정을 대신 남긴다.
+# 비우면 자동으로 찾는다 (~/.local/bin/claude → PATH 의 claude).
+# 못 찾으면 자동 기록이 꺼지고 표시만 남는다. **API 키는 쓰지 않는다.**
+judge_path  = ""
+judge_model = "claude-haiku-4-5"
+
+# 무소속 결정이 쌓이는 곳. default_domain 이 이걸 가리킨다.
+[[domain]]
+prefix = "common"
+folder = "common"
+
+# 프로젝트마다 한 블록을 더한다. paths 안에서 작업하면 그 도메인으로 기록된다.
 # [[domain]]
-# prefix = "work"
-# folder = "work"
-# paths  = ["%s/project/work"]
-`, vault, os.Getenv("HOME"))
+# prefix = "myapp"
+# folder = "myapp"
+# paths  = ["%s/project/myapp"]
+`, vault, home)
 	return store.WriteFileAtomic(path, []byte(body), 0o600)
 }
 
