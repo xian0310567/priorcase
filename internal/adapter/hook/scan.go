@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/xian0310567/casebook/internal/core/judge"
 	"github.com/xian0310567/casebook/internal/core/promote"
@@ -108,6 +109,24 @@ func (o Options) promote(ctx context.Context) {
 		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
 			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt, Session: p.SessionID,
 		})
+
+		// **세 갈래 전부 원장에 남긴다.** stderr 는 사람이 그 순간 보지 않으면
+		// 사라지고, 표시는 곧 해소돼 지워진다. 원장이 없으면 "판별기가 보고
+		// 기록할 게 아니라고 했다" 와 "판별기가 아예 안 돌았다" 가 같아 보인다.
+		rec := daemon.Promotion{
+			At: time.Now().UTC(), ID: p.ID(), Domain: p.Domain,
+			Recorded: r.Recorded, Reason: r.Reason,
+		}
+		if r.Path != "" {
+			rec.Path = o.Layout.RelPath(r.Path)
+		}
+		if r.Err != nil {
+			rec.Err = r.Err.Error()
+		}
+		if lerr := daemon.AppendPromotion(o.StateDir, rec); lerr != nil {
+			fmt.Fprintf(o.Err, "cb hook %s: 승격 원장을 쓰지 못했다: %v\n", o.Event, lerr)
+		}
+
 		switch {
 		case r.Err != nil:
 			fmt.Fprintf(o.Err, "cb hook %s: 승격 실패 (%s): %v\n", o.Event, p.ID(), r.Err)

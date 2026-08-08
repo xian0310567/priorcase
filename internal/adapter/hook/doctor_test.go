@@ -293,3 +293,93 @@ func TestDoctorWarnsOnlyWhenRecordingHappens(t *testing.T) {
 }
 
 func ptr(n int) *int { return &n }
+
+// ★ 안전망 줄은 **설정이 아니라 실제로 한 일**을 말해야 한다.
+//
+// 컷오버 1일차에 "미확인 구간 없음 · 이상 없다" 가 나왔는데, 실은 안전망이 구조적으로
+// 억제돼 한 번도 판별기를 못 부른 상태였다. 같은 문장이 두 상태를 덮었다.
+func TestDoctorReportsActualActivity(t *testing.T) {
+	sd := t.TempDir()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NoteScan("/t.jsonl", now.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// 판별기가 12번 봤고 그중 3번 기록했다.
+	for i := 0; i < 12; i++ {
+		p := daemon.Promotion{At: now.Add(-time.Hour), ID: "/t@0", Domain: "alpha"}
+		if i < 3 {
+			p.Recorded = true
+		} else {
+			p.Reason = "기록할 결정이 아니다"
+		}
+		if err := daemon.AppendPromotion(sd, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
+	for _, want := range []string{"마지막 훑기", "30분 전", "자동 기록 3건", "판정 12건"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Errorf("%q 가 없다 — 실제 활동이 안 보인다: %s", want, got.Detail)
+		}
+	}
+}
+
+// 판별기가 돌았지만 기록할 게 없었던 것과 아예 안 돈 것은 다르게 말해야 한다.
+func TestDoctorDistinguishesNoPromotionFromNoRecord(t *testing.T) {
+	self, _ := os.Executable()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+
+	sd := t.TempDir()
+	s := daemon.NewStore(sd)
+	_ = s.Load()
+	if err := s.NoteScan("/t.jsonl", now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	silent := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
+	if !strings.Contains(silent.Detail, "자동 기록 없음") {
+		t.Errorf("승격이 한 번도 없었다는 사실이 안 보인다: %s", silent.Detail)
+	}
+}
+
+// 훑은 흔적이 오래됐으면 그것이 안전망이 멎었다는 유일한 양성 증거다.
+func TestDoctorWarnsWhenScanningWentSilent(t *testing.T) {
+	sd := t.TempDir()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	s := daemon.NewStore(sd)
+	_ = s.Load()
+	if err := s.NoteScan("/t.jsonl", now.AddDate(0, 0, -20)); err != nil {
+		t.Fatal(err)
+	}
+
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
+	if got.Level != health.Warn {
+		t.Errorf("Level = %v, Warn 이어야 한다: %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "훑은 흔적이 없다") {
+		t.Errorf("멎었다는 말이 없다: %s", got.Detail)
+	}
+	if got.Fix == "" {
+		t.Error("고치는 법이 없다")
+	}
+}
+
+// 갓 깐 설치는 경보 대상이 아니다 — 흔적이 없는 것과 멎은 것은 다르다.
+func TestDoctorDoesNotAlarmOnFreshInstall(t *testing.T) {
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: t.TempDir(),
+		Now: time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)}), "안전망")
+	if got.Level != health.OK {
+		t.Errorf("갓 깐 설치에 경보가 울렸다 (%v): %s", got.Level, got.Detail)
+	}
+}

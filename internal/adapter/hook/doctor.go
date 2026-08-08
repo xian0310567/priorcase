@@ -279,6 +279,20 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 	if o.RecentDecisions != nil {
 		act = fmt.Sprintf(" · 최근 7일 기록 %d건", *o.RecentDecisions)
 	}
+	act += activity(o)
+
+	// **훑은 흔적이 오래됐으면 그것이 유일한 실패 증거다.**
+	//
+	// "미확인 구간 없음" 은 훑어서 비운 것과 한 번도 안 훑은 것을 구분하지 못한다 —
+	// 컷오버 1일차에 실제로 후자를 전자로 보고했다. 다만 **흔적이 없는 것**만으로는
+	// 경보를 울릴 수 없다. 갓 깐 설치도, 흔적 필드가 없던 옛 판에서 올라온 설치도
+	// 똑같이 비어 있기 때문이다. 그래서 "오래됐다" 는 양성 증거일 때만 경고한다.
+	if last := lastScan(o); !last.IsZero() && o.Now.Sub(last) > pendingStale {
+		add(r, "안전망", health.Warn,
+			fmt.Sprintf("%s%s — **%s부터 훑은 흔적이 없다**", mode, act, humanAgo(o.Now, last)),
+			"훅이 아직 붙어 있는지 확인해라 (cb doctor 의 훅 배선 줄, 또는 cb init --apply)")
+		return
+	}
 
 	if len(items) == 0 {
 		add(r, "안전망", health.OK, mode+act+" · 미확인 구간 없음", "")
@@ -304,6 +318,64 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 		detail += fmt.Sprintf(" (그중 %d건은 7일 넘게 방치)", stale)
 	}
 	add(r, "안전망", lv, detail, fix)
+}
+
+// lastScan 은 안전망이 마지막으로 훑은 시각이다. 한 번도 안 훑었으면 제로값이다.
+func lastScan(o DoctorOptions) time.Time {
+	s := daemon.NewStore(o.StateDir)
+	if s.Load() != nil {
+		return time.Time{}
+	}
+	return s.LastScan()
+}
+
+// activity 는 안전망이 **실제로 한 일**을 한 줄로 만든다.
+//
+// 설정이 어떻게 돼 있는지가 아니라 무엇이 일어났는지를 말한다. 앞의 "최근 7일
+// 기록 N건" 은 볼트 전체를 세므로 컷오버 전 이관까지 합산되는데(1일차 회고에서
+// 62건 = 볼트 총량), 이 줄은 casebook 이 스스로 한 일만 센다.
+func activity(o DoctorOptions) string {
+	last := lastScan(o)
+	if last.IsZero() {
+		// 흔적이 없다. 갓 깐 설치이거나, 흔적 필드가 없던 옛 판에서 올라왔거나,
+		// 정말 한 번도 안 돈 것이다 — 셋을 여기서 가릴 수 없으므로 단정하지 않는다.
+		return ""
+	}
+	out := " · 마지막 훑기 " + humanAgo(o.Now, last)
+
+	proms, err := daemon.ReadPromotions(o.StateDir, o.Now.AddDate(0, 0, -7))
+	if err != nil {
+		return out
+	}
+	if len(proms) == 0 {
+		return out + " · 자동 기록 없음"
+	}
+	made := 0
+	for _, p := range proms {
+		if p.Recorded {
+			made++
+		}
+	}
+	// 판정 건수를 같이 낸다 — 0/12 는 "판별기가 안 돈다" 가 아니라 "12번 봤는데
+	// 기록할 게 없었다" 이고, 그 둘은 전혀 다른 진단이다.
+	return out + fmt.Sprintf(" · 최근 7일 자동 기록 %d건/판정 %d건", made, len(proms))
+}
+
+// humanAgo 는 경과 시간을 짧게 만든다.
+func humanAgo(now, then time.Time) string {
+	d := now.Sub(then)
+	switch {
+	case d < 0:
+		return then.Format("2006-01-02 15:04")
+	case d < time.Minute:
+		return "방금"
+	case d < time.Hour:
+		return fmt.Sprintf("%d분 전", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d시간 전", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d일 전", int(d.Hours()/24))
+	}
 }
 
 func add(r *health.Report, name string, lv health.Level, detail, fix string) {

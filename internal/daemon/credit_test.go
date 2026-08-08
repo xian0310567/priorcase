@@ -180,3 +180,44 @@ func TestScanLeavesTraceEvenWhenNothingToRead(t *testing.T) {
 		t.Error("아무 일도 안 한 스캔이 흔적을 안 남겼다 — 안전망이 도는 증거가 사라진다")
 	}
 }
+
+// ★ 나중에 면제가 다시 걸려도 **이미 표시된 구간을 지우지는 않는다.**
+//
+// 날짜 축은 구간이 걸친 날짜로 세므로, 세션이 길어져 날짜 범위가 넓어지면 그동안
+// 안 세던 노트를 집어와 크레딧을 또 산다. 실 트랜스크립트로 재보니 실제로 그랬다
+// (1구간 억제 → 2구간 표시 → 3구간 다시 억제). 그 자체는 옳다 — 그 날짜에 노트가
+// 있다는 것은 그날 기록이 있었다는 증거다. 다만 **앞서 표시한 것이 그것 때문에
+// 사라지면** 안전망이 뒤늦게 자기 일을 취소하는 꼴이 된다.
+func TestLaterSuppressionDoesNotEraseEarlierFlag(t *testing.T) {
+	vc := creditCfg(t)
+	l := store.NewLayout(vc)
+	note(t, vc, "첫기록", "2026-01-01", "S1")
+
+	tp := filepath.Join(t.TempDir(), "s.jsonl")
+	s := newStore(t)
+
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+		t.Fatal("1구간은 면제돼야 한다")
+	}
+
+	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Flagged {
+		t.Fatal("2구간은 표시돼야 한다")
+	}
+
+	// 새 노트가 생겨 3구간이 다시 면제된다.
+	note(t, vc, "둘째기록", "2026-01-02", "S1")
+	writeLines(t, tp, turns(t, 8, "세 번째 결정을 했다", "/tmp/proj/alpha")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+		t.Fatal("3구간은 새 노트로 면제돼야 한다")
+	}
+
+	items, err := ReadPending(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("표시가 %d건 — 2구간의 표시가 3구간의 면제에 지워졌다", len(items))
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofrs/flock"
 
@@ -78,5 +79,47 @@ func TestDaemonOwnedLockStillYieldsScanning(t *testing.T) {
 	}
 	if items, _ := daemon.ReadPending(sd); len(items) != 0 {
 		t.Errorf("데몬이 주인인데 훅이 훑어서 표시를 남겼다 (%d건) — 중복 처리다", len(items))
+	}
+}
+
+// 승격의 세 갈래가 전부 원장에 남아야 한다. stderr 는 그 순간 안 보면 사라지고
+// 표시는 곧 해소돼 지워진다 — 원장이 유일하게 남는 증거다.
+func TestPromotionIsRecordedInLedger(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		judge    string
+		recorded bool
+		want     func(daemon.Promotion) bool
+	}{
+		{"기록함", `{"record":true,"slug":"저장엔진","summary":"SQLite 로 간다","body":"## 결정\n\nx\n"}`,
+			true, func(p daemon.Promotion) bool { return p.Recorded && p.Path != "" }},
+		{"기록안함", `{"record":false,"reason":"기록할 결정이 아니다"}`,
+			false, func(p daemon.Promotion) bool { return !p.Recorded && p.Reason != "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sd := t.TempDir()
+			tp := writeTranscript(t, t.TempDir(), 8)
+			c := cfg(t)
+			c.Capture.JudgePath = stubJudge(t, tc.judge)
+
+			r := runHook(t, c, sd, EventSessionEnd, Input{
+				Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: tp})
+			if r.e != nil {
+				t.Fatal(r.e)
+			}
+			got, err := daemon.ReadPromotions(sd, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("원장 %d건, want 1 — 판별기가 돌았는지 알 수 없다:\n%s", len(got), r.err)
+			}
+			if !tc.want(got[0]) {
+				t.Errorf("갈래가 구분되지 않는다: %+v", got[0])
+			}
+			if got[0].At.IsZero() || got[0].Domain == "" || got[0].ID == "" {
+				t.Errorf("언제·어디·무엇이 빠졌다: %+v", got[0])
+			}
+		})
 	}
 }
