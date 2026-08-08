@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -100,6 +101,16 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 		if err := json.Unmarshal(raw, &root); err != nil {
 			return nil, fmt.Errorf("설정이 JSON 이 아니다 (%s): %w", o.SettingsPath, err)
 		}
+		// **이미 우리 훅이 들어 있으면 백업하지 않는다.**
+		//
+		// 백업의 목적은 "casebook 을 깔기 전 상태" 를 붙잡아 두는 것이다. 이미 배선된
+		// 파일을 또 백업하면 그 백업에도 우리 훅이 들어 있고, --revert 가 사전순
+		// 마지막을 고르므로 **되돌려도 훅이 그대로 남는다.** 실측으로 재현했다 —
+		// `--apply` 를 두 번 한 뒤 `--revert` 하면 "되돌렸다" 고 말하면서 훅 5개가
+		// 살아 있었다. 사용자는 지운 줄 안다.
+		if bytes.Contains(raw, []byte(hookMarker)) {
+			p.BackupPath = ""
+		}
 	}
 
 	hooks := map[string][]hookGroup{}
@@ -198,7 +209,24 @@ func LatestBackup(settingsPath string) (string, error) {
 		return "", fmt.Errorf("백업이 없다 (%s*)", filepath.Join(dir, base))
 	}
 	sort.Strings(found) // 이름이 타임스탬프라 사전순 = 시간순
-	return filepath.Join(dir, found[len(found)-1]), nil
+
+	// **casebook 훅이 들어 있지 않은 가장 최근 백업**을 고른다.
+	//
+	// 무조건 마지막을 고르면, 우리 훅이 이미 든 백업이 섞여 있을 때 되돌려도 훅이
+	// 남는다. BuildPlan 이 이제 그런 백업을 만들지 않지만, **옛 판으로 이미 만들어진
+	// 백업이 사용자 디스크에 남아 있다** — 그 사람들이 여기로 온다.
+	for i := len(found) - 1; i >= 0; i-- {
+		full := filepath.Join(dir, found[i])
+		b, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		if !bytes.Contains(b, []byte(hookMarker)) {
+			return full, nil
+		}
+	}
+	return "", fmt.Errorf("되돌릴 백업이 없다 — 있는 백업 %d개가 전부 casebook 훅을 이미 담고 있다 (%s*)",
+		len(found), filepath.Join(dir, base))
 }
 
 // Revert 는 가장 최근 백업으로 되돌린다. **바이트 그대로 복원한다** — 우리가 다시

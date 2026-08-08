@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -20,6 +21,17 @@ type Meta struct {
 	Related       []string `yaml:"related"`
 	Tags          []string `yaml:"tags"`
 	SourceSession string   `yaml:"source_session"`
+
+	// Extra 는 **10키 밖의 키를 사용자가 쓴 그대로** 담는다.
+	//
+	// 이것이 없으면 사용자가 Obsidian 에서 노트에 `aliases:` 한 줄만 넣어도 파싱이
+	// 실패하고, 그 결정이 색인·회수·review 에서 통째로 사라진다. 조용히 버리지 않으려고
+	// KnownFields(true) 를 켰는데, 버리지 않는 대신 **읽기를 포기해** 결과적으로 더 크게
+	// 잃고 있었다. 이제 버리지도 잃지도 않는다 — 받아서 되쓴다.
+	//
+	// yaml.Node 로 받는 이유는 스타일 보존이다. map[string]any 로 받으면 사용자가 쓴
+	// `[a, b]` 가 되쓸 때 블록 목록으로 바뀌어, 고치지도 않은 줄의 바이트가 달라진다.
+	Extra map[string]yaml.Node `yaml:",inline"`
 }
 
 var fence = []byte("---")
@@ -105,8 +117,40 @@ func EmitFrontmatter(m Meta) []byte {
 	b.WriteString("related: " + quoted(m.Related) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")
 	b.WriteString("source_session: " + quote(m.SourceSession) + "\n")
+	b.WriteString(emitExtra(m.Extra))
 	b.WriteString("---\n")
 	return []byte(b.String())
+}
+
+// emitExtra 는 10키 밖의 키를 **10키 뒤에** 되쓴다.
+//
+// 키 순서를 사전순으로 고정한다 — 맵은 순회 순서가 무작위라, 안 그러면 같은 노트를
+// 두 번 저장할 때마다 바이트가 달라져 diff 가 소음이 된다.
+//
+// 방출에 실패한 키는 **버리지 않고 건너뛰지도 않는다** — 애초에 파싱된 노드라
+// 실패할 일이 없지만, 만약 실패하면 그 키를 잃는 것이므로 원문을 그대로 못 쓰느니
+// 주석으로라도 남긴다.
+func emitExtra(extra map[string]yaml.Node) string {
+	if len(extra) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for _, k := range keys {
+		n := extra[k]
+		out, err := yaml.Marshal(map[string]yaml.Node{k: n})
+		if err != nil {
+			fmt.Fprintf(&b, "# casebook: %q 를 되쓸 수 없었다 (%v)\n", k, err)
+			continue
+		}
+		b.Write(out)
+	}
+	return b.String()
 }
 
 // EmitNote 는 frontmatter 와 본문을 합친다. 사이에 빈 줄 하나.

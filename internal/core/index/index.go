@@ -29,6 +29,11 @@ type Result struct {
 	Rows int
 	// Skipped 는 읽지 못해 색인에서 빠진 결정 노트다. 경로 오름차순.
 	Skipped []store.SkippedNote
+	// Preserved 는 색인 자리에 있던 **남의 파일**을 대피시킨 경로다. 비었으면 없었다.
+	//
+	// 호출자는 이것이 비어 있지 않으면 **반드시 사용자에게 알려야 한다.** 조용히
+	// 백업만 남기면 사용자는 자기 문서가 어디 갔는지 모른 채 사라졌다고 여긴다.
+	Preserved string
 }
 
 // Build 는 색인 문서 전체와 그 결과(행 수·건너뛴 노트)를 만든다.
@@ -104,10 +109,60 @@ func Write(l *store.Layout) (Result, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return Result{}, err
 	}
+	// **남의 파일이면 먼저 대피시킨다.**
+	//
+	// 색인 경로는 설정([naming] index)이 정한다. 사용자가 그 자리에 이미 손으로 쓴
+	// 문서를 두고 있으면, 우리는 그것을 경고도 없이 지워 왔다 — 실측으로 재현했다
+	// (188바이트의 손글씨 문서 → 색인으로 교체, 백업 없음).
+	//
+	// 지우지 않고, 막지도 않는다. 막으면 capture 가 통째로 실패한다(색인 갱신이
+	// capture.Do 끝에 붙어 있다). `cb init` 이 남의 settings.json 을 다룰 때와 같은
+	// 방식으로 — 백업하고 진행하고 알린다.
+	saved, err := preserveForeign(p)
+	if err != nil {
+		return Result{}, err
+	}
+	res.Preserved = saved
+
 	// WriteFileAtomic 을 쓴다 — os.WriteFile 은 기존 파일을 먼저 비운 뒤 쓰기
 	// 때문에 중간에 실패하면 색인이 잘린 채로 남는다.
 	if err := store.WriteFileAtomic(p, out, 0o644); err != nil {
 		return Result{}, err
 	}
 	return res, nil
+}
+
+// indexMarker 는 우리가 만든 색인의 표식이다. Build 가 언제나 이 줄을 넣는다.
+const indexMarker = "tags: [index, decision]"
+
+// preserveForeign 은 색인 자리에 있는 **우리 것이 아닌 파일**을 백업한다.
+// 백업했으면 그 경로를, 백업할 것이 없었으면 빈 문자열을 준다.
+//
+// 판정은 표식 한 줄로 한다. 우리 색인은 언제나 그 줄을 갖고, 사람이 쓴 문서는
+// 갖지 않는다. 읽을 수 없는 파일도 남의 것으로 본다 — 모르면 보존하는 쪽으로 기운다.
+func preserveForeign(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil // 첫 생성
+	}
+	if err != nil {
+		return "", fmt.Errorf("색인 자리의 파일을 확인할 수 없다 (%s): %w", path, err)
+	}
+	if strings.Contains(string(data), indexMarker) {
+		return "", nil // 우리가 만든 색인이다
+	}
+
+	// 이름이 겹치면 덧붙여 고른다. 백업을 덮어쓰면 대피의 의미가 없다.
+	base := path + ".casebook-replaced"
+	bak := base
+	for i := 1; ; i++ {
+		if _, err := os.Stat(bak); os.IsNotExist(err) {
+			break
+		}
+		bak = fmt.Sprintf("%s-%d", base, i)
+	}
+	if err := store.WriteFileAtomic(bak, data, 0o644); err != nil {
+		return "", fmt.Errorf("색인 자리의 파일을 대피시킬 수 없다: %w", err)
+	}
+	return bak, nil
 }

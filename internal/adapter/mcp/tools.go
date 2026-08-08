@@ -140,7 +140,7 @@ type reviewArgs struct {
 }
 
 func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewArgs) (*sdk.CallToolResult, noOutput, error) {
-	skipped, err := capture.Review(s.l, capture.ReviewRequest{
+	rr, err := capture.Review(s.l, capture.ReviewRequest{
 		Stem:          a.Stem,
 		Outcome:       a.Outcome,
 		Status:        a.Status,
@@ -156,7 +156,8 @@ func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewA
 	// capture 와 달리 core 가 편승을 주지 않으므로 어댑터가 직접 만든다. 질의어는
 	// 갱신한 결정의 요약이다 — 같은 주제의 이웃 결정이 걸린다.
 	b.WriteString(s.piggyback(a.Stem))
-	b.WriteString(renderSkipped(s.l, skipped))
+	b.WriteString(renderSkipped(s.l, rr.Skipped))
+	b.WriteString(renderPreserved(s.l, rr.IndexPreserved))
 	return textResult(b.String()), nil, nil
 }
 

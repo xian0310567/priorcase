@@ -45,6 +45,7 @@ func newCaptureCmd() *cobra.Command {
 			}
 			// 방금 쓴 노트는 색인에 들어갔지만 색인 자체가 불완전할 수 있다.
 			warnSkipped(cmd.ErrOrStderr(), l, res.Skipped)
+			warnPreserved(cmd.ErrOrStderr(), l, res.IndexPreserved)
 			if len(res.Related) > 0 {
 				fmt.Fprintln(out, "\n관련 과거 결정:")
 				for _, h := range res.Related {

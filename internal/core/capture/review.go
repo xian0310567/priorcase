@@ -21,14 +21,14 @@ type ReviewRequest struct {
 // Review 는 기존 결정의 outcome·status·회고·supersedes 를 갱신하고, 뒤이은
 // 색인 갱신에서 읽지 못해 빠진 노트를 준다.
 // supersedes 는 양방향으로 연결한다 — 옛 노트도 superseded 로 바꾸고 related 를 채운다.
-func Review(l *store.Layout, r ReviewRequest) ([]store.SkippedNote, error) {
+func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	path, err := l.ResolveStem(r.Stem)
 	if err != nil {
-		return nil, err
+		return ReviewResult{}, err
 	}
 	n, err := l.Read(path)
 	if err != nil {
-		return nil, fmt.Errorf("대상 없음: %s (%w)", r.Stem, err)
+		return ReviewResult{}, fmt.Errorf("대상 없음: %s (%w)", r.Stem, err)
 	}
 
 	if r.Outcome != "" {
@@ -43,7 +43,7 @@ func Review(l *store.Layout, r ReviewRequest) ([]store.SkippedNote, error) {
 	if r.Supersedes != "" {
 		link, o, err := supersede(l, r.Supersedes, n.Stem)
 		if err != nil {
-			return nil, err
+			return ReviewResult{}, err
 		}
 		n.Meta.Supersedes, old, hasOld = link, o, true
 	}
@@ -57,28 +57,36 @@ func Review(l *store.Layout, r ReviewRequest) ([]store.SkippedNote, error) {
 	// 뒤집힌 것으로 기록돼, 회수 시 두 노트 다 사실과 다르게 잡힌다.
 	if hasOld {
 		if err := schema.Validate(l.DecisionMarker(), old.Stem, old.Meta); err != nil {
-			return nil, fmt.Errorf("옛 노트 검증 실패: %w", err)
+			return ReviewResult{}, fmt.Errorf("옛 노트 검증 실패: %w", err)
 		}
 	}
 	if err := schema.Validate(l.DecisionMarker(), n.Stem, n.Meta); err != nil {
-		return nil, fmt.Errorf("검증 실패: %w", err)
+		return ReviewResult{}, fmt.Errorf("검증 실패: %w", err)
 	}
 
 	if hasOld {
 		if err := l.Write(old); err != nil {
-			return nil, err
+			return ReviewResult{}, err
 		}
 	}
 	if err := l.Write(n); err != nil {
-		return nil, err
+		return ReviewResult{}, err
 	}
 	// Do 와 같은 안내를 낸다 — 여기도 노트를 이미 쓴 뒤라, 색인만 낡았다는
 	// 사실을 알려주지 않으면 사용자는 갱신 자체가 안 된 줄 알고 다시 시도한다.
 	idx, err := index.Write(l)
 	if err != nil {
-		return nil, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
+		return ReviewResult{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
 	}
-	return idx.Skipped, nil
+	return ReviewResult{Skipped: idx.Skipped, IndexPreserved: idx.Preserved}, nil
+}
+
+// ReviewResult 는 갱신의 부수 결과다. 색인 갱신이 이 함수 안에서 일어나므로,
+// 거기서 나온 경고를 호출자가 볼 유일한 통로다.
+type ReviewResult struct {
+	Skipped []store.SkippedNote
+	// IndexPreserved 는 색인 자리에 있던 남의 파일을 대피시킨 경로다.
+	IndexPreserved string
 }
 
 func appendUnique(ss []string, v string) []string {

@@ -148,6 +148,19 @@ func (l *Layout) readNote(path string) (Note, error) {
 	if err != nil {
 		return Note{}, err
 	}
+	// **우리 노트인지 여기서 가른다.**
+	//
+	// 예전에는 `KnownFields(true)` 가 이 일을 겸했다 — 10키 밖의 키가 하나라도 있으면
+	// 파싱이 실패했으므로 옛 도구가 남긴 `title/project/created` 노트가 자연히 걸러졌다.
+	// 그런데 같은 규칙이 **사용자가 Obsidian 에서 넣은 `aliases:` 한 줄**도 걸러서,
+	// 멀쩡한 결정을 색인·회수·review 에서 통째로 지워 버렸다.
+	//
+	// 이제 잉여 키는 Extra 로 받는다. 그러면 옛 스키마 노트가 **빈 결정 노트로** 통과해
+	// summary 가 빈 채 색인에 들어가므로, 대신 여기서 표식을 본다.
+	// `type: decision` 이 우리 노트의 유일한 표식이다(schema.Validate 와 같은 기준).
+	if m.Type != "decision" {
+		return Note{}, fmt.Errorf("결정 노트가 아니다 (type: %q) — 다른 도구가 남긴 형식이거나 frontmatter 가 옛 스키마다", m.Type)
+	}
 	stem := strings.TrimSuffix(NFC(filepath.Base(path)), ".md")
 	return Note{Path: path, Stem: stem, Meta: m, Body: body}, nil
 }

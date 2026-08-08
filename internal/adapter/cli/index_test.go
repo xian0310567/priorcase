@@ -50,8 +50,10 @@ func TestIndexCmd(t *testing.T) {
 }
 
 // legacyNoteBody 는 다른 도구가 남긴 구 스키마 frontmatter 다
-// (title/project/created/superseded-by). 잉여 키 때문에 파싱에서 거부된다 —
-// 이런 노트가 섞여도 색인이 조용히 줄어들지 않는 것이 이 테스트의 요지다.
+// (title/project/created/superseded-by). `type: decision` 표식이 없어서 우리 노트가
+// 아닌 것으로 걸린다 — 이런 노트가 섞여도 색인이 조용히 줄어들지 않는 것이 이 테스트의
+// 요지다. (2026-08-09 이전에는 잉여 키 자체가 파싱을 막았는데, 같은 규칙이 사용자가
+// 손으로 넣은 aliases 도 막아서 멀쩡한 결정을 지웠다.)
 const legacyNoteBody = `---
 title: 구 스키마로 쓰인 저장 엔진 결정
 project: alpha
@@ -114,7 +116,7 @@ func TestIndexCmdRevealsSkippedNotes(t *testing.T) {
 	if !strings.Contains(warn, rel) {
 		t.Errorf("어느 파일인지 안 알려준다 (want %q):\n%s", rel, warn)
 	}
-	if !strings.Contains(warn, "field title not found") {
+	if !strings.Contains(warn, "결정 노트가 아니다") {
 		t.Errorf("왜 빠졌는지 안 알려준다:\n%s", warn)
 	}
 	// 경로는 볼트 상대로 한 번만 나와야 한다 — 절대 경로가 함께 찍히면

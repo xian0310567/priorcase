@@ -283,3 +283,98 @@ func TestPlanMatchesWhatHappens(t *testing.T) {
 		t.Error("BuildPlan 이 파일을 건드렸다")
 	}
 }
+
+// ★★ `--apply` 를 두 번 하면 `--revert` 가 "되돌렸다" 고 말하면서 아무것도 안 되돌렸다.
+//
+// 두 번째 apply 가 **이미 casebook 훅이 든 파일**을 백업하고, revert 는 사전순
+// 마지막(=그 백업)을 골랐다. 사용자는 지운 줄 아는데 훅 5개가 그대로 산다.
+func TestRevertAfterDoubleApply(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "settings.json")
+	const original = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo 남의훅"}]}]}}`
+	if err := os.WriteFile(sp, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 2; i++ {
+		p, err := BuildPlan(InitOptions{SettingsPath: sp, Binary: "/bin/true",
+			Now: base.Add(time.Duration(i) * time.Second)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Apply(ReadSettings(sp)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 백업은 하나만 생겨야 한다 — 두 번째는 이미 우리 훅이 든 파일이라 백업 대상이 아니다.
+	baks, _ := filepath.Glob(sp + ".casebook-backup-*")
+	if len(baks) != 1 {
+		t.Errorf("백업 %d개, want 1 — 우리 훅이 든 파일까지 백업했다: %v", len(baks), baks)
+	}
+
+	if _, err := Revert(sp); err != nil {
+		t.Fatalf("되돌리지 못했다: %v", err)
+	}
+	got, err := os.ReadFile(sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), hookMarker) {
+		t.Errorf("되돌렸다는데 casebook 훅이 남아 있다:\n%s", got)
+	}
+	if !strings.Contains(string(got), "남의훅") {
+		t.Errorf("남의 훅이 사라졌다:\n%s", got)
+	}
+}
+
+// 옛 판이 만든 백업(우리 훅이 이미 든 것)이 디스크에 남아 있는 사용자가 여기로 온다.
+// 그런 백업은 건너뛰고 더 옛것을 골라야 한다.
+func TestRevertSkipsBackupsThatAlreadyContainOurHooks(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(sp, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 깨끗한 옛 백업 하나, 오염된 최근 백업 둘.
+	clean := sp + ".casebook-backup-20260101-000000"
+	if err := os.WriteFile(clean, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo 원본"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ts := range []string{"20260808-000000", "20260809-000000"} {
+		dirty := sp + ".casebook-backup-" + ts
+		body := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + hookMarker + `=1 /bin/cb hook stop"}]}]}}`
+		if err := os.WriteFile(dirty, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := LatestBackup(sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != clean {
+		t.Errorf("오염된 백업을 골랐다: %s (want %s)", filepath.Base(got), filepath.Base(clean))
+	}
+}
+
+// 백업이 전부 오염됐으면 조용히 아무거나 고르지 말고 실패해야 한다.
+func TestRevertFailsLoudlyWhenAllBackupsAreDirty(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(sp, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"x":"` + hookMarker + `"}`
+	if err := os.WriteFile(sp+".casebook-backup-20260809-000000", []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LatestBackup(sp)
+	if err == nil {
+		t.Fatal("전부 오염됐는데 성공했다 — 되돌린 척하게 된다")
+	}
+	if !strings.Contains(err.Error(), "casebook 훅을 이미 담고") {
+		t.Errorf("왜 못 되돌리는지 안 알려준다: %v", err)
+	}
+}
