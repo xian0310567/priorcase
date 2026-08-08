@@ -121,6 +121,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 			From:      from,
 			To:        from + consumed,
 			Days:      days,
+			Excerpt:   excerpt(turns),
 			At:        time.Now().UTC(),
 		}
 		if err := s.AddPending(p); err != nil {
@@ -228,4 +229,37 @@ func alreadyRecorded(l *store.Layout, domain, sessionID string, days []string) (
 		}
 	}
 	return false, nil
+}
+
+// maxExcerpt 는 pending 에 담는 발췌의 상한이다.
+//
+// 상태 파일이 무한히 커지면 안 되고, 판별기에 넘길 때도 토큰이 든다. 결정은 보통
+// 구간 끝쪽에서 내려지므로 **뒤에서부터** 담는다 — 앞을 자르는 편이 낫다.
+const maxExcerpt = 6000
+
+// excerpt 는 발화 원문을 뒤에서부터 maxExcerpt 만큼 모은다.
+func excerpt(turns []transcript.Turn) string {
+	var parts []string
+	total := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		t := strings.TrimSpace(turns[i].Text)
+		if t == "" {
+			continue
+		}
+		who := "에이전트"
+		if turns[i].Kind == transcript.KindUser {
+			who = "사용자"
+		}
+		line := who + ": " + t
+		if total+len(line) > maxExcerpt {
+			break
+		}
+		parts = append(parts, line)
+		total += len(line)
+	}
+	// 뒤에서부터 모았으므로 뒤집어 시간순으로 돌린다.
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, "\n\n")
 }

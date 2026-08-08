@@ -66,6 +66,7 @@ func NewDoctorCommand() *cobra.Command {
 				}
 			}
 			Wiring(r, DoctorOptions{
+				Config:          c,
 				SettingsPath:    settingsPath,
 				StateDir:        stateDir,
 				RecentDecisions: recentPtr(health.RecentDecisions(l, time.Now(), 7)),

@@ -30,6 +30,15 @@ type Capture struct {
 	Signals        []string `toml:"signals"`
 	MinTurns       int      `toml:"min_turns"`
 	QuiesceSeconds int      `toml:"quiesce_seconds"`
+
+	// JudgePath 는 자동 승격에 쓸 판별기 명령이다. 비면 자동으로 찾는다
+	// (~/.local/bin/claude → PATH 의 claude). 못 찾으면 자동 승격이 꺼진다.
+	//
+	// **API 키를 직접 읽지 않는다.** 호스트 CLI 만 쓴다 — 키 등록은 진짜 장벽이고,
+	// 사용자가 모르는 사이에 과금되는 경로를 만들지 않기 위해서다.
+	JudgePath string `toml:"judge_path"`
+	// JudgeModel 은 판별에 쓸 모델이다. 비면 haiku.
+	JudgeModel string `toml:"judge_model"`
 }
 
 type Domain struct {

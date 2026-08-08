@@ -59,6 +59,16 @@ type Pending struct {
 	// 뒤늦게 훑으면 둘이 크게 벌어진다.
 	Days []string  `json:"days,omitempty"`
 	At   time.Time `json:"at"`
+
+	// Excerpt 는 그 구간의 **발화 원문**이다 (앞부분 일부).
+	//
+	// 오프셋만 들고 있으면 나중에 그 구간을 보려면 transcript 를 다시 읽어야 하는데,
+	// 그 파일은 호스트 것이라 지워질 수 있고 경로도 바뀔 수 있다. 표시가 남아 있는데
+	// 내용을 못 보면 표시가 무의미하다.
+	//
+	// 여기 담아 두면 ② 훅 주입(에이전트에게 들이밀기)과 ③ 자동 승격(판별기에 넘기기)이
+	// 둘 다 transcript 없이 된다.
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 // When 은 사람에게 보여 줄 날짜다. 대화 날짜를 알면 그것을, 모르면 표시 시각을 준다.

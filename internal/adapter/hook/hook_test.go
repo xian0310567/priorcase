@@ -33,7 +33,23 @@ func cfg(t *testing.T) *config.Config {
 	c := testutil.VaultConfig(t)
 	c.Exclude = []string{"/tmp/proj/secret"}
 	c.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
+	// **판별기를 끈다.** 안 그러면 테스트가 진짜 LLM 을 부른다 — 느리고 결정적이지
+	// 않다. 실제로 이 줄이 없었을 때 훅 테스트가 13초 걸렸다.
+	// 승격을 시험하는 테스트는 stubJudge 로 켠다.
+	c.Capture.JudgePath = "/casebook-test-판별기없음"
 	return c
+}
+
+// stubJudge 는 정해진 JSON 을 뱉는 가짜 판별기다. 실제 LLM 없이 승격 경로 전체를
+// 검증한다 — 판별기 호출은 exec 라 인터페이스로 갈아 끼울 수 없다.
+func stubJudge(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "judge")
+	script := "#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n" + body + "\nJSON\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // ── 입력 파싱 ────────────────────────────────────────────────────────────
@@ -184,5 +200,66 @@ func TestSessionStartDistinguishesBrokenStateFromZero(t *testing.T) {
 	}
 	if !strings.Contains(r.out, "꺼져 있다") {
 		t.Errorf("안전망이 꺼졌다는 사실을 안 알린다:\n%s", r.out)
+	}
+}
+
+// ── ② 훅 주입 강화 ───────────────────────────────────────────────────────
+
+// ★ **매 프롬프트마다 들이민다.** 세션 진입 안내는 세션당 한 번뿐이라 그 뒤에 생긴
+// 구간을 못 알린다. 회수 주입이 매 프롬프트마다 도는 유일한 통로다.
+func TestNudgeRidesOnEveryPrompt(t *testing.T) {
+	c := cfg(t)
+	sd := t.TempDir()
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, Days: []string{"2026-08-08"},
+		Signals: []string{"결정"},
+		Excerpt: "에이전트: SQLite 로 하기로 결정했다"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runHook(t, c, sd, EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "이제 인덱스 전략을 정하자"})
+
+	if !strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Fatalf("주입되지 않았다:\n%s", r.out)
+	}
+	// ★ 발췌가 같이 실려야 한다. "1건 있다" 만 알리면 확인 비용이 커서 그냥 넘어간다.
+	if !strings.Contains(r.out, "SQLite 로 하기로") {
+		t.Errorf("발췌가 없다 — 무엇을 기록할지 모르면 안 부른다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "cb capture") {
+		t.Errorf("무엇을 하라는지 없다:\n%s", r.out)
+	}
+}
+
+// 다른 프로젝트의 미확인 구간은 들이밀지 않는다 — 맥락에 안 맞는 경고가 무시를 학습시킨다.
+func TestNudgeOnlyForCurrentProject(t *testing.T) {
+	c := cfg(t)
+	sd := t.TempDir()
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t/b.jsonl", Domain: "beta", Turns: 9, Excerpt: "베타 이야기"}); err != nil {
+		t.Fatal(err)
+	}
+	r := runHook(t, c, sd, EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "알파 작업을 계속하자"})
+	if strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Errorf("다른 프로젝트 것을 들이밀었다:\n%s", r.out)
+	}
+}
+
+// 표시가 없으면 조용하다.
+func TestNoNudgeWhenNothingPending(t *testing.T) {
+	r := runHook(t, cfg(t), t.TempDir(), EventUserPromptSubmit,
+		Input{Cwd: "/tmp/proj/alpha", Prompt: "저장 엔진 이야기를 다시 해 보자"})
+	if strings.Contains(r.out, "기록되지 않은 결정") {
+		t.Errorf("표시가 없는데 들이밀었다:\n%s", r.out)
 	}
 }

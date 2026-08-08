@@ -26,6 +26,7 @@ func main() {
 	root := cli.NewRootCmd()
 	root.AddCommand(mcp.NewCommand(cli.Version))
 	root.AddCommand(daemon.NewCommand())
+	root.AddCommand(daemon.NewPendingCommand())
 	root.AddCommand(hook.NewCommand())
 	root.AddCommand(hook.NewInitCommand())
 	root.AddCommand(hook.NewDoctorCommand())

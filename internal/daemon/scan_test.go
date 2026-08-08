@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -433,5 +434,53 @@ func TestPendingCarriesConversationDate(t *testing.T) {
 	}
 	if got := p.When(); got != "2026-08-07" {
 		t.Errorf("When() = %q, 대화 날짜여야 한다 (표시 시각이 아니라)", got)
+	}
+}
+
+// pending 은 **발췌를 담아야** 한다. 오프셋만 들고 있으면 나중에 그 구간을 보려면
+// transcript 를 다시 읽어야 하는데, 그 파일은 호스트 것이라 지워질 수 있다.
+// 표시가 남아 있는데 내용을 못 보면 표시가 무의미하다.
+func TestPendingCarriesExcerpt(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "저장 엔진을 임베디드 DB 로 하기로 결정했다", "/tmp/proj/alpha")...)
+
+	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+		t.Fatal(err)
+	}
+	p := s.Pending()[0]
+	if p.Excerpt == "" {
+		t.Fatal("발췌가 비었다 — transcript 가 사라지면 이 표시는 쓸모가 없다")
+	}
+	if !strings.Contains(p.Excerpt, "임베디드 DB") {
+		t.Errorf("발췌에 내용이 없다: %q", p.Excerpt)
+	}
+	if !strings.Contains(p.Excerpt, "에이전트:") {
+		t.Errorf("누가 한 말인지 없다: %q", p.Excerpt)
+	}
+	if len(p.Excerpt) > maxExcerpt+200 {
+		t.Errorf("발췌가 상한을 넘었다: %d", len(p.Excerpt))
+	}
+}
+
+// transcript 가 사라져도 발췌는 남는다.
+func TestExcerptSurvivesTranscriptDeletion(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(tp); err != nil {
+		t.Fatal(err)
+	}
+	items, err := ReadPending(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Excerpt == "" {
+		t.Error("transcript 를 지웠더니 표시의 내용이 사라졌다")
 	}
 }

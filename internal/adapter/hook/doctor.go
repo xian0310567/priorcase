@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/health"
+	"github.com/xian0310567/casebook/internal/core/judge"
 	"github.com/xian0310567/casebook/internal/daemon"
 )
 
@@ -19,6 +21,8 @@ type DoctorOptions struct {
 	StateDir     string
 	// Binary 는 훅에 배선돼 있어야 할 cb 경로다. 비면 지금 실행 중인 것.
 	Binary string
+	// Config 는 자동 승격 설정을 보는 데 쓴다. nil 이면 그 검사를 건너뛴다.
+	Config *config.Config
 	// Now 는 pending 나이를 재는 기준이다. 비면 현재 시각.
 	Now time.Time
 	// RecentDecisions 는 최근 7일 결정 노트 수다. **nil 이면 모른다는 뜻이다.**
@@ -44,6 +48,7 @@ func Wiring(r *health.Report, o DoctorOptions) {
 	}
 	checkPath(r)
 	checkHooks(r, o)
+	checkJudge(r, o)
 	checkDaemon(r, o)
 }
 
@@ -198,6 +203,34 @@ func sameFile(a, b string) bool {
 		return false
 	}
 	return os.SameFile(fa, fb)
+}
+
+// checkJudge 는 자동 승격이 켜져 있는지 본다.
+//
+// **사용자가 가장 알고 싶어 할 한 줄이다** — 켜져 있으면 에이전트가 안 불러도 결정이
+// 기록되고, 꺼져 있으면 에이전트가 부를 때만 남는다. 두 상태의 차이가 크므로
+// 어느 쪽인지 분명히 말해야 한다.
+func checkJudge(r *health.Report, o DoctorOptions) {
+	if o.Config == nil {
+		return
+	}
+	set, ok := judge.Configured(o.Config.Capture.JudgePath)
+	if set && !ok {
+		add(r, "자동 기록", health.Fail,
+			fmt.Sprintf("설정의 judge_path (%s) 를 실행할 수 없다 — 자동 승격이 꺼져 있다",
+				o.Config.Capture.JudgePath),
+			"경로를 고치거나 judge_path 를 비워 자동 탐색에 맡겨라")
+		return
+	}
+	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
+	if j == nil {
+		add(r, "자동 기록", health.Warn,
+			"판별기를 찾지 못했다 — 에이전트가 cb capture 를 부를 때만 기록된다",
+			"claude CLI 를 PATH 에 두거나 [capture] judge_path 를 적어라")
+		return
+	}
+	add(r, "자동 기록", health.OK,
+		fmt.Sprintf("%s (%s) — 에이전트가 안 불러도 세션 끝에 판별기가 기록한다", j.Path, j.Model), "")
 }
 
 // pendingStale 은 이보다 오래된 미확인 구간을 "쌓이고 있다" 로 본다.
