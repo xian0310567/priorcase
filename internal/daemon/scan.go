@@ -22,12 +22,27 @@ type ScanResult struct {
 	Bad      int      // 파싱 실패한 줄 수
 	Signals  []string // 걸린 시그널
 	Flagged  bool     // pending 을 남겼나
+	NoFilter bool     // 시그널 필터를 건너뛰었나 (판별기가 있어서)
 	Advanced bool     // 체크포인트를 전진시켰나
 	Excluded bool     // 제외된 경로라 표시를 건너뛰었나
 	Recorded bool     // 이미 기록된 결정이 있어 표시를 건너뛰었나
 }
 
 // Scan 은 transcript 파일 하나의 새 구간을 처리한다. **파일에 쓰지 않는다.**
+//
+// judgeAvailable 이 true 면 **키워드 시그널을 건너뛴다.**
+//
+// 시그널은 "이 구간에 결정이 있을까" 를 낱말로 어림하는 것인데, 이 프로젝트는 이미
+// *"규칙으로는 결정을 판정할 수 없다"* 를 실측으로 확인했다(한 세션 후보 160개, 대부분
+// 결정 아님). 그런데도 판별기 **앞에** 그 규칙을 세워 두면, 판별기가 보지도 못한 채
+// 걸러진다.
+//
+// 실측이 그 필터가 거의 안 거른다는 것도 보여 준다 — 발화 6개를 넘는 세션 585개 중
+// **578개(98.8%)** 가 시그널에 걸린다. 건너뛰어도 판별기 호출은 ~1.2% 늘 뿐이다.
+//
+// 그리고 **시그널은 설정에 적힌 낱말이라 언어에 묶인다.** 한국어 기본 시그널로
+// 영어 대화를 훑으면 아무것도 안 걸리는데, 로그에는 "훑음 — 발화 8" 이라 정상으로
+// 보인다. 실제로 그 상태를 재현해 확인했다. 판별기가 있으면 그 지뢰가 사라진다.
 //
 // 필터 체인 (스펙 §7.2):
 //
@@ -42,7 +57,7 @@ type ScanResult struct {
 //     길어져도 안전망이 한 번도 발동하지 않는다. 구간을 누적해야 임계가 의미를 갖는다.
 //  3. 임계를 넘겼다 → 전진한다. 시그널이 있으면 표시하고, 없으면 다 보고 결정이
 //     없다고 판단한 것이므로 그냥 전진한다.
-func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult, error) {
+func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailable bool) (ScanResult, error) {
 	var r ScanResult
 
 	info, err := os.Stat(path)
@@ -76,6 +91,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 		}
 	}
 	r.Signals = matchSignals(c.Capture.Signals, turns)
+	r.NoFilter = judgeAvailable
 	days := segmentDays(turns)
 
 	minTurns := c.Capture.MinTurns
@@ -98,7 +114,10 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 	// 발화 6개를 넘는 585개의 **99%(578개)** 가 시그널에 걸린다. 기본 시그널이
 	// "변경"·"선택"·"대신" 처럼 흔한 낱말이라, 사실상 모든 실질 세션이 표시된다.
 	// 에이전트가 제 할 일을 다 한 세션까지 표시하면 무시하는 법을 배운다.
-	if len(r.Signals) > 0 && !r.Excluded {
+	// 판별기가 있으면 시그널이 안 걸려도 넘긴다 — 판정은 판별기가 한다.
+	worthJudging := len(r.Signals) > 0 || judgeAvailable
+
+	if worthJudging && !r.Excluded {
 		domain := c.DomainForCwd(meta.Cwd)
 		rec, ferr := alreadyRecorded(l, domain, meta.SessionID, days)
 		if ferr != nil {
@@ -110,7 +129,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string) (ScanResult,
 		}
 	}
 
-	if len(r.Signals) > 0 && !r.Excluded && !r.Recorded {
+	if worthJudging && !r.Excluded && !r.Recorded {
 		p := Pending{
 			SessionID: meta.SessionID,
 			Path:      path,

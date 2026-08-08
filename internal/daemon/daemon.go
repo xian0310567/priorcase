@@ -40,6 +40,9 @@ type Options struct {
 	// 배운다. 데몬은 **지금부터** 놓친 것을 줍는 도구다.
 	Backfill bool
 
+	// JudgeAvailable 이 true 면 키워드 시그널을 건너뛴다. 판정은 판별기가 한다.
+	JudgeAvailable bool
+
 	// OnEvent 는 진행 상황을 알린다. nil 이면 아무 데도 안 알린다.
 	OnEvent func(Event)
 }
@@ -91,8 +94,8 @@ func Run(ctx context.Context, o Options) error {
 	// 시그널이 하나도 없으면 어떤 구간도 표시되지 않는다 — 데몬이 돌긴 도는데
 	// **아무 일도 안 한다.** 설정에 [capture] 절을 안 쓰면 이 상태가 되는데, 겉으로는
 	// 정상 기동으로 보여서 "안전망이 켜져 있다" 고 믿게 된다. 무동작을 조용히 두지 않는다.
-	if len(o.Config.Capture.Signals) == 0 {
-		d0.emit(Event{Kind: "error", Note: "설정에 [capture] signals 가 없다 — " +
+	if len(o.Config.Capture.Signals) == 0 && !o.JudgeAvailable {
+		d0.emit(Event{Kind: "error", Note: "설정에 [capture] signals 가 없고 판별기도 없다 — " +
 			"어떤 구간도 표시되지 않는다. 데몬이 사실상 아무 일도 하지 않는다"})
 	}
 
@@ -267,7 +270,7 @@ func (d *watcher) drain() {
 	d.mu.Unlock()
 
 	for _, p := range paths {
-		r, err := Scan(d.st, d.o.Config, d.l, p)
+		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
 			continue
@@ -286,7 +289,7 @@ func (d *watcher) drain() {
 //
 // owned 가 false 면 아무것도 안 한 것이다 — 실패가 아니라 "주인이 따로 있다" 는 뜻이다.
 // 이걸 에러로 만들면 훅이 매번 시끄러워진다.
-func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string) (r ScanResult, owned bool, err error) {
+func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string, judgeAvailable bool) (r ScanResult, owned bool, err error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return r, false, err
 	}
@@ -308,7 +311,7 @@ func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string) (
 	if err := st.Load(); err != nil {
 		return r, true, err
 	}
-	r, err = Scan(st, c, l, path)
+	r, err = Scan(st, c, l, path, judgeAvailable)
 	return r, true, err
 }
 
