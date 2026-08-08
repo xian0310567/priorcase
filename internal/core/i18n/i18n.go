@@ -7,6 +7,8 @@
 // 내용보다 커진다. 호출부가 두 언어를 나란히 넘기면 한쪽만 고치다 어긋나는 일도 없다.
 package i18n
 
+import "fmt"
+
 // Lang 은 볼트 산출물의 언어다.
 type Lang string
 
@@ -30,4 +32,23 @@ func (l Lang) T(ko, en string) string {
 		return en
 	}
 	return ko
+}
+
+// Count 는 개수를 언어에 맞는 명사구로 만든다.
+//
+// **한국어에는 수 일치가 없고 영어에는 있다.** `%d건` 은 1이든 7이든 옳지만
+// `%d segments` 는 1일 때 비문이 된다 — 국제화하면서 실제로 그렇게 나왔다
+// ("The daemon flagged 1 unreviewed segments"). 모델은 파싱하지만, 우리가 쓰는
+// 글의 품질이 곧 제품의 인상이다.
+//
+// 호출부가 단수·복수를 나란히 넘긴다 — T 와 같은 규약이라 한쪽만 고치다
+// 어긋나는 일이 없다. 한국어는 수를 안 따지므로 하나만 받는다.
+func (l Lang) Count(n int, ko, one, many string) string {
+	if l == EN {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, one)
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	return fmt.Sprintf("%d%s", n, ko)
 }

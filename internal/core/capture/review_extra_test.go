@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"github.com/xian0310567/casebook/internal/core/i18n"
 	"os"
 	"reflect"
 	"strings"
@@ -14,7 +15,7 @@ import (
 // 들어가는지 확인한다.
 func TestAppendRetrospectiveInsertsIntoExistingSection(t *testing.T) {
 	body := []byte("## 결정\n\n내용.\n\n## 회고\n\n첫 회고.\n\n## 부록\n\n부록 내용.\n")
-	got := string(appendRetrospective(body, "두번째 회고."))
+	got := string(appendRetrospective(body, "두번째 회고.", i18n.KO))
 
 	// "## 부록" 앞, "## 회고" 절 안에 들어가야 한다.
 	retroIdx := strings.Index(got, "## 회고")
@@ -41,7 +42,7 @@ func TestAppendRetrospectiveInsertsIntoExistingSection(t *testing.T) {
 // 절인 노트)에도 두 번째 회고가 같은 절 안에, 첫 회고 뒤에 붙는지 본다.
 func TestAppendRetrospectiveTwiceNoFollowingSection(t *testing.T) {
 	body := []byte("## 결정\n\n내용.\n\n## 회고\n\n첫 회고.\n")
-	got := string(appendRetrospective(body, "두번째 회고."))
+	got := string(appendRetrospective(body, "두번째 회고.", i18n.KO))
 
 	want := "## 결정\n\n내용.\n\n## 회고\n\n첫 회고.\n\n두번째 회고.\n"
 	if got != want {
@@ -159,5 +160,49 @@ func TestReviewSupersedesTwiceKeepsRelatedUnique(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("related 에 같은 링크가 %d번 들어갔다(중복 제거 실패): %v", count, n.Meta.Related)
+	}
+}
+
+// ★ 영어 노트에 회고를 붙이면 **영어 절**에 붙어야 한다.
+//
+// 본문 템플릿이 lang 을 따라가면서 볼트에 `## 회고` 와 `## Retrospective` 가 섞인다.
+// 정규식이 한쪽만 알아보면, 못 찾은 노트 끝에 다른 언어의 절이 새로 생겨 회고가
+// 둘로 갈라진다 — 국제화가 만들 뻔한 결함이다.
+func TestRetrospectiveFindsEnglishSection(t *testing.T) {
+	body := []byte("## Decision\n\nx\n\n## Retrospective\n\n첫 회고.\n")
+	got := string(appendRetrospective(body, "두번째 회고.", i18n.EN))
+	if strings.Count(got, "## Retrospective") != 1 {
+		t.Errorf("영어 회고 절이 %d개 — 절을 못 찾아 새로 만들었다:\n%s",
+			strings.Count(got, "## Retrospective"), got)
+	}
+	if strings.Contains(got, "## 회고") {
+		t.Errorf("영어 노트에 한국어 절이 생겼다:\n%s", got)
+	}
+	if !strings.Contains(got, "첫 회고.") || !strings.Contains(got, "두번째 회고.") {
+		t.Errorf("회고가 이어 붙지 않았다:\n%s", got)
+	}
+}
+
+// 회고 절이 아예 없는 영어 노트에는 영어 제목으로 만든다 — 본문 언어를 따라간다.
+func TestRetrospectiveCreatesHeadingMatchingNoteLanguage(t *testing.T) {
+	en := []byte("## Decision\n\nWe chose Postgres.\n\n## Rationale\n\nJSONB.\n")
+	got := string(appendRetrospective(en, "It worked.", i18n.KO)) // 설정은 한국어인데 노트가 영어
+	if !strings.Contains(got, "## Retrospective") {
+		t.Errorf("영어 노트에 한국어 제목을 붙였다 — 다음 갱신 때 또 못 찾는다:\n%s", got)
+	}
+
+	ko := []byte("## 결정\n\nPostgres 로 간다.\n")
+	got = string(appendRetrospective(ko, "잘 됐다.", i18n.KO))
+	if !strings.Contains(got, "## 회고") {
+		t.Errorf("한국어 노트에 영어 제목을 붙였다:\n%s", got)
+	}
+}
+
+// 한국어 노트는 그대로 동작해야 한다 — 기존 볼트 62건이 여기 걸린다.
+func TestRetrospectiveStillFindsKoreanSection(t *testing.T) {
+	body := []byte("## 결정\n\nx\n\n## 회고\n\n첫 회고.\n")
+	got := string(appendRetrospective(body, "두번째 회고.", i18n.KO))
+	if strings.Count(got, "## 회고") != 1 {
+		t.Errorf("한국어 회고 절이 %d개:\n%s", strings.Count(got, "## 회고"), got)
 	}
 }

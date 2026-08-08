@@ -108,7 +108,9 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 
 	body := r.Body
 	if len(body) == 0 {
-		body = []byte("## 결정\n\n## 근거\n\n## 고려한 대안\n\n## 예상 리스크\n\n## 회고\n")
+		body = []byte(l.Lang().T(
+			"## 결정\n\n## 근거\n\n## 고려한 대안\n\n## 예상 리스크\n\n## 회고\n",
+			"## Decision\n\n## Rationale\n\n## Alternatives considered\n\n## Risks\n\n## Retrospective\n"))
 	}
 	if hasOld {
 		if err := l.Write(old); err != nil {
@@ -151,6 +153,7 @@ func slugKey(s string) string {
 // 비교는 한 도메인의 결정 폴더 안에서만 한다. stem 에 날짜가 들어 있으므로
 // 날짜가 다른 결정은 키가 달라져 자동으로 빠진다 — 전 볼트를 훑을 필요가 없다.
 func checkNearDuplicate(l *store.Layout, prefix, stem string) error {
+	lang := l.Lang()
 	stems, err := l.DecisionStems(prefix)
 	if err != nil {
 		return err
@@ -158,8 +161,15 @@ func checkNearDuplicate(l *store.Layout, prefix, stem string) error {
 	key := slugKey(stem)
 	for _, s := range stems {
 		if slugKey(s) == key {
-			return fmt.Errorf("유사한 결정이 이미 있다: %q (하이픈·공백·밑줄·대소문자만 다르다). "+
-				"뒤집는 결정이면 --supersedes 를 쓰고, 정말 다른 결정이면 slug 를 구별되게 바꿔라", s)
+			// **이 에러는 에이전트가 읽고 행동을 바꾸는 지시문이다.** MCP capture 실패
+			// 텍스트로 그대로 올라가므로(tools.go 가 err 를 되돌려준다) 다른 에러
+			// 메시지와 달리 국제화 대상이다.
+			return fmt.Errorf(lang.T(
+				"유사한 결정이 이미 있다: %q (하이픈·공백·밑줄·대소문자만 다르다). "+
+					"뒤집는 결정이면 --supersedes 를 쓰고, 정말 다른 결정이면 slug 를 구별되게 바꿔라",
+				"A near-duplicate decision already exists: %q (it differs only in hyphens, spaces, "+
+					"underscores, or case). If this overturns it, pass --supersedes; if it is genuinely "+
+					"a different decision, change the slug so the two are distinguishable."), s)
 		}
 	}
 	return nil

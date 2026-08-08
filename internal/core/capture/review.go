@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/xian0310567/casebook/internal/core/i18n"
 	"github.com/xian0310567/casebook/internal/core/index"
 	"github.com/xian0310567/casebook/internal/core/schema"
 	"github.com/xian0310567/casebook/internal/core/store"
@@ -48,7 +49,7 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 		n.Meta.Supersedes, old, hasOld = link, o, true
 	}
 	if r.Retrospective != "" {
-		n.Body = appendRetrospective(n.Body, r.Retrospective)
+		n.Body = appendRetrospective(n.Body, r.Retrospective, l.Lang())
 	}
 
 	// 두 노트를 모두 검증한 뒤에야 쓰기 시작한다. 옛 노트를 먼저 쓰고 새 노트
@@ -99,26 +100,48 @@ func appendUnique(ss []string, v string) []string {
 }
 
 var (
-	// retroHeadRe 는 줄 전체가 "## 회고" 인 헤더 줄을 찾는다. 정확히 그 줄만
+	// retroHeadRe 는 줄 전체가 회고 절 헤더인 줄을 찾는다. 정확히 그 줄만
 	// 매칭하도록 (?m)^...$ 로 앵커링한다 — 안 그러면 "### 회고" 같은 하위
 	// 헤더의 부분 문자열에도 걸린다.
-	retroHeadRe = regexp.MustCompile(`(?m)^## 회고[ \t]*$`)
+	//
+	// **두 언어를 다 알아본다.** 본문 템플릿이 lang 을 따라가므로 볼트에 `## 회고` 와
+	// `## Retrospective` 가 섞인다 — 사용자가 lang 을 바꿨거나, 팀이 볼트를 공유하거나.
+	// 한쪽만 알아보면 못 찾은 노트 끝에 **다른 언어의 절이 새로 생겨서** 회고가 둘로
+	// 갈라진다. 국제화가 만들 뻔한 결함이라 여기서 막는다.
+	retroHeadRe = regexp.MustCompile(`(?m)^## (회고|Retrospective)[ \t]*$`)
 	// sectionHeadRe 는 다음 최상위 절의 시작(줄 맨 앞의 "## ")을 찾는다.
 	sectionHeadRe = regexp.MustCompile(`(?m)^## `)
 )
 
-// appendRetrospective 는 "## 회고" 절에 내용을 붙인다.
+// retroHeading 은 새로 만들 회고 절의 제목이다.
+//
+// 본문에 이미 영어 절 제목(`## Decision` 등)이 있으면 영어로 간다. 그것이 노트의
+// 언어를 알려 주는 유일한 단서다 — frontmatter 에는 언어 필드가 없다.
+func retroHeading(body string, lang i18n.Lang) string {
+	if englishSectionRe.MatchString(body) {
+		return "Retrospective"
+	}
+	return lang.T("회고", "Retrospective")
+}
+
+// englishSectionRe 는 영어 본문 템플릿의 절 제목이다. capture 가 쓰는 것과 같아야 한다.
+var englishSectionRe = regexp.MustCompile(`(?m)^## (Decision|Rationale|Alternatives considered|Risks)[ \t]*$`)
+
+// appendRetrospective 는 회고 절에 내용을 붙인다.
 //
 // 절이 없으면 본문 끝에 새로 만든다. 절이 이미 있으면 그 절 *안에* 붙인다 —
 // 뒤에 다른 절(예: "## 부록")이 있으면 그 앞에 삽입해, 두 번째 회고가 엉뚱한
 // 절 뒤로 밀려나지 않게 한다.
-func appendRetrospective(body []byte, text string) []byte {
+func appendRetrospective(body []byte, text string, lang i18n.Lang) []byte {
 	s := string(body)
 	text = strings.TrimRight(text, "\n")
 
 	loc := retroHeadRe.FindStringIndex(s)
 	if loc == nil {
-		return []byte(strings.TrimRight(s, "\n") + "\n\n## 회고\n\n" + text + "\n")
+		// 절이 없으면 새로 만든다. 제목은 **그 노트를 따라간다** — 본문이 영어면
+		// 영어 제목을, 아니면 설정 언어를 쓴다. 노트 하나 안에서 언어가 섞이면
+		// 다음 갱신 때 또 못 찾는다.
+		return []byte(strings.TrimRight(s, "\n") + "\n\n## " + retroHeading(s, lang) + "\n\n" + text + "\n")
 	}
 
 	afterHead := loc[1]

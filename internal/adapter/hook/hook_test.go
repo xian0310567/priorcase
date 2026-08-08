@@ -263,3 +263,79 @@ func TestNoNudgeWhenNothingPending(t *testing.T) {
 		t.Errorf("표시가 없는데 들이밀었다:\n%s", r.out)
 	}
 }
+
+// ── 세션 진입 블록의 언어 ────────────────────────────────────────────────
+//
+// 세션 진입 블록은 ①층의 유일한 지시 통로다 — 에이전트가 읽고 행동하는 글이라
+// 대화 언어와 어긋나면 `cb capture` 를 부르는 정확도가 같이 떨어진다. 그래서
+// **두 언어 모두** 계약·도메인·미확인 구간이 실려 나오는지 검사한다.
+func cfgEN(t *testing.T) *config.Config {
+	t.Helper()
+	c := cfg(t)
+	c.Lang = "en"
+	return c
+}
+
+func TestSessionStartInEnglishCarriesDomainAndContract(t *testing.T) {
+	r := runHook(t, cfgEN(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	for _, want := range []string{"alpha", "cb capture", "Recent decisions"} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("영어 세션 진입에 %q 가 없다:\n%s", want, r.out)
+		}
+	}
+	// 한국어 안내 문구가 남아 있으면 옮기다 만 자리가 있는 것이다.
+	// (노트 요약은 볼트 데이터라 한국어일 수 있으니 검사 대상이 아니다.)
+	for _, ko := range []string{"최근 결정", "도메인 접두어", "되돌리기 어려운"} {
+		if strings.Contains(r.out, ko) {
+			t.Errorf("영어인데 한국어 %q 가 남았다:\n%s", ko, r.out)
+		}
+	}
+}
+
+func TestSessionStartInEnglishForbidsCaptureInExcludedDir(t *testing.T) {
+	r := runHook(t, cfgEN(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/secret"})
+	if !strings.Contains(r.out, "exclusion zone") {
+		t.Errorf("제외 구역임을 안 알린다:\n%s", r.out)
+	}
+	if strings.Contains(r.out, "call `cb capture`") {
+		t.Errorf("제외 구역인데 기록하라고 한다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "Recall still works") {
+		t.Errorf("회수는 되는데 안 알린다:\n%s", r.out)
+	}
+}
+
+func TestSessionStartInEnglishShowsPending(t *testing.T) {
+	stateDir := t.TempDir()
+	s := daemon.NewStore(stateDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, Signals: []string{"결정"}}); err != nil {
+		t.Fatal(err)
+	}
+	r := runHook(t, cfgEN(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	// 단수는 단수로 — "1 unreviewed segments" 는 비문이다.
+	if !strings.Contains(r.out, "flagged 1 unreviewed segment.") {
+		t.Errorf("미확인 구간을 안 알린다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "9 turns") {
+		t.Errorf("구간 항목이 영어로 안 나온다:\n%s", r.out)
+	}
+}
+
+// "0건" 과 "확인할 수 없다" 는 영어에서도 다른 사실이다.
+func TestSessionStartInEnglishDistinguishesBrokenStateFromZero(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte("{깨짐"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runHook(t, cfgEN(t), stateDir, EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	if !strings.Contains(r.out, "Cannot check for unreviewed segments") {
+		t.Errorf("상태 파일이 깨졌는데 조용하다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "safety net") {
+		t.Errorf("안전망이 꺼졌다는 사실을 안 알린다:\n%s", r.out)
+	}
+}
