@@ -5,7 +5,15 @@ on:
   pull_request:
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # **주 배포 대상에서 돌려야 한다.** 예전에는 linux/amd64 한 곳뿐이라
+    # darwin/arm64 에서는 테스트가 한 번도 돌아 본 적이 없었다 — 이 프로젝트는
+    # 파일 잠금(flock)·경로·유니코드 정규화(NFC/NFD)처럼 OS 마다 갈리는 것을
+    # 다루므로 그 공백이 특히 비싸다.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -23,3 +31,6 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test -race ./...
+      # go.mod 가 흔들리면 릴리스 중 goreleaser 의 before hook 이 실패한다.
+      - name: go mod tidy 검사
+        run: go mod tidy -diff

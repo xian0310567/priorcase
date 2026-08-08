@@ -7,30 +7,32 @@
 
 ## 설치
 
-    go install github.com/xian0310567/casebook/cmd/cb@latest
+**바이너리를 받는다.** casebook 은 소스를 공개하지 않는다 — `go install` 은 쓸 수 없다.
 
-**`go install` 은 Go 1.25 이상이 필요하다** (MCP SDK 요구). Homebrew 로 깐 Go 는
-`GOTOOLCHAIN` 기본값이 `local` 이라 1.23 에서 멈추고 실패한다 — `GOTOOLCHAIN=auto
-go install …` 로 부르거나 `brew upgrade go` 를 하면 된다. Releases 바이너리는
-영향을 받지 않는다.
+    # macOS (Homebrew)
+    brew install xian0310567/tap/casebook
 
-**`go install` 뒤에 `cb` 가 PATH 에 있는지 확인하라.** Go 는 `$GOPATH/bin`(보통
-`~/go/bin`)에 넣는데 그게 PATH 에 없는 환경이 흔하다. 그러면 훅은 절대 경로로 멀쩡히
-도는데 **사람만 `cb` 를 못 친다** — 아래 두 방법 중 하나면 된다.
+    # 그 밖 — GitHub Releases 에서 받는다
+    curl -L https://github.com/xian0310567/casebook-releases/releases/latest/download/casebook_darwin_arm64.tar.gz | tar xz
+    sudo mv cb /usr/local/bin/
 
-    export PATH="$HOME/go/bin:$PATH"        # 셸 설정에 추가
-    ln -s "$HOME/go/bin/cb" ~/.local/bin/cb # 이미 PATH 에 있는 자리로 링크
+darwin/linux × amd64/arm64 를 낸다.
 
-`cb doctor` 가 이걸 검사한다.
+> **⚠️ 배포 저장소는 아직 만들지 않았다.** 위 두 경로 모두 첫 릴리스를 내야 켜진다.
+> 현재 상태와 남은 일은 [현재 상태](#현재-상태) 절을 보라.
 
-또는 [GitHub Releases](https://github.com/xian0310567/casebook/releases) 에서
-`casebook_<os>_<arch>.tar.gz` 를 받아 `cb` 를 PATH 에 둔다. darwin/linux × amd64/arm64.
+**`cb` 가 PATH 에 있는지 확인하라.** 훅은 절대 경로로 배선되므로, PATH 에 없으면
+**시스템은 멀쩡히 도는데 사람만 명령을 못 친다.** `cb doctor` 가 이걸 검사한다.
 
-**Homebrew 는 아직 쓸 수 없다.** `.goreleaser.yaml` 에 tap 배포 설정(`homebrew_casks`)은
-들어 있지만 tap 저장소 `xian0310567/homebrew-tap` 을 아직 만들지 않았다. 그래서 지금
-`brew install xian0310567/tap/casebook` 은 동작하지 않는다. tap 저장소를 만들고 릴리스
-워크플로에 `HOMEBREW_TAP_GITHUB_TOKEN` 시크릿을 넣으면 그때부터 켜진다 — 그 전까지는
-릴리스가 cask 업로드를 건너뛰고 정상 종료한다.
+    cb doctor        # 지금 상태를 진단한다
+    cb init          # 훅 배선 계획을 보여 준다 (파일을 안 고친다)
+    cb init --apply  # 실제로 배선한다
+
+### 라이선스
+
+독점 소프트웨어다 ([LICENSE](LICENSE)). **다만 casebook 이 쓰는 파일은 당신 것이다** —
+평문 마크다운이고, 라이선스가 끝나도 그대로 남는다. 포함된 오픈소스 구성요소는
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 를 보라.
 
 ## 현재 상태
 

@@ -1,5 +1,11 @@
 version: 2
 
+# **아카이브 이름을 고정한다.** goreleaser 는 project_name 을 저장소 이름에서
+# 유추하는데, 릴리스를 별도 저장소(casebook-releases)로 보내는 순간 그것이
+# 파일명에 새어 들어간다 — `casebook-releases_darwin_arm64.tar.gz` 가 나와서
+# README 의 다운로드 URL 이 통째로 404 가 된다. 실제로 그렇게 나왔다.
+project_name: casebook
+
 before:
   hooks:
     - go mod tidy
@@ -19,6 +25,14 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    # 배포물에 라이선스와 제3자 고지를 반드시 넣는다. 독점 소프트웨어라
+    # EULA 가 동봉돼야 하고, 링크된 오픈소스 구성요소의 고지 의무도 여기서 진다.
+    # (goreleaser 는 LICENSE·README 를 기본으로 넣지만 명시해 둔다 — 기본값이
+    # 바뀌면 조용히 빠지는데, 그건 라이선스 위반이다.)
+    files:
+      - LICENSE
+      - THIRD-PARTY-NOTICES.md
+      - README.md
 
 checksum:
   name_template: checksums.txt
@@ -43,9 +57,9 @@ homebrew_casks:
     # cask 이름은 casebook 인데 아카이브 안의 실행 파일은 cb 다. 적어 주지 않으면
     # goreleaser 가 cask 이름으로 심볼릭 링크를 걸어 없는 파일을 가리킨다.
     binaries: [cb]
-    homepage: https://github.com/xian0310567/casebook
+    homepage: https://github.com/xian0310567/casebook-releases
     description: 에이전트의 결정을 마크다운 볼트에 기록하고 다시 꺼내 주는 CLI
-    license: MIT
+    license: proprietary
     skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
     repository:
       owner: xian0310567
@@ -60,3 +74,15 @@ homebrew_casks:
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cb"]
           end
+
+# **소스 저장소는 private 이다** ([[casebook-결정-소스비공개-클로즈드배포]]).
+# private 저장소의 Releases 는 인증이 있어야 받을 수 있어서, 낯선 사람에게는
+# 다운로드 링크가 그대로 죽는다. 그래서 산출물만 **별도 public 저장소**로 민다.
+#
+# ⚠️ 아래 저장소를 아직 만들지 않았다. 만들기 전에 태그를 밀면 릴리스가 실패한다 —
+# 조용히 성공하는 것보다 낫다(빈 릴리스가 나가면 사용자가 404 를 만난다).
+# RELEASE_GITHUB_TOKEN 시크릿도 필요하다 (GITHUB_TOKEN 은 다른 저장소에 못 쓴다).
+release:
+  github:
+    owner: xian0310567
+    name: casebook-releases
