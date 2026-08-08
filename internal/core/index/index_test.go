@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/casebook/internal/testutil"
 )
 
 func TestBuild(t *testing.T) {
@@ -208,4 +209,33 @@ func TestIndexIsDeterministic(t *testing.T) {
 	if string(a) != string(b) {
 		t.Error("같은 볼트인데 두 번의 색인이 다르다 — 멱등성이 깨졌다")
 	}
+}
+
+// 볼트 산출물은 설정 언어를 따른다. **결정 노트의 본문 언어와는 별개다** —
+// 본문은 대화의 언어를 따르므로 한 볼트에 여러 언어가 섞일 수 있다.
+func TestIndexHeaderFollowsLang(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	c.Lang = "en"
+	got, _, err := Build(store.NewLayout(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	for _, want := range []string{"# Decision index", "Do not edit", "total ·"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("영어 색인에 %q 가 없다:\n%s", want, headOf(s, 12))
+		}
+	}
+	if strings.Contains(s, "결정 색인") {
+		t.Errorf("lang=en 인데 한국어가 남았다:\n%s", headOf(s, 12))
+	}
+}
+
+// headOf 는 실패 메시지에 색인 머리말만 싣는다. 표 전체를 찍으면 무엇이 틀렸는지 안 보인다.
+func headOf(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
 }

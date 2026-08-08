@@ -87,18 +87,23 @@ func (o Options) nudge() string {
 		ex = "…" + string(r[len(r)-nudgeExcerpt:])
 	}
 
+	lang := o.Layout.Lang()
 	var b strings.Builder
-	b.WriteString("\n[기록되지 않은 결정]\n")
-	fmt.Fprintf(&b, "%s 의 %s 구간(발화 %d)에서 결정 시그널이 잡혔는데 결정 노트가 없다.\n",
+	b.WriteString("\n" + lang.T("[기록되지 않은 결정]", "[Unrecorded decision]") + "\n")
+	fmt.Fprintf(&b, lang.T(
+		"%s 의 %s 구간(발화 %d)에서 결정 시그널이 잡혔는데 결정 노트가 없다.\n",
+		"A decision signal was found in %s on %s (%d turns) but no decision note exists.\n"),
 		p.Domain, p.When(), p.Turns)
 	if len(mine) > 1 {
-		fmt.Fprintf(&b, "이런 구간이 %d건 더 있다.\n", len(mine)-1)
+		fmt.Fprintf(&b, lang.T("이런 구간이 %d건 더 있다.\n",
+			"%d more such segments exist.\n"), len(mine)-1)
 	}
 	if ex != "" {
-		b.WriteString("\n--- 그 구간 ---\n" + ex + "\n---\n")
+		b.WriteString("\n--- " + lang.T("그 구간", "the segment") + " ---\n" + ex + "\n---\n")
 	}
-	b.WriteString("\n실제 결정이면 지금 `cb capture` 로 남겨라. 결정이 아니면 " +
-		"`cb pending --resolve` 로 지워라. 그대로 두면 매번 다시 뜬다.\n")
+	b.WriteString("\n" + lang.T(
+		"실제 결정이면 지금 `cb capture` 로 남겨라. 결정이 아니면 `cb pending --resolve` 로 지워라. 그대로 두면 매번 다시 뜬다.\n",
+		"If this is a real decision, record it now with `cb capture`. If not, clear it with `cb pending --resolve`. It will keep appearing until you do.\n"))
 	return b.String()
 }
 

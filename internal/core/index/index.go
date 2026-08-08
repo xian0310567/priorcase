@@ -51,8 +51,12 @@ func Build(l *store.Layout) ([]byte, Result, error) {
 	})
 
 	var b strings.Builder
-	b.WriteString("---\ntitle: 결정 색인\ntags: [index, decision]\n---\n\n")
-	b.WriteString("# 결정 색인\n\n> 자동 생성된다. 직접 편집하지 마라 — `cb index` 가 덮어쓴다.\n\n")
+	lang := l.Lang()
+	title := lang.T("결정 색인", "Decision index")
+	fmt.Fprintf(&b, "---\ntitle: %s\ntags: [index, decision]\n---\n\n", title)
+	fmt.Fprintf(&b, "# %s\n\n> %s\n\n", title, lang.T(
+		"자동 생성된다. 직접 편집하지 마라 — `cb index` 가 덮어쓴다.",
+		"Generated automatically. Do not edit — `cb index` overwrites this."))
 
 	// 요약 줄. **`아쉬운 결과` 가 이 줄의 존재 이유다** — 뒤집혔거나 나쁘게 끝난 결정이
 	// 몇 건인지가 한눈에 보여야 한다. 표를 끝까지 읽어야 알 수 있으면 아무도 안 본다.
@@ -69,8 +73,9 @@ func Build(l *store.Layout) ([]byte, Result, error) {
 			regret++
 		}
 	}
-	fmt.Fprintf(&b, "전체 %d건 · active %d건 · 아쉬운 결과(regretted/bad) %d건\n\n",
-		len(notes), active, regret)
+	fmt.Fprintf(&b, lang.T(
+		"전체 %d건 · active %d건 · 아쉬운 결과(regretted/bad) %d건\n\n",
+		"%d total · %d active · %d regretted/bad\n\n"), len(notes), active, regret)
 
 	b.WriteString(header)
 	for _, n := range notes {

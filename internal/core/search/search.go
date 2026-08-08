@@ -190,7 +190,7 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("[과거 결정 참조]\n")
+	b.WriteString(l.Lang().T("[과거 결정 참조]", "[Past decisions]") + "\n")
 	warn := false
 	for _, h := range hits {
 		m := h.Note.Meta
