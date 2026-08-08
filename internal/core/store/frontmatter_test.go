@@ -118,7 +118,15 @@ func TestEmitEmptyRelated(t *testing.T) {
 
 // --- 지시사항 3: KnownFields(true) — 10키 밖의 잉여 키는 에러가 나야 한다 ---
 
-func TestParseFrontmatterRejectsUnknownField(t *testing.T) {
+// ★ 계약이 뒤집혔다 (2026-08-09). 예전에는 잉여 키를 **거부**했다 — "조용히 버리지
+// 않는다" 는 뜻이었는데, 버리지 않는 대신 **읽기를 포기해서** 사용자가 Obsidian 에서
+// `aliases:` 한 줄만 넣어도 그 결정이 색인·회수·review 에서 통째로 사라졌다.
+//
+// 이제 받아서 되쓴다. 버리지도, 잃지도 않는다.
+//
+// "우리 노트인가" 판정은 이 함수가 하지 않는다 — `Layout.readNote` 가 `type: decision`
+// 표식으로 가른다. 파서는 파싱만 한다.
+func TestParseFrontmatterKeepsUnknownField(t *testing.T) {
 	const withExtra = `---
 type: decision
 date: 2026-08-01
@@ -130,13 +138,20 @@ supersedes: ""
 related: []
 tags: [decision]
 source_session: ""
-extra_field: "허용되지 않는 키"
+extra_field: "사용자가 넣은 키"
 ---
 
 본문
 `
-	if _, _, err := ParseFrontmatter([]byte(withExtra)); err == nil {
-		t.Fatal("10키 밖의 잉여 키(extra_field)를 조용히 통과시켰다")
+	m, _, err := ParseFrontmatter([]byte(withExtra))
+	if err != nil {
+		t.Fatalf("잉여 키 하나에 노트를 통째로 못 읽는다: %v", err)
+	}
+	if len(m.Extra) != 1 {
+		t.Fatalf("잉여 키가 Extra 로 안 왔다: %v", m.Extra)
+	}
+	if !strings.Contains(string(EmitFrontmatter(m)), `extra_field: "사용자가 넣은 키"`) {
+		t.Errorf("잉여 키가 되쓰이지 않았다:\n%s", EmitFrontmatter(m))
 	}
 }
 

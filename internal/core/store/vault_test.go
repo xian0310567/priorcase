@@ -172,8 +172,12 @@ func TestListSkipsBrokenFile(t *testing.T) {
 		t.Fatalf("구 스키마 파일이 건너뜀 목록에 없다: %+v", skipped)
 	}
 	// 원인이 사용자에게 그대로 나가므로, 무엇이 문제인지 읽을 수 있어야 한다.
-	if !strings.Contains(reason.Error(), "field title not found") {
-		t.Errorf("구 스키마의 원인이 잉여 키를 짚어주지 않는다: %v", reason)
+	//
+	// 2026-08-09 이후 구 스키마는 **잉여 키가 아니라 표식 부재**로 걸린다. 잉여 키는
+	// 이제 Extra 로 보존되므로(사용자가 Obsidian 에서 넣는 aliases 를 지우지 않으려고),
+	// 옛 도구 노트를 가르는 기준은 `type: decision` 이 있느냐 하나뿐이다.
+	if !strings.Contains(reason.Error(), "결정 노트가 아니다") {
+		t.Errorf("구 스키마의 원인이 무엇이 문제인지 안 짚어준다: %v", reason)
 	}
 	// 경로는 SkippedNote.Path 가 들고 있다. 원인에 또 박혀 있으면 호출부가
 	// 볼트 상대 경로로 다듬어 낼 때 절대 경로가 중복으로 찍힌다.
