@@ -54,7 +54,11 @@ type Checkpoint struct {
 	// 전진하지 않은 스캔도 기록한다. 이게 없으면 "안전망이 도는데 표시할 게 없다" 와
 	// "안전망이 한 번도 안 돌았다" 가 똑같이 보인다 — 컷오버 1일차 회고에서 실제로
 	// cb doctor 가 후자를 전자로 보고했다.
-	At time.Time `json:"at,omitempty"`
+	//
+	// omitzero 다 — time.Time 은 구조체라 omitempty 가 안 먹어서, 흔적이 없는
+	// 체크포인트에 `"at": "0001-01-01T00:00:00Z"` 가 박힌다. 사람이 상태 파일을
+	// 열어 보는데 그건 데이터처럼 보인다.
+	At time.Time `json:"at,omitzero"`
 
 	// SessionCredited 는 **세션 대조 축**에서 면제로 소모한 노트 수다.
 	//

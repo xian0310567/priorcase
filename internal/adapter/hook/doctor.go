@@ -390,9 +390,15 @@ func suppressed(o DoctorOptions) int {
 func humanAgo(now, then time.Time) string {
 	d := now.Sub(then)
 	switch {
-	case d < 0:
-		return then.Format("2006-01-02 15:04")
+	case d < -time.Hour:
+		// 시계가 크게 어긋났다. 상대 시간을 말하면 거짓말이 되므로 그대로 보여 준다.
+		// **로컬 시간으로** 준다 — 저장은 UTC 라, 그대로 찍으면 사용자가 자기
+		// 시계와 몇 시간 어긋난 숫자를 보고 더 헷갈린다.
+		return then.Local().Format("2006-01-02 15:04") + " (시계 어긋남)"
 	case d < time.Minute:
+		// 음수도 여기로 온다. 진단을 읽는 사이에 다른 세션의 훅이 돌면 저장된 시각이
+		// 몇 밀리초 앞설 수 있는데, 그때 절대 시각을 뱉으면 방금 일어난 일이
+		// 엉뚱한 시각으로 보인다 — 실기기 첫 실행에서 실제로 그랬다.
 		return "방금"
 	case d < time.Hour:
 		return fmt.Sprintf("%d분 전", int(d.Minutes()))

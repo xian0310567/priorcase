@@ -408,3 +408,21 @@ func TestDoctorShowsSuppressionCount(t *testing.T) {
 		t.Errorf("면제 횟수가 안 보인다 — 조용한 이유를 알 수 없다: %s", got.Detail)
 	}
 }
+
+// 진단을 읽는 사이에 다른 세션의 훅이 돌면 저장된 시각이 몇 밀리초 앞설 수 있다.
+// 그때 절대 시각을 뱉으면 방금 일어난 일이 엉뚱한 시각으로 보인다 — 실기기 첫
+// 실행에서 실제로 "마지막 훑기 2026-08-08 15:04" 가 나왔고, 그건 25초 전이었다.
+func TestHumanAgoHandlesSlightlyFutureTimestamps(t *testing.T) {
+	now := time.Date(2026, 8, 9, 0, 5, 16, 0, time.UTC)
+	if got := humanAgo(now, now.Add(75*time.Millisecond)); got != "방금" {
+		t.Errorf("몇 밀리초 앞선 시각을 %q 로 냈다 — 방금 이어야 한다", got)
+	}
+	if got := humanAgo(now, now.Add(-30*time.Second)); got != "방금" {
+		t.Errorf("30초 전을 %q 로 냈다", got)
+	}
+	// 정말로 크게 어긋났으면 상대 시간을 말하면 안 된다.
+	got := humanAgo(now, now.Add(5*time.Hour))
+	if !strings.Contains(got, "시계 어긋남") {
+		t.Errorf("5시간 미래를 %q 로 냈다 — 시계가 어긋났다고 말해야 한다", got)
+	}
+}
