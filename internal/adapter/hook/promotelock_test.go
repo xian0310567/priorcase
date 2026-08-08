@@ -1,6 +1,9 @@
 package hook
 
 import (
+	"encoding/json"
+	"github.com/xian0310567/casebook/internal/core/judge"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -186,5 +189,81 @@ func TestPromoteHandlesOwnSessionFirst(t *testing.T) {
 	if !strings.HasPrefix(proms[0].ID, mine) {
 		t.Errorf("남의 구간을 먼저 처리했다 (%s) — 세션이 끝나는 것은 *이* 대화의 마지막 기회다",
 			proms[0].ID)
+	}
+}
+
+// ★★ 시간 상한 셋의 순서가 어긋나면 자동 기록이 조용히 0건이 된다.
+//
+//	judge.DefaultTimeout < promoteBudget < promoteHookTimeout
+//
+// 실제로 어긋나 있었다 — 예산 75초에 판별기 상한 90초. 한 건이 예산을 통째로
+// 먹으면 두 번째 구간이 영영 안 돈다. 그리고 훅에 timeout 이 아예 안 적혀 있어서
+// 호스트 기본값(우리가 모르는 값)이 승격을 중간에 죽일 수 있었다.
+func TestTimeoutOrderingIsSafe(t *testing.T) {
+	if judge.DefaultTimeout >= promoteBudget {
+		t.Errorf("판별기 상한(%v) ≥ 승격 예산(%v) — 한 건이 예산을 다 먹는다",
+			judge.DefaultTimeout, promoteBudget)
+	}
+	if promoteBudget >= promoteHookTimeout {
+		t.Errorf("승격 예산(%v) ≥ 훅 상한(%v) — 예산을 쓰기 전에 호스트가 훅을 죽인다",
+			promoteBudget, promoteHookTimeout)
+	}
+	// 예산 안에 판별기가 최소 두 번은 들어가야 한다. 한 번뿐이면 미확인 구간이
+	// 둘 이상일 때 영원히 하나씩만 처리된다.
+	if promoteBudget < 2*judge.DefaultTimeout {
+		t.Errorf("예산(%v)에 판별기(%v)가 두 번 안 들어간다", promoteBudget, judge.DefaultTimeout)
+	}
+}
+
+// 승격하는 훅에만 timeout 이 적혀야 한다. 나머지는 밀리초 단위라 적을 이유가 없다.
+func TestOnlyPromotingHooksCarryTimeout(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(sp, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := BuildPlan(InitOptions{SettingsPath: sp, Binary: "/bin/true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Apply(ReadSettings(sp)); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{
+		"SessionEnd": int(promoteHookTimeout / time.Second),
+		"PreCompact": int(promoteHookTimeout / time.Second),
+	}
+	seen := 0
+	for ev, groups := range root.Hooks {
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if !strings.Contains(h.Command, hookMarker) {
+					continue
+				}
+				seen++
+				if got := h.Timeout; got != want[ev] {
+					t.Errorf("%s: timeout=%d, want %d", ev, got, want[ev])
+				}
+			}
+		}
+	}
+	if seen != len(Events) {
+		t.Errorf("훅 %d개, want %d", seen, len(Events))
 	}
 }

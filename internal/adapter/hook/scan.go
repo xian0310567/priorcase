@@ -86,11 +86,26 @@ func (o Options) safetyNet(ctx context.Context) error {
 //
 // 재귀 차단: 판별기가 띄운 세션에도 훅이 붙는다. CASEBOOK_JUDGE 가 있으면 그
 // 세션이므로 즉시 끝낸다. 안 그러면 판별기가 판별기를 부른다.
-// promoteBudget 은 승격에 쓸 수 있는 총 시간이다.
+// 시간 상한 셋은 **반드시 이 순서**여야 한다:
 //
-// 훅은 대화 흐름 위에 있어서 여기서 멎으면 사용자가 그대로 겪는다. 판별기 한 건이
-// 최대 90초이므로 상한이 없으면 pending 20건에 훅이 몇 분을 쓴다.
-const promoteBudget = 75 * time.Second
+//	judge.DefaultTimeout  <  promoteBudget  <  promoteHookTimeout
+//
+// 어긋나면 각각 이렇게 깨진다.
+//
+//   - 판별기 상한 ≥ 예산 → 한 건이 예산을 통째로 먹어 두 번째 구간이 영영 못 돈다.
+//     실제로 그랬다 (예산 75초, 판별기 90초).
+//   - 예산 ≥ 훅 상한 → 예산을 다 쓰기 전에 호스트가 훅을 죽인다. 그러면 승격이
+//     중간에 잘리고 원장에는 절반만 남는다.
+//
+// arch 테스트가 이 순서를 강제한다.
+const (
+	// promoteBudget 은 승격에 쓸 수 있는 총 시간이다. 훅은 대화 흐름 위에 있어서
+	// 여기서 멎으면 사용자가 그대로 겪는다.
+	promoteBudget = 90 * time.Second
+	// promoteHookTimeout 은 승격하는 훅(SessionEnd·PreCompact)에 적어 둘 상한이다.
+	// 예산을 다 쓰고도 마무리(원장 쓰기·pending 해소)할 여유를 남긴다.
+	promoteHookTimeout = 120 * time.Second
+)
 
 // ownFirst 는 이 세션의 구간을 앞으로 옮긴다. 순서만 바꾸고 버리지 않는다.
 func ownFirst(items []daemon.Pending, transcript string) []daemon.Pending {
