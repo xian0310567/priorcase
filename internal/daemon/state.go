@@ -7,6 +7,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/xian0310567/casebook/internal/core/store"
 	"github.com/xian0310567/casebook/internal/core/xdgpath"
@@ -110,12 +113,65 @@ type state struct {
 	Pending     []Pending             `json:"pending"`
 }
 
-// Store 는 상태 파일 하나를 소유한다. 데몬은 단일 인스턴스지만 fsnotify 콜백이
-// 여러 고루틴에서 오므로 뮤텍스를 둔다.
+// stateLock 은 상태 파일을 고칠 때 잡는 잠금이다. **watch.lock 과 다른 파일이다.**
+//
+// watch.lock 은 "누가 스캔의 주인인가" 를 정하고 데몬이 살아 있는 내내 쥔다.
+// 이건 상태 파일 한 번 고치는 동안만 쥔다. 둘을 겹쳐 잡는 쪽은 언제나 데몬이고
+// 순서가 watch.lock → state.lock 으로 고정이라 교착이 생기지 않는다.
+const stateLock = "state.lock"
+
+// stateLockWait 는 상태 파일 잠금을 기다리는 상한이다. 임계 구역이 파일 하나를
+// 읽고 쓰는 것뿐이라 밀리초면 끝난다 — 2초는 사실상 무한이고, 그래도 안 잡히면
+// 무언가 잘못된 것이므로 조용히 진행하지 말고 알린다.
+const stateLockWait = 2 * time.Second
+
+// Store 는 상태 파일 하나를 다룬다.
+//
+// **디스크가 정본이다.** 메모리에 든 것은 캐시일 뿐이고, 고칠 때마다 잠금을 잡고
+// 다시 읽는다. 데몬이 메모리 상태를 정본으로 쥐고 있으면, 그 사이 훅이 pending 을
+// 해소해도 데몬의 다음 저장이 그것을 되살린다 — 승격을 락 밖으로 빼는 순간
+// 그 경합이 실제로 생긴다.
+//
+// 데몬은 단일 인스턴스지만 fsnotify 콜백이 여러 고루틴에서 오므로 뮤텍스도 둔다.
 type Store struct {
 	dir string
 	mu  sync.Mutex
 	st  state
+}
+
+// mutate 는 잠금 안에서 디스크를 다시 읽고, 고치고, 쓴다.
+func (s *Store) mutate(fn func(*state)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	lk := flock.New(filepath.Join(s.dir, stateLock))
+	ctx, cancel := context.WithTimeout(context.Background(), stateLockWait)
+	defer cancel()
+	got, err := lk.TryLockContext(ctx, 20*time.Millisecond)
+	if err != nil || !got {
+		return fmt.Errorf("상태 파일 잠금을 잡을 수 없다 (%s): %v — "+
+			"다른 casebook 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
+	}
+	defer func() { _ = lk.Unlock() }()
+
+	if err := s.loadLocked(); err != nil {
+		return err
+	}
+	fn(&s.st)
+	return s.save()
+}
+
+// reload 는 읽기 전에 디스크를 다시 본다.
+//
+// 잠금을 잡지 않는다 — save 가 원자적 교체(WriteFileAtomic)라 읽는 쪽은 언제나
+// 이전 판 아니면 다음 판을 보고, 찢어진 파일을 보지 않는다.
+func (s *Store) reload() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.loadLocked()
 }
 
 func NewStore(dir string) *Store {
@@ -132,7 +188,11 @@ func (s *Store) path() string { return filepath.Join(s.dir, stateFile) }
 func (s *Store) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
 
+// loadLocked 는 뮤텍스를 이미 잡은 상태에서 부른다.
+func (s *Store) loadLocked() error {
 	b, err := os.ReadFile(s.path())
 	if os.IsNotExist(err) {
 		s.st = state{Checkpoints: map[string]Checkpoint{}}
@@ -170,6 +230,7 @@ func (s *Store) save() error {
 
 // Checkpoint 는 파일의 진행 지점을 준다. 파일 크기를 모를 때 쓴다.
 func (s *Store) Checkpoint(path string) int64 {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.st.Checkpoints[path].Offset
@@ -182,6 +243,7 @@ func (s *Store) Checkpoint(path string) int64 {
 // 이어서 읽는다. (inode 를 보면 더 정확하지만 이식성이 떨어지고, transcript 는
 // 세션 UUID 로 이름이 갈려 교체가 애초에 드물다.)
 func (s *Store) CheckpointFor(path string, size int64) int64 {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.st.Checkpoints[path]
@@ -197,12 +259,11 @@ func (s *Store) CheckpointFor(path string, size int64) int64 {
 // 나머지 필드는 **보존한다.** 통째로 갈아치우면 Credited 가 매번 0 으로 돌아가
 // 면제가 다시 무한해진다 — 소모성 크레딧이 조용히 무력화된다.
 func (s *Store) Advance(path string, offset, size int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := s.st.Checkpoints[path]
-	cp.Offset, cp.Size = offset, size
-	s.st.Checkpoints[path] = cp
-	return s.save()
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.Offset, cp.Size = offset, size
+		st.Checkpoints[path] = cp
+	})
 }
 
 // Credit 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
@@ -216,31 +277,33 @@ func (s *Store) Advance(path string, offset, size int64) error {
 // 첫머리에서 노트 하나를 남긴 뒤로는 그 세션이 영원히 안전망 밖이었다. 컷오버
 // 1일차에 이 세션의 노트 11건이 정확히 그 상태를 만들어 판별기가 한 번도 못 돌았다.
 func (s *Store) Credit(path string, count int) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := s.st.Checkpoints[path]
-	if count <= cp.Credited {
-		return false, nil
-	}
-	cp.Credited = count
-	cp.Suppressed++
-	s.st.Checkpoints[path] = cp
-	return true, s.save()
+	suppress := false
+	err := s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		if count <= cp.Credited {
+			return
+		}
+		cp.Credited = count
+		cp.Suppressed++
+		st.Checkpoints[path] = cp
+		suppress = true
+	})
+	return suppress, err
 }
 
 // NoteScan 은 훑은 흔적을 남긴다. **아무 일도 안 한 스캔도 남긴다** — 그것이
 // "돌고 있다" 는 유일한 증거다.
 func (s *Store) NoteScan(path string, at time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := s.st.Checkpoints[path]
-	cp.At = at
-	s.st.Checkpoints[path] = cp
-	return s.save()
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.At = at
+		st.Checkpoints[path] = cp
+	})
 }
 
 // LastScan 은 어느 파일이든 마지막으로 훑은 시각이다. 하나도 없으면 제로값이다.
 func (s *Store) LastScan() time.Time {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var last time.Time
@@ -254,6 +317,7 @@ func (s *Store) LastScan() time.Time {
 
 // Suppressed 는 전 파일의 누적 억제 횟수다.
 func (s *Store) Suppressed() int {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
@@ -265,20 +329,20 @@ func (s *Store) Suppressed() int {
 
 // AddPending 은 구간을 표시한다. 같은 구간이면 새로 쌓지 않고 갱신한다.
 func (s *Store) AddPending(p Pending) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.st.Pending {
-		if s.st.Pending[i].key() == p.key() {
-			s.st.Pending[i] = p
-			return s.save()
+	return s.mutate(func(st *state) {
+		for i := range st.Pending {
+			if st.Pending[i].key() == p.key() {
+				st.Pending[i] = p
+				return
+			}
 		}
-	}
-	s.st.Pending = append(s.st.Pending, p)
-	return s.save()
+		st.Pending = append(st.Pending, p)
+	})
 }
 
 // Pending 은 표시된 구간을 오래된 순으로 준다.
 func (s *Store) Pending() []Pending {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]Pending, len(s.st.Pending))
@@ -289,17 +353,16 @@ func (s *Store) Pending() []Pending {
 
 // Resolve 는 확인이 끝난 구간을 지운다. 에이전트가 판단을 마쳤을 때 부른다.
 func (s *Store) Resolve(path string, from int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	k := Pending{Path: path, From: from}.key()
-	kept := s.st.Pending[:0]
-	for _, p := range s.st.Pending {
-		if p.key() != k {
-			kept = append(kept, p)
+	return s.mutate(func(st *state) {
+		k := Pending{Path: path, From: from}.key()
+		kept := st.Pending[:0]
+		for _, p := range st.Pending {
+			if p.key() != k {
+				kept = append(kept, p)
+			}
 		}
-	}
-	s.st.Pending = kept
-	return s.save()
+		st.Pending = kept
+	})
 }
 
 // ID 는 pending 하나를 가리키는 문자열이다. 에이전트가 해소할 때 되돌려 준다.
