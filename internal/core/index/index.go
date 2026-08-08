@@ -8,11 +8,19 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xian0310567/casebook/internal/core/i18n"
 	"github.com/xian0310567/casebook/internal/core/store"
 )
 
-const header = "| 날짜 | domain | summary | status | outcome | 링크 |\n" +
-	"| --- | --- | --- | --- | --- | --- |\n"
+// header 는 색인 표의 머리줄이다. 색인은 사람만 보는 진단 출력이 아니라 볼트에
+// 남아서 에이전트가 읽는 산출물이므로, 볼트 언어를 따른다. 구분선은 markdown
+// 문법이라 언어를 타지 않는다.
+func header(lang i18n.Lang) string {
+	return lang.T(
+		"| 날짜 | domain | summary | status | outcome | 링크 |\n",
+		"| Date | domain | summary | status | outcome | Link |\n") +
+		"| --- | --- | --- | --- | --- | --- |\n"
+}
 
 // escapeCell 은 표 셀 안에서 파이프가 열을 쪼개지 않게 한다.
 func escapeCell(s string) string {
@@ -82,7 +90,7 @@ func Build(l *store.Layout) ([]byte, Result, error) {
 		"전체 %d건 · active %d건 · 아쉬운 결과(regretted/bad) %d건\n\n",
 		"%d total · %d active · %d regretted/bad\n\n"), len(notes), active, regret)
 
-	b.WriteString(header)
+	b.WriteString(header(lang))
 	for _, n := range notes {
 		domain := "-"
 		if len(n.Meta.Domain) > 0 {
@@ -118,7 +126,7 @@ func Write(l *store.Layout) (Result, error) {
 	// 지우지 않고, 막지도 않는다. 막으면 capture 가 통째로 실패한다(색인 갱신이
 	// capture.Do 끝에 붙어 있다). `cb init` 이 남의 settings.json 을 다룰 때와 같은
 	// 방식으로 — 백업하고 진행하고 알린다.
-	saved, err := preserveForeign(p)
+	saved, err := preserveForeign(p, l.Lang())
 	if err != nil {
 		return Result{}, err
 	}
@@ -140,13 +148,15 @@ const indexMarker = "tags: [index, decision]"
 //
 // 판정은 표식 한 줄로 한다. 우리 색인은 언제나 그 줄을 갖고, 사람이 쓴 문서는
 // 갖지 않는다. 읽을 수 없는 파일도 남의 것으로 본다 — 모르면 보존하는 쪽으로 기운다.
-func preserveForeign(path string) (string, error) {
+func preserveForeign(path string, lang i18n.Lang) (string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return "", nil // 첫 생성
 	}
 	if err != nil {
-		return "", fmt.Errorf("색인 자리의 파일을 확인할 수 없다 (%s): %w", path, err)
+		return "", fmt.Errorf(lang.T(
+			"색인 자리의 파일을 확인할 수 없다 (%s): %w",
+			"cannot inspect the file at the index path (%s): %w"), path, err)
 	}
 	if strings.Contains(string(data), indexMarker) {
 		return "", nil // 우리가 만든 색인이다
@@ -162,7 +172,9 @@ func preserveForeign(path string) (string, error) {
 		bak = fmt.Sprintf("%s-%d", base, i)
 	}
 	if err := store.WriteFileAtomic(bak, data, 0o644); err != nil {
-		return "", fmt.Errorf("색인 자리의 파일을 대피시킬 수 없다: %w", err)
+		return "", fmt.Errorf(lang.T(
+			"색인 자리의 파일을 대피시킬 수 없다: %w",
+			"cannot move aside the file at the index path: %w"), err)
 	}
 	return bak, nil
 }
