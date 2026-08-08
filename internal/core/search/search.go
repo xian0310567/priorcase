@@ -89,19 +89,26 @@ func mentionedDomains(c *config.Config, keywords []string) map[string]bool {
 func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool) []Hit {
 	var hits []Hit
 	for _, n := range notes {
+		// **domain 과 보일러플레이트 태그는 head 에서 뺀다.**
+		//
+		// 도메인은 이미 weightCwdDomain·weightMention 이 따로 센다. head 에도 넣으면
+		// 이중 계산인 데다, 질의에 도메인 이름이 스치기만 해도 그 도메인 **전 노트**가
+		// headHits ≥ 1 이 되어 `headHits == 0` 필터가 통째로 무력해진다.
+		//
+		// `decision` 태그는 capture 가 모든 노트에 붙인다(실볼트 67/67). 그 낱말이
+		// 질의에 들어오면 전 노트가 걸린다 — 불용어에 "결정" 이 있는 것과 같은 이유다.
 		head := strings.ToLower(strings.Join([]string{
 			n.Stem, n.Meta.Summary,
-			strings.Join(n.Meta.Tags, " "),
-			strings.Join(n.Meta.Domain, " "),
+			strings.Join(contentTags(n.Meta.Tags), " "),
 		}, " "))
 		body := strings.ToLower(string(n.Body))
 
 		headHits, bodyHits := 0, 0
 		for _, k := range keywords {
-			if strings.Contains(head, k) {
+			if matches(head, k) {
 				headHits++
 			}
-			if strings.Contains(body, k) {
+			if matches(body, k) {
 				bodyHits++
 			}
 		}
@@ -218,4 +225,18 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		b.WriteString(warnLine + "\n")
 	}
 	return b.String()
+}
+
+// boilerplateTags 는 거의 모든 노트가 갖는 태그다. 검색 신호가 아니다.
+var boilerplateTags = map[string]bool{"decision": true, "결정": true}
+
+// contentTags 는 보일러플레이트를 뺀 태그다.
+func contentTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if !boilerplateTags[strings.ToLower(t)] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
