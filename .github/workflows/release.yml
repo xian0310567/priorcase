@@ -5,7 +5,24 @@ on:
 permissions:
   contents: write
 jobs:
+  # **테스트를 게이트로 건다.** 예전에는 태그만 밀면 그대로 나갔다 — 깨진 커밋에
+  # 태그를 붙이면 깨진 바이너리가 배포된다. 릴리스는 되돌리기 어려운 일이다.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - run: go vet ./...
+      - run: go test -race ./...
+
   goreleaser:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -14,6 +31,15 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+      # 배포물에 EULA 와 제3자 고지가 반드시 들어가야 한다. 독점 소프트웨어라
+      # 라이선스 동봉이 의무이고, 링크된 오픈소스의 고지 의무도 여기서 진다.
+      - name: 라이선스 파일 존재 확인
+        run: |
+          for f in LICENSE THIRD-PARTY-NOTICES.md; do
+            [ -s "$f" ] || { echo "$f 가 없거나 비었다 — 배포할 수 없다"; exit 1; }
+          done
+          grep -q 'proprietary software' LICENSE || {
+            echo "LICENSE 가 독점 라이선스가 아니다 — 소스 비공개 배포와 어긋난다"; exit 1; }
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
