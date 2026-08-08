@@ -120,3 +120,24 @@ func TestPromptDemandsConservatism(t *testing.T) {
 		}
 	}
 }
+
+// ★ **회수 구조를 지시문이 알려 줘야 한다.**
+//
+// 회수는 파일명·summary·tags 만 본다 (search.scoreAll 의 headHits==0 → continue).
+// 본문에만 있는 낱말로는 영원히 못 찾는다. 실측: tags 를 회수 어휘로 채우니
+// 같은 노트가 0/1 → 3/3 으로 걸렸다.
+//
+// 지시문이 이걸 말해 주지 않으면 판별기는 tags 를 주제 분류로 쓴다.
+func TestPromptTeachesRetrievalStructure(t *testing.T) {
+	p := prompt(Request{Domain: "alpha", Excerpt: "x"})
+	for _, want := range []string{
+		"파일명·summary·tags 뿐", // 무엇이 검색되는지
+		"영원히 찾을 수 없다",        // 안 그러면 무슨 일이 나는지
+		"회수 키워드",             // tags 의 정체
+		"동의어와 상위어",           // 어떻게 채우는지
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("지시문에 %q 가 없다 — 판별기가 tags 를 주제 분류로 쓴다", want)
+		}
+	}
+}
