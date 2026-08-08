@@ -38,7 +38,12 @@ const DefaultModel = "claude-haiku-4-5"
 //
 // 옛 셸 구현의 감사 결함 5가 *"`claude -p` 자체에 타임아웃이 없다"* 였다.
 // 백그라운드로 돌려도 무한 대기는 프로세스를 쌓는다.
-const DefaultTimeout = 90 * time.Second
+// DefaultTimeout 은 판별기 한 건의 상한이다.
+//
+// **승격 예산(hook.promoteBudget)보다 작아야 한다.** 크면 한 건이 예산을 통째로
+// 먹어서 두 번째 구간이 영영 안 돈다 — 예산 75초에 상한 90초로 두고 있었다.
+// 실측 지연은 ~9초이므로 45초는 그 5배다.
+const DefaultTimeout = 45 * time.Second
 
 // Verdict 는 판정 결과다.
 type Verdict struct {

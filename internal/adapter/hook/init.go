@@ -155,7 +155,9 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 	for _, ev := range Events {
 		name := ev.claudeCodeName()
 		cmd := fmt.Sprintf("%s %q hook %s", hookMarker, o.Binary, ev)
-		hooks[name] = append(hooks[name], hookGroup{Hooks: []hookEntry{{Type: "command", Command: cmd}}})
+		hooks[name] = append(hooks[name], hookGroup{
+			Hooks: []hookEntry{{Type: "command", Command: cmd, Timeout: hookTimeout(ev)}},
+		})
 		p.Add = append(p.Add, name+": "+summarize(cmd))
 	}
 
@@ -280,4 +282,23 @@ func (p *Plan) String() string {
 	}
 	fmt.Fprintf(&b, "\n손대지 않는 훅: %d개\n", p.Keep)
 	return b.String()
+}
+
+// **승격하는 훅에는 시간을 명시한다.**
+//
+// SessionEnd·PreCompact 만 판별기를 부른다. 판별기는 호스트 CLI 를 띄우는 것이라
+// 초 단위로 걸리고, 미확인 구간이 여럿이면 그만큼 늘어난다. 훅에 timeout 을 안
+// 적으면 호스트 기본값이 걸리는데 — 그 값이 얼마인지 우리가 모른다. 승격이 그
+// 안에 못 끝나면 호스트가 훅을 죽이고, **자동 기록은 조용히 0건이 된다.**
+//
+// 컷오버 1일차부터 ③층이 한 번도 발동하지 않았고, 이것이 유력한 원인 중 하나다.
+// 모르는 기본값에 기대지 않는다.
+//
+// 나머지 훅은 볼트를 읽고 문자열을 만드는 것뿐이라 밀리초 단위다 — 시간을 적어
+// 봐야 호스트 기본값과 다를 이유가 없으므로 비워 둔다(0 이면 필드가 생략된다).
+func hookTimeout(ev Event) int {
+	if ev == EventSessionEnd || ev == EventPreCompact {
+		return int(promoteHookTimeout / time.Second)
+	}
+	return 0
 }
