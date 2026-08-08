@@ -18,41 +18,65 @@ import (
 type noOutput = any
 
 func (s *server) addTools(srv *sdk.Server) {
+	// **도구 설명과 인자 스키마는 모델이 읽는 글이다.** 대화 언어와 어긋나면 도구
+	// 선택과 인자 구성이 같이 나빠지므로 `lang` 을 따라간다. 스키마를 손으로 짓는
+	// 이유는 schema.go 주석에 있다 (구조체 태그는 컴파일 타임 상수라 안 된다).
+	lang := s.l.Lang()
+
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "casebook_recall",
-		Description: "이 워크스페이스의 과거 결정을 찾는다. " +
-			"새 작업이나 주제로 넘어갈 때 먼저 부른다 — 이미 뒤집힌 결정을 다시 제안하지 않기 위해서다.",
+		Description: lang.T(
+			"이 워크스페이스의 과거 결정을 찾는다. "+
+				"새 작업이나 주제로 넘어갈 때 먼저 부른다 — 이미 뒤집힌 결정을 다시 제안하지 않기 위해서다.",
+			"Find past decisions in this workspace. "+
+				"Call this first when moving to a new task or topic, so you don't propose something that was already overturned."),
+		InputSchema: recallSchema(lang),
 	}, s.recall)
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "casebook_capture",
-		Description: "결정을 기록한다. 되돌리기 어려운 선택(아키텍처·스키마·외부 서비스·가격), " +
-			"대안을 검토해 하나를 고른 경우, 실측으로 통념이 깨진 경우가 대상이다. " +
-			"자잘한 것까지 남기면 회수가 어려워진다.",
+		Description: lang.T(
+			"결정을 기록한다. 되돌리기 어려운 선택(아키텍처·스키마·외부 서비스·가격), "+
+				"대안을 검토해 하나를 고른 경우, 실측으로 통념이 깨진 경우가 대상이다. "+
+				"자잘한 것까지 남기면 회수가 어려워진다.",
+			"Record a decision. Use it for choices that are hard to reverse (architecture, schema, "+
+				"external services, pricing), for picking one option after weighing alternatives, and "+
+				"when a measurement overturned an assumption. Recording trivia makes recall worse."),
+		InputSchema: captureSchema(lang),
 	}, s.capture)
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "casebook_review",
-		Description: "기존 결정의 결과(outcome)·상태·회고를 갱신하거나, 그 결정을 뒤집는다. " +
-			"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.",
+		Description: lang.T(
+			"기존 결정의 결과(outcome)·상태·회고를 갱신하거나, 그 결정을 뒤집는다. "+
+				"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.",
+			"Update an existing decision's outcome, status, or retrospective — or overturn it. "+
+				"An overturned decision left as-is pollutes recall."),
+		InputSchema: reviewSchema(lang),
 	}, s.review)
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "casebook_pending",
-		Description: "데몬(cb watch)이 표시한 미확인 구간을 본다. 이전 세션에서 결정을 내리고도 " +
-			"기록하지 않고 지나간 자리다. 확인 후 실제 결정이면 casebook_capture 로 남기고, " +
-			"아니면 resolve 로 지운다 — 쌓아 두면 다음 세션에도 그대로 뜬다.",
+		Description: lang.T(
+			"데몬(cb watch)이 표시한 미확인 구간을 본다. 이전 세션에서 결정을 내리고도 "+
+				"기록하지 않고 지나간 자리다. 확인 후 실제 결정이면 casebook_capture 로 남기고, "+
+				"아니면 resolve 로 지운다 — 쌓아 두면 다음 세션에도 그대로 뜬다.",
+			"List unreviewed conversation segments flagged by the safety net. These are places where a "+
+				"decision was likely made in an earlier session but never recorded. If it was a real "+
+				"decision, record it with casebook_capture; otherwise clear it with resolve — "+
+				"left alone it reappears every session."),
+		InputSchema: pendingSchema(lang),
 	}, s.pending)
 }
 
 // ── recall ──────────────────────────────────────────────────────────────
 
 type recallArgs struct {
-	Query string `json:"query" jsonschema:"찾을 주제나 키워드"`
-	Limit int    `json:"limit,omitempty" jsonschema:"최대 결과 수 (기본 3)"`
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
 	// 포인터인 이유: 기본값이 true 라서 bool 로 받으면 '지정 안 함' 과 'false' 가
 	// 구별되지 않는다.
-	CrossProject *bool `json:"cross_project,omitempty" jsonschema:"현재 프로젝트 밖의 결정도 찾는다 (기본 true)"`
+	CrossProject *bool `json:"cross_project,omitempty"`
 }
 
 func (s *server) recall(ctx context.Context, req *sdk.CallToolRequest, a recallArgs) (*sdk.CallToolResult, noOutput, error) {
@@ -88,15 +112,15 @@ func (s *server) recall(ctx context.Context, req *sdk.CallToolRequest, a recallA
 // ── capture ─────────────────────────────────────────────────────────────
 
 type captureArgs struct {
-	Domain     string   `json:"domain" jsonschema:"결정이 속한 프로젝트 도메인 접두어"`
-	Slug       string   `json:"slug" jsonschema:"파일명에 들어갈 짧은 주제어"`
-	Summary    string   `json:"summary" jsonschema:"한 줄 요약 — 회수 때 이것만 주입되므로 그 자체로 읽혀야 한다"`
-	Body       string   `json:"body,omitempty" jsonschema:"본문 마크다운 (## 결정 / ## 근거 / ## 고려한 대안 / ## 예상 리스크 / ## 회고)"`
-	Tags       []string `json:"tags,omitempty" jsonschema:"프로젝트를 넘어 쓰일 교훈이면 lesson 을 넣는다"`
-	Related    []string `json:"related,omitempty" jsonschema:"관련 문서의 위키링크 또는 stem"`
-	Supersedes string   `json:"supersedes,omitempty" jsonschema:"이 결정이 뒤집는 기존 결정의 stem"`
-	Date       string   `json:"date,omitempty" jsonschema:"YYYY-MM-DD (기본: 오늘)"`
-	SessionID  string   `json:"session_id,omitempty" jsonschema:"이 결정이 나온 대화의 세션 id. 세션 진입 컨텍스트에 적혀 있으면 그대로 넘긴다"`
+	Domain     string   `json:"domain"`
+	Slug       string   `json:"slug"`
+	Summary    string   `json:"summary"`
+	Body       string   `json:"body,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	Related    []string `json:"related,omitempty"`
+	Supersedes string   `json:"supersedes,omitempty"`
+	Date       string   `json:"date,omitempty"`
+	SessionID  string   `json:"session_id,omitempty"`
 }
 
 func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captureArgs) (*sdk.CallToolResult, noOutput, error) {
@@ -132,11 +156,11 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 // ── review ──────────────────────────────────────────────────────────────
 
 type reviewArgs struct {
-	Stem          string `json:"stem" jsonschema:"갱신할 결정의 파일명 (확장자 제외)"`
-	Outcome       string `json:"outcome,omitempty" jsonschema:"pending | good | bad"`
-	Status        string `json:"status,omitempty" jsonschema:"active | superseded | regretted"`
-	Retrospective string `json:"retrospective,omitempty" jsonschema:"## 회고 에 붙일 내용"`
-	Supersedes    string `json:"supersedes,omitempty" jsonschema:"이 결정이 뒤집는 결정의 stem"`
+	Stem          string `json:"stem"`
+	Outcome       string `json:"outcome,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Retrospective string `json:"retrospective,omitempty"`
+	Supersedes    string `json:"supersedes,omitempty"`
 }
 
 func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewArgs) (*sdk.CallToolResult, noOutput, error) {
@@ -206,7 +230,7 @@ func textResult(s string) *sdk.CallToolResult {
 // ── pending ─────────────────────────────────────────────────────────────
 
 type pendingToolArgs struct {
-	Resolve string `json:"resolve,omitempty" jsonschema:"지울 구간의 id. 비우면 목록만 본다"`
+	Resolve string `json:"resolve,omitempty"`
 }
 
 func (s *server) pending(ctx context.Context, req *sdk.CallToolRequest, a pendingToolArgs) (*sdk.CallToolResult, noOutput, error) {
