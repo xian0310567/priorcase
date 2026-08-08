@@ -58,27 +58,53 @@ cb: 설정 파일을 열 수 없다 (/tmp/nonexistent-xdg/casebook/config.toml):
 
 `CASEBOOK_VAULT` 는 별개다 — 설정 파일의 `vault` 값만 덮어쓴다 (테스트 볼트 격리용).
 
+### `default_domain` 을 비우지 마라
+
+작업 디렉토리가 어느 `[[domain]]` 의 `paths` 에도 안 걸리면 여기 적힌 도메인으로
+기록된다. **비우면 그런 자리에서는 아무것도 기록되지 않는데, 겉으로는 조용하다** —
+훅은 돌고 안전망은 표시까지 하다가 마지막에 막힌다. `cb init` 이 만드는 설정에는
+`common` 이 들어 있다.
+
+### `lang` 은 볼트에 남는 문자열만 정한다
+
+색인 머리말, 회수 주입 라벨 같은 것이다. **결정 노트의 본문 언어는 여기가 정하지
+않는다** — 판별기가 대화의 언어를 따라가므로, 한 볼트에 영어 대화와 한국어 대화가
+섞여도 각 노트가 제 언어를 갖는다. CLI 진단 출력은 이 설정의 범위 밖이다.
+
 ```toml
 vault = "~/Documents/Obsidian Vault"
+lang  = "ko"                     # 볼트에 남는 문자열의 언어 (ko | en)
 
-# exclude 는 top-level 키이므로 [[domain]] 보다 앞에 둔다.
+# exclude·default_domain 은 top-level 키이므로 [[domain]] 보다 앞에 둔다.
 # TOML 의 테이블 스코프 규칙상 테이블 헤더([[domain]]) 뒤에 오는 bare key 는
-# 그 테이블(마지막 domain)의 필드로 읽힌다 — 여기 두면 top-level exclude 가
-# 아니라 도메인 항목의 필드가 되어 버린다.
+# 그 테이블(마지막 domain)의 필드로 읽힌다 — 여기 두면 top-level 이 아니라
+# 도메인 항목의 필드가 되어 버린다.
 exclude = ["/home/t/project/scratch"]
 
-# [naming] 은 필수다. 네 키가 다 있어야 한다.
+# 어느 [[domain]] 의 paths 에도 안 걸릴 때 쓸 도메인.
+# 비우면 그런 자리에서는 아무것도 기록되지 않는다.
+default_domain = "common"
+
+# [naming] 은 필수다. rollup 만 선택이다 (없으면 cb rollup 이 무엇을 적으라고 알려 준다).
 [naming]
 decision_file = "{domain}-결정-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
-worklog = "99-{project}-작업-로그.md"
-index = "decisions/INDEX.md"
+worklog       = "99-{project}-작업-로그.md"
+index         = "_meta/00-결정-색인.md"
+rollup        = "98-{project}-작업-로그-요약.md"
 
-# [capture] 는 데몬(Plan 4)이 쓸 값이다. 지금은 읽기만 하고 아무도 쓰지 않는다.
+# 데몬(cb watch)과 훅이 쓴다.
 [capture]
-signals = ["결정", "선택"]
+signals = ["결정", "선택"]        # 판별기가 있으면 쓰이지 않는다
 min_turns = 6
 quiesce_seconds = 3
+judge_path  = ""                 # 비면 자동 탐색. 못 찾으면 자동 기록이 꺼진다
+judge_model = "claude-haiku-4-5"
+
+# 무소속 결정이 쌓이는 곳. default_domain 이 이걸 가리킨다.
+[[domain]]
+prefix = "common"
+folder = "common"
 
 [[domain]]
 prefix = "work"
@@ -583,6 +609,8 @@ $ cb init
 | 모르는 설정 키를 안 잃는다 | 설정 전체를 map 으로 읽고 `hooks` 만 손댄다 |
 | 깨진 설정을 안 덮어쓴다 | JSON 이 아니면 손대기 전에 멈춘다 |
 | 두 번 돌려도 안전 | 마커로 자기 것을 먼저 걷어내고 다시 심는다 |
+| 바로 쓸 수 있는 설정 | 볼트 디렉토리를 만들고, `common` 도메인과 `default_domain` 을 넣는다 |
+| 로케일을 본다 | `LANG` 이 `ko` 로 시작하면 한국어 설정, 아니면 영어 설정 |
 | 기존 설정 파일을 안 건드린다 | `config.toml` 은 **없을 때만** 만든다 |
 
 ### 각 훅이 하는 일
@@ -744,6 +772,15 @@ API 키를 직접 읽지 않는다 — 그건 진짜 장벽이고, 사용자가 
 judge_path  = ""                  # 비면 자동 탐색. 못 찾으면 자동 승격 꺼짐
 judge_model = "claude-haiku-4-5"
 ```
+
+**판별기가 있으면 `[capture] signals` 는 쓰이지 않는다.** 시그널은 "이 구간에 결정이
+있을까" 를 낱말로 어림하는 것인데, 실측으로 발화 6개를 넘는 세션의 **98.8%** 를
+통과시켜 거의 거르지 못한다. 그러면서 설정에 적힌 낱말이라 **대화 언어와 어긋나면
+시스템이 조용히 죽는다** — 한국어 시그널로 영어 대화를 훑으면 아무것도 안 걸리는데
+로그에는 정상으로 보인다. 판별기가 있으면 그 앞을 막지 않는다.
+
+판별기가 **없는** 설치에서는 `signals` 가 유일한 필터이므로 대화 언어와 맞아야 한다.
+`cb doctor` 가 어느 쪽인지 알려 준다.
 
 `cb doctor` 가 어느 상태인지 알려 준다.
 
