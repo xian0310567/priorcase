@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -134,8 +135,31 @@ func writeStarterConfig(path, vault string) error {
 	}
 
 	home, _ := os.UserHomeDir()
-	body := fmt.Sprintf(`# casebook 설정. 자세한 것은 README 를 보라.
+	if localeIsKorean() {
+		return store.WriteFileAtomic(path, []byte(starterKO(vault, home)), 0o600)
+	}
+	return store.WriteFileAtomic(path, []byte(starterEN(vault, home)), 0o600)
+}
+
+// localeIsKorean 은 환경변수로 한국어 사용자인지 본다.
+//
+// **틀려도 손해가 작은 판정이다.** 설정 파일은 사람이 읽고 고칠 수 있고, 첫 줄에
+// 무엇을 바꾸면 되는지 적혀 있다. 물어보는 것보다 낫다 — cb init 은 훅 배선이
+// 본업이고, 거기에 대화형 질문을 붙이면 스크립트에서 못 쓴다.
+func localeIsKorean() bool {
+	for _, k := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
+		if v := os.Getenv(k); v != "" {
+			return strings.HasPrefix(strings.ToLower(v), "ko")
+		}
+	}
+	return false
+}
+
+func starterKO(vault, home string) string {
+	return fmt.Sprintf(`# casebook 설정. 자세한 것은 README 를 보라.
+# 영어로 쓰려면 lang = "en" 으로 바꾸고 아래 이름·시그널을 영어로 고친다.
 vault = %q
+lang  = "ko"
 
 # 여기 적힌 경로에서는 결정을 기록하지 않는다 (회수는 계속 동작한다).
 exclude = []
@@ -159,8 +183,7 @@ min_turns = 6
 quiesce_seconds = 3
 
 # 자동 기록 — 세션 끝에 판별기가 기록되지 않은 결정을 대신 남긴다.
-# 비우면 자동으로 찾는다 (~/.local/bin/claude → PATH 의 claude).
-# 못 찾으면 자동 기록이 꺼지고 표시만 남는다. **API 키는 쓰지 않는다.**
+# 비우면 자동으로 찾는다. 못 찾으면 표시만 남는다. **API 키는 쓰지 않는다.**
 judge_path  = ""
 judge_model = "claude-haiku-4-5"
 
@@ -175,7 +198,54 @@ folder = "common"
 # folder = "myapp"
 # paths  = ["%s/project/myapp"]
 `, vault, home)
-	return store.WriteFileAtomic(path, []byte(body), 0o600)
+}
+
+func starterEN(vault, home string) string {
+	return fmt.Sprintf(`# casebook configuration. See the README for details.
+# The naming templates and signals below are yours to change — casebook only
+# reads them, so any language or convention works.
+vault = %q
+lang  = "en"
+
+# Decisions are never recorded under these paths (recall still works).
+exclude = []
+
+# Domain used when the working directory matches no [[domain]] paths.
+# **Leave this empty and nothing gets recorded in those places.**
+default_domain = "common"
+
+[naming]
+decision_file = "{domain}-decision-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog       = "99-{project}-worklog.md"
+index         = "_meta/00-decision-index.md"
+rollup        = "98-{project}-worklog-rollup.md"
+
+# Used by the daemon (cb watch) and the hooks.
+# If signals is empty, no segment is ever flagged.
+[capture]
+signals = ["decided", "chose", "instead of", "rejected", "trade-off",
+           "we'll go with", "settled on", "ruled out"]
+min_turns = 6
+quiesce_seconds = 3
+
+# Automatic recording — at the end of a session a judge records decisions the
+# agent never captured. Leave judge_path empty to auto-detect. If nothing is
+# found, segments are only flagged. **No API key is ever read.**
+judge_path  = ""
+judge_model = "claude-haiku-4-5"
+
+# Where decisions that belong to no project go. default_domain points here.
+[[domain]]
+prefix = "common"
+folder = "common"
+
+# Add one block per project. Work under paths and it records to that domain.
+# [[domain]]
+# prefix = "myapp"
+# folder = "myapp"
+# paths  = ["%s/project/myapp"]
+`, vault, home)
 }
 
 // binaryPath 는 지금 도는 cb 의 경로다. 안내 문구에 쓴다.

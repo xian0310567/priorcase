@@ -175,3 +175,19 @@ func TestFailureMessageNeverEmpty(t *testing.T) {
 		t.Errorf("빈 실패를 설명하지 않는다: %v", err)
 	}
 }
+
+// ★ **출력은 발췌의 언어로.** 지시문이 한국어라고 영어 대화에 한국어 노트를 만들면
+// 파일명이 두 언어로 갈리고(app-decision-sqlite-단일서버-선택), 영어 사용자가
+// 영어로 물었을 때 summary 가 안 걸린다. 실측으로 그 상태를 확인했다.
+func TestPromptDemandsMatchingLanguage(t *testing.T) {
+	p := prompt(Request{Domain: "app", Excerpt: "We decided on SQLite."})
+	for _, want := range []string{
+		"발췌와 같은 언어",   // 무엇을
+		"섞어 쓰지 마라",    // 왜 중요한지
+		"## Decision", // 영어 예시까지 준다
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("지시문에 %q 가 없다", want)
+		}
+	}
+}

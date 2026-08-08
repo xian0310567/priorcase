@@ -170,3 +170,40 @@ func TestStarterConfigIsImmediatelyUsable(t *testing.T) {
 		t.Error("judge_model 이 없다")
 	}
 }
+
+// 영어 로케일이면 영어 설정을 만든다. **새 영어 사용자가 손댈 게 없어야 한다** —
+// 한국어 템플릿을 주면 첫 결정부터 `{domain}-결정-...` 파일이 생긴다.
+func TestStarterConfigFollowsLocale(t *testing.T) {
+	for _, tc := range []struct {
+		lang, wantLang, wantMarker string
+	}{
+		{"en_US.UTF-8", "en", "-decision-"},
+		{"ko_KR.UTF-8", "ko", "-결정-"},
+		{"", "en", "-decision-"}, // 로케일이 없으면 영어 — OSS 기본값
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LC_MESSAGES", "")
+			t.Setenv("LANG", "")
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.toml")
+			if err := writeStarterConfig(cfgPath, filepath.Join(dir, "v")); err != nil {
+				t.Fatal(err)
+			}
+			c, err := config.Load(cfgPath)
+			if err != nil {
+				t.Fatalf("만든 설정을 못 읽는다: %v", err)
+			}
+			if c.Lang != tc.wantLang {
+				t.Errorf("lang = %q, want %q", c.Lang, tc.wantLang)
+			}
+			if !strings.Contains(c.Naming.DecisionFile, tc.wantMarker) {
+				t.Errorf("decision_file = %q, %q 를 담아야 한다", c.Naming.DecisionFile, tc.wantMarker)
+			}
+			// 어느 쪽이든 바로 쓸 수 있어야 한다.
+			if c.DefaultDomain == "" || len(c.Domain) == 0 || len(c.Capture.Signals) == 0 {
+				t.Errorf("바로 쓸 수 없는 설정이다: %+v", c)
+			}
+		})
+	}
+}

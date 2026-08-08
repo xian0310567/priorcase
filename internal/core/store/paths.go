@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/i18n"
 )
 
 type Layout struct {
@@ -203,3 +204,6 @@ func (l *Layout) Prefixes() []string {
 	}
 	return out
 }
+
+// Lang 은 볼트 산출물의 언어다. index·search 가 Config 를 직접 못 보므로 여기서 준다.
+func (l *Layout) Lang() i18n.Lang { return i18n.Of(l.c.Lang) }

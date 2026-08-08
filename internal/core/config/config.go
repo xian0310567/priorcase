@@ -57,10 +57,19 @@ type Config struct {
 	// 통째로 막힌다 — 그런데 겉으로는 아무 에러도 안 난다.
 	//
 	// 옛 셸 구현에는 "그 외 → common" 폴백이 있었는데 이관하면서 빠졌다.
-	DefaultDomain string   `toml:"default_domain"`
-	Naming        Naming   `toml:"naming"`
-	Capture       Capture  `toml:"capture"`
-	Domain        []Domain `toml:"domain"`
+	DefaultDomain string `toml:"default_domain"`
+	// Lang 은 **볼트에 남는 문자열**의 언어다 (색인 머리말, 회수 주입 라벨 등).
+	// CLI 진단 출력은 해당하지 않는다 — 그건 사람이 터미널에서 한 번 보고 마는 것이고,
+	// 볼트 산출물은 남아서 회수되고 다른 사람이 읽는다.
+	//
+	// 비면 한국어다. 기존 볼트가 전부 한국어라 그쪽이 안전한 기본값이다.
+	//
+	// **결정 노트의 본문 언어는 여기가 정하지 않는다.** 판별기가 대화의 언어를
+	// 따라간다 — 한 볼트에 여러 언어의 대화가 섞일 수 있기 때문이다.
+	Lang    string   `toml:"lang"`
+	Naming  Naming   `toml:"naming"`
+	Capture Capture  `toml:"capture"`
+	Domain  []Domain `toml:"domain"`
 }
 
 // DefaultPath 는 XDG 기준 설정 파일 경로다.
