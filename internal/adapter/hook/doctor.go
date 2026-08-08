@@ -225,8 +225,16 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 	}
 	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
 	if j == nil {
-		add(r, "자동 기록", health.Warn,
-			"판별기를 찾지 못했다 — 에이전트가 cb capture 를 부를 때만 기록된다",
+		detail := "판별기를 찾지 못했다 — 에이전트가 cb capture 를 부를 때만 기록된다"
+		if len(o.Config.Capture.Signals) == 0 {
+			// 판별기도 없고 시그널도 없으면 안전망이 통째로 죽는다.
+			add(r, "자동 기록", health.Fail,
+				detail+" · [capture] signals 도 비어 있어 표시조차 되지 않는다",
+				"claude CLI 를 PATH 에 두거나 signals 를 채워라")
+			return
+		}
+		add(r, "자동 기록", health.Warn, detail+
+			" · 안전망은 [capture] signals 로만 돈다 (대화 언어와 맞아야 한다)",
 			"claude CLI 를 PATH 에 두거나 [capture] judge_path 를 적어라")
 		return
 	}
@@ -237,7 +245,8 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 		return
 	}
 	add(r, "자동 기록", health.OK,
-		fmt.Sprintf("%s (%s) — 에이전트가 안 불러도 세션 끝에 판별기가 기록한다", j.Path, j.Model), "")
+		fmt.Sprintf("%s (%s) — 에이전트가 안 불러도 세션 끝에 판별기가 기록한다 · "+
+			"판별기가 있으므로 [capture] signals 는 쓰이지 않는다", j.Path, j.Model), "")
 }
 
 // pendingStale 은 이보다 오래된 미확인 구간을 "쌓이고 있다" 로 본다.

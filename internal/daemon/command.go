@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/casebook/internal/core/judge"
 	"github.com/xian0310567/casebook/internal/transcript/claudecode"
 )
 
@@ -49,6 +50,8 @@ func NewCommand() *cobra.Command {
 				StateDir:       stateDir,
 				TranscriptRoot: root,
 				Config:         c,
+				// 판별기가 있으면 시그널 필터를 건너뛴다 — 판정은 판별기가 한다.
+				JudgeAvailable: judge.Find(c.Capture.JudgePath, c.Capture.JudgeModel) != nil,
 				Backfill:       backfill,
 				// 백그라운드라 조용히 실패하면 아무도 모른다. 전부 흘려보낸다.
 				OnEvent: func(e Event) {

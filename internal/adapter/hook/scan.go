@@ -27,7 +27,10 @@ func (o Options) safetyNet(ctx context.Context) error {
 		return nil
 	}
 
-	r, owned, err := daemon.ScanOnce(o.StateDir, o.Config, o.Layout, o.Input.TranscriptPath)
+	// 판별기가 있으면 시그널 필터를 건너뛴다 — 판정은 판별기가 한다. 언어에 묶인
+	// 키워드가 판별기 앞을 막는 일을 없앤다.
+	judgeAvailable := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) != nil
+	r, owned, err := daemon.ScanOnce(o.StateDir, o.Config, o.Layout, o.Input.TranscriptPath, judgeAvailable)
 	if err != nil {
 		return err
 	}
@@ -45,7 +48,11 @@ func (o Options) safetyNet(ctx context.Context) error {
 	if r.Turns > 0 {
 		msg := fmt.Sprintf("훑음 — 발화 %d", r.Turns)
 		if r.Flagged {
-			msg += fmt.Sprintf(" · 표시함 (시그널 %v)", r.Signals)
+			if len(r.Signals) > 0 {
+				msg += fmt.Sprintf(" · 표시함 (시그널 %v)", r.Signals)
+			} else {
+				msg += " · 표시함 (시그널 없음 — 판별기가 판정한다)"
+			}
 		}
 		if r.Recorded {
 			msg += " · 이미 기록됨"

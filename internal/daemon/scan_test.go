@@ -70,7 +70,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r1, err := Scan(s, c, nil, tp)
+	r1, err := Scan(s, c, nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 
 	// 4턴 더. 누적 8턴이 보여야 한다.
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r2, err := Scan(s, c, nil, tp)
+	r2, err := Scan(s, c, nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestOverThresholdWithoutSignalAdvancesWithoutFlag(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "그냥 잡담이다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, scanCfg(), nil, tp)
+	r, err := Scan(s, scanCfg(), nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestCorruptLineBlocksAdvance(t *testing.T) {
 	lines = append(lines, "{이건 JSON 이 아니다\n")
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, scanCfg(), nil, tp)
+	r, err := Scan(s, scanCfg(), nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRepeatedScanOfBlockedSegmentDoesNotPileUp(t *testing.T) {
 	writeLines(t, tp, lines...)
 
 	for i := 0; i < 3; i++ {
-		if _, err := Scan(s, c, nil, tp); err != nil {
+		if _, err := Scan(s, c, nil, tp, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -174,7 +174,7 @@ func TestExcludedCwdIsNotFlagged(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/secret")...)
-	r, err := Scan(s, scanCfg(), nil, tp)
+	r, err := Scan(s, scanCfg(), nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestPendingCarriesDomainAndSignals(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "이 방식을 채택하기로 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()
@@ -218,12 +218,12 @@ func TestNothingNewIsNoop(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, c, nil, tp); err != nil {
+	if _, err := Scan(s, c, nil, tp, false); err != nil {
 		t.Fatal(err)
 	}
 	before := len(s.Pending())
 
-	r, err := Scan(s, c, nil, tp)
+	r, err := Scan(s, c, nil, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestAlreadyRecordedIsNotFlagged(t *testing.T) {
 	}
 	writeLines(t, tp, recorded...)
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestUnrecordedDayIsFlagged(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestOtherDomainRecordDoesNotSuppress(t *testing.T) {
 	}
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestVaultReadFailureStillFlags(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestSessionMatchSuppressesAcrossDays(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // sessionId=S1, 2026-08-07
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestDifferentSessionDoesNotSuppress(t *testing.T) {
 	}
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, vc, l, tp)
+	r, err := Scan(s, vc, l, tp, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestPendingCarriesConversationDate(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
 
-	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()[0]
@@ -446,7 +446,7 @@ func TestPendingCarriesExcerpt(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "저장 엔진을 임베디드 DB 로 하기로 결정했다", "/tmp/proj/alpha")...)
 
-	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()[0]
@@ -470,7 +470,7 @@ func TestExcerptSurvivesTranscriptDeletion(t *testing.T) {
 	tp := filepath.Join(dir, "s.jsonl")
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, scanCfg(), nil, tp); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(tp); err != nil {
@@ -482,5 +482,75 @@ func TestExcerptSurvivesTranscriptDeletion(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Excerpt == "" {
 		t.Error("transcript 를 지웠더니 표시의 내용이 사라졌다")
+	}
+}
+
+// ★ **판별기가 있으면 시그널을 건너뛴다.**
+//
+// 시그널은 설정에 적힌 낱말이라 언어에 묶인다. 한국어 기본 시그널로 영어 대화를 훑으면
+// 아무것도 안 걸리는데 로그에는 "훑음 — 발화 8" 이라 정상으로 보인다 — 실제로 그 상태를
+// 재현해 확인했다. 판별기가 있으면 그 지뢰가 사라진다.
+//
+// 잃는 것도 없다. 실측으로 발화 6개를 넘는 세션 585개 중 578개(98.8%)가 어차피
+// 시그널에 걸린다 — 건너뛰어도 판별기 호출은 ~1.2% 늘 뿐이다.
+func TestJudgeAvailableSkipsSignalFilter(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	c := scanCfg() // signals = ["결정", "채택"] — 한국어
+
+	// 영어 대화. 한국어 시그널에는 하나도 안 걸린다.
+	var lines []string
+	for i := 0; i < 8; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"assistant","cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"2026-08-08T01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"We chose SQLite instead of Postgres."}]}}`+"\n", i))
+	}
+	writeLines(t, tp, lines...)
+
+	// 판별기 없음 — 지금까지의 동작. 아무것도 안 걸린다.
+	s1 := newStore(t)
+	r1, err := Scan(s1, c, nil, tp, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Flagged {
+		t.Error("한국어 시그널에 영어 대화가 걸렸다 — 테스트 전제가 틀렸다")
+	}
+	if len(s1.Pending()) != 0 {
+		t.Fatal("판별기 없이 표시됐다")
+	}
+
+	// 판별기 있음 — 시그널을 건너뛰고 표시한다.
+	s2 := newStore(t)
+	r2, err := Scan(s2, c, nil, tp, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r2.Flagged {
+		t.Fatal("판별기가 있는데 표시하지 않았다 — 언어 지뢰가 그대로다")
+	}
+	if !r2.NoFilter {
+		t.Error("시그널을 건너뛴 사실을 안 알린다")
+	}
+	if len(r2.Signals) != 0 {
+		t.Errorf("걸린 시그널이 있다고 한다: %v", r2.Signals)
+	}
+	if len(s2.Pending()) != 1 {
+		t.Errorf("표시 %d건, 1건이어야 한다", len(s2.Pending()))
+	}
+}
+
+// 제외 구역은 판별기가 있어도 표시하지 않는다.
+func TestJudgeDoesNotOverrideExclusion(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "그냥 잡담", "/tmp/proj/secret")...)
+
+	r, err := Scan(s, scanCfg(), nil, tp, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Flagged {
+		t.Error("제외 구역인데 판별기가 있다고 표시했다")
 	}
 }
