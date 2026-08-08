@@ -191,3 +191,27 @@ func TestPromptDemandsMatchingLanguage(t *testing.T) {
 		}
 	}
 }
+
+// Check 는 "있기만 한 것" 과 "쓸 수 있는 것" 을 가른다. 로그인이 안 됐으면 세션이
+// 끝나는 순간에야 알게 되는데, 그때는 이미 그 구간을 놓친 것이다.
+func TestCheckDistinguishesUsableFromPresent(t *testing.T) {
+	ok := filepath.Join(t.TempDir(), "judge")
+	if err := os.WriteFile(ok, []byte("#!/bin/sh\ncat >/dev/null\necho '{\"ok\":true}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&CLI{Path: ok, Model: "m", Timeout: 10 * time.Second}).Check(context.Background()); err != nil {
+		t.Errorf("답하는 판별기를 실패로 봤다: %v", err)
+	}
+
+	bad := filepath.Join(t.TempDir(), "judge")
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\ncat >/dev/null\necho 'Not logged in'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := (&CLI{Path: bad, Model: "m", Timeout: 10 * time.Second}).Check(context.Background())
+	if err == nil {
+		t.Fatal("답하지 않는 판별기를 통과시켰다")
+	}
+	if !strings.Contains(err.Error(), "Not logged in") {
+		t.Errorf("이유가 안 보인다: %v", err)
+	}
+}
