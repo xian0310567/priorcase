@@ -44,6 +44,7 @@ func newIndexCmd() *cobra.Command {
 				fmt.Fprintf(out, "색인 %d행 생성\n", res.Rows)
 			}
 			warnSkipped(cmd.ErrOrStderr(), l, res.Skipped)
+			warnPreserved(cmd.ErrOrStderr(), l, res.Preserved)
 			return nil
 		},
 	}

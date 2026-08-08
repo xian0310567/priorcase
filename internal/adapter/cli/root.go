@@ -91,3 +91,16 @@ func Run(ctx context.Context, root *cobra.Command) error {
 	}
 	return nil
 }
+
+// warnPreserved 는 색인 자리에 있던 **남의 파일**을 대피시켰다는 사실을 알린다.
+//
+// 조용히 백업만 남기면 사용자는 자기 문서가 어디 갔는지 모른 채 사라졌다고 여긴다.
+// stderr 로 낸다 — stdout 은 에이전트 컨텍스트라 경고가 섞이면 안 된다.
+func warnPreserved(w io.Writer, l *store.Layout, backup string) {
+	if backup == "" {
+		return
+	}
+	fmt.Fprintf(w, "경고: 색인 자리에 casebook 이 만들지 않은 파일이 있었다. "+
+		"덮어쓰기 전에 옮겨 두었다:\n  → %s\n"+
+		"  색인 경로를 바꾸려면 설정의 [naming] index 를 고쳐라.\n", l.RelPath(backup))
+}

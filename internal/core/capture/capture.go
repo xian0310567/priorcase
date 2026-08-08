@@ -42,6 +42,9 @@ type Result struct {
 	// 방금 쓴 노트는 색인에 들어갔지만 색인 자체는 불완전하다 — 호출부가
 	// 알려야 한다.
 	Skipped []store.SkippedNote
+	// IndexPreserved 는 색인 자리에 있던 남의 파일을 대피시킨 경로다.
+	// 비어 있지 않으면 호출자가 **반드시** 사용자에게 알려야 한다.
+	IndexPreserved string
 }
 
 // Do 는 결정 노트를 만들고 색인을 갱신한 뒤, 관련 과거 결정을 함께 준다.
@@ -119,7 +122,8 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
 	}
-	return Result{Path: path, Related: related, RelatedErr: relatedErr, Skipped: idx.Skipped}, nil
+	return Result{Path: path, Related: related, RelatedErr: relatedErr,
+		Skipped: idx.Skipped, IndexPreserved: idx.Preserved}, nil
 }
 
 // slugKey 는 유사 slug 비교용 정규화 키다. 하이픈·공백·밑줄을 접고 대소문자를
