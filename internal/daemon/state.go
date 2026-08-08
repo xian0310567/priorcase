@@ -1,12 +1,18 @@
 // Package daemon 은 놓친 기록을 줍는 안전망이다.
 //
-// **LLM 을 부르지 않는다.** transcript 를 읽어 "이 구간에 결정이 있었을 수 있다" 는
-// 플래그만 남기고, 판별은 다음 세션의 에이전트가 한다 — 그 모델이 이미 전체 맥락을
-// 갖고 있고, 키 등록이 오픈소스 진입 장벽이 되기 때문이다
-// ([[casebook-결정-기록회수모델-에이전트주도-2026-08-07]]).
+// transcript 를 읽어 "이 구간에 결정이 있었을 수 있다" 는 플래그(pending)를 남긴다.
+// **이 패키지 자체는 판별기를 부르지 않는다** — 그건 어댑터가 SessionEnd·PreCompact
+// 에서 한다(D12). 여기서 부르지 않는 이유는 세션 생명주기를 이 패키지가 모르기 때문이지,
+// LLM 을 쓰지 않기로 해서가 아니다.
+//
+// ⚠️ 옛 D5("데몬은 LLM 을 부르지 않는다")는 2026-08-08 에 뒤집혔다 → D8.
+// 규칙으로는 결정을 판정할 수 없다는 것이 실측으로 확인됐고(한 세션 후보 160개),
+// 호스트 CLI 는 이미 인증돼 있어 추가 키가 0이다
+// ([[casebook-결정-자동기록-판별기복원-2026-08-08]]).
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/xian0310567/casebook/internal/core/store"
 	"github.com/xian0310567/casebook/internal/core/xdgpath"
@@ -40,6 +48,34 @@ type Checkpoint struct {
 	// Size 는 그때 본 파일 크기다. 다음에 파일이 이보다 작으면 잘렸거나 다른 파일로
 	// 바뀐 것이므로 Offset 을 믿을 수 없다.
 	Size int64 `json:"size"`
+
+	// At 은 이 파일을 **마지막으로 훑은 시각**이다.
+	//
+	// 전진하지 않은 스캔도 기록한다. 이게 없으면 "안전망이 도는데 표시할 게 없다" 와
+	// "안전망이 한 번도 안 돌았다" 가 똑같이 보인다 — 컷오버 1일차 회고에서 실제로
+	// cb doctor 가 후자를 전자로 보고했다.
+	At time.Time `json:"at,omitempty"`
+
+	// SessionCredited 는 **세션 대조 축**에서 면제로 소모한 노트 수다.
+	//
+	// 이 축은 단조다 — 그 세션 id 를 단 노트는 늘기만 하고 날짜에 무관하다.
+	// 그래서 개수 하나로 비교해도 안전하다.
+	SessionCredited int `json:"session_credited,omitempty"`
+
+	// DayCredited 는 **날짜별로** 면제에 소모한 노트 수다.
+	//
+	// 통짜 개수 하나로 두면 안 된다. 날짜 축의 계수는 *그 구간이 걸친 날짜*로
+	// 걸러지므로 구간마다 창이 달라진다. 고점을 넓은 창으로 찍고 비교를 좁은
+	// 창으로 하면, 바쁜 날을 한 번 지나간 세션은 **그 뒤로 영영 면제되지 않는다** —
+	// 자정을 넘긴 세션, `claude --continue`, 데몬 정지 뒤 backfill, 볼트 아카이브가
+	// 전부 그 상태를 만든다. 실제로 그렇게 만들었다가 리뷰에서 잡혔다.
+	//
+	// 날짜별로 나누면 각 날의 비교 창이 고정되어 그 고장이 사라진다.
+	DayCredited map[string]int `json:"day_credited,omitempty"`
+
+	// Suppressed 는 이 파일에서 면제로 넘긴 구간 수다. 진단용이다 — 억제가 그냥
+	// 사라지면 안전망이 일을 안 하는 것과 구분되지 않는다.
+	Suppressed int `json:"suppressed,omitempty"`
 }
 
 // Pending 은 "이 구간에 결정이 있었을 수 있다" 는 표시다. 결정 노트가 아니다.
@@ -69,6 +105,12 @@ type Pending struct {
 	// 여기 담아 두면 ② 훅 주입(에이전트에게 들이밀기)과 ③ 자동 승격(판별기에 넘기기)이
 	// 둘 다 transcript 없이 된다.
 	Excerpt string `json:"excerpt,omitempty"`
+
+	// ClaimedAt 은 어떤 프로세스가 이 구간을 승격하려고 집어 간 시각이다.
+	//
+	// 승격이 스캔 소유권 게이트 밖으로 나오면서(D12) 여러 훅이 동시에 같은 pending 을
+	// 집을 수 있게 됐다 — 판별기는 비결정적이라 같은 대화에 다른 slug 의 노트가 둘 생긴다.
+	ClaimedAt time.Time `json:"claimed_at,omitempty"`
 }
 
 // When 은 사람에게 보여 줄 날짜다. 대화 날짜를 알면 그것을, 모르면 표시 시각을 준다.
@@ -92,12 +134,71 @@ type state struct {
 	Pending     []Pending             `json:"pending"`
 }
 
-// Store 는 상태 파일 하나를 소유한다. 데몬은 단일 인스턴스지만 fsnotify 콜백이
-// 여러 고루틴에서 오므로 뮤텍스를 둔다.
+// stateLock 은 상태 파일을 고칠 때 잡는 잠금이다. **watch.lock 과 다른 파일이다.**
+//
+// watch.lock 은 "누가 스캔의 주인인가" 를 정하고 데몬이 살아 있는 내내 쥔다.
+// 이건 상태 파일 한 번 고치는 동안만 쥔다.
+//
+// **교착이 없는 근거는 '데몬만 겹쳐 잡는다' 가 아니다** — 훅도 ScanOnce 안에서
+// watch.lock 을 쥔 채 state.lock 을 잡는다. 근거는 **순서가 한 방향뿐**이라는 것이다:
+// watch.lock → state.lock. 반대 순서로 잡는 코드가 하나도 없다.
+//
+// ⚠️ 새 경로를 넣을 때 이 순서를 뒤집지 마라. state.lock 을 쥔 채 watch.lock 을
+// 기다리는 코드를 하나 넣는 순간 교착이 생긴다.
+const stateLock = "state.lock"
+
+// stateLockWait 는 상태 파일 잠금을 기다리는 상한이다. 임계 구역이 파일 하나를
+// 읽고 쓰는 것뿐이라 밀리초면 끝난다 — 2초는 사실상 무한이고, 그래도 안 잡히면
+// 무언가 잘못된 것이므로 조용히 진행하지 말고 알린다.
+const stateLockWait = 2 * time.Second
+
+// Store 는 상태 파일 하나를 다룬다.
+//
+// **디스크가 정본이다.** 메모리에 든 것은 캐시일 뿐이고, 고칠 때마다 잠금을 잡고
+// 다시 읽는다. 데몬이 메모리 상태를 정본으로 쥐고 있으면, 그 사이 훅이 pending 을
+// 해소해도 데몬의 다음 저장이 그것을 되살린다 — 승격을 락 밖으로 빼는 순간
+// 그 경합이 실제로 생긴다.
+//
+// 데몬은 단일 인스턴스지만 fsnotify 콜백이 여러 고루틴에서 오므로 뮤텍스도 둔다.
 type Store struct {
 	dir string
 	mu  sync.Mutex
 	st  state
+}
+
+// mutate 는 잠금 안에서 디스크를 다시 읽고, 고치고, 쓴다.
+func (s *Store) mutate(fn func(*state)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return err
+	}
+	lk := flock.New(filepath.Join(s.dir, stateLock))
+	ctx, cancel := context.WithTimeout(context.Background(), stateLockWait)
+	defer cancel()
+	got, err := lk.TryLockContext(ctx, 20*time.Millisecond)
+	if err != nil || !got {
+		return fmt.Errorf("상태 파일 잠금을 잡을 수 없다 (%s): %v — "+
+			"다른 casebook 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
+	}
+	defer func() { _ = lk.Unlock() }()
+
+	if err := s.loadLocked(); err != nil {
+		return err
+	}
+	fn(&s.st)
+	return s.save()
+}
+
+// reload 는 읽기 전에 디스크를 다시 본다.
+//
+// 잠금을 잡지 않는다 — save 가 원자적 교체(WriteFileAtomic)라 읽는 쪽은 언제나
+// 이전 판 아니면 다음 판을 보고, 찢어진 파일을 보지 않는다.
+func (s *Store) reload() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.loadLocked()
 }
 
 func NewStore(dir string) *Store {
@@ -114,7 +215,11 @@ func (s *Store) path() string { return filepath.Join(s.dir, stateFile) }
 func (s *Store) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
 
+// loadLocked 는 뮤텍스를 이미 잡은 상태에서 부른다.
+func (s *Store) loadLocked() error {
 	b, err := os.ReadFile(s.path())
 	if os.IsNotExist(err) {
 		s.st = state{Checkpoints: map[string]Checkpoint{}}
@@ -152,6 +257,7 @@ func (s *Store) save() error {
 
 // Checkpoint 는 파일의 진행 지점을 준다. 파일 크기를 모를 때 쓴다.
 func (s *Store) Checkpoint(path string) int64 {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.st.Checkpoints[path].Offset
@@ -164,6 +270,7 @@ func (s *Store) Checkpoint(path string) int64 {
 // 이어서 읽는다. (inode 를 보면 더 정확하지만 이식성이 떨어지고, transcript 는
 // 세션 UUID 로 이름이 갈려 교체가 애초에 드물다.)
 func (s *Store) CheckpointFor(path string, size int64) int64 {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.st.Checkpoints[path]
@@ -175,29 +282,146 @@ func (s *Store) CheckpointFor(path string, size int64) int64 {
 
 // Advance 는 진행 지점을 옮긴다. **구간을 끝까지 성공 처리했을 때만 부른다**
 // (스펙 §7.2 단일 규칙). 파싱 실패가 하나라도 있으면 부르지 않는다.
+//
+// 나머지 필드는 **보존한다.** 통째로 갈아치우면 Credited 가 매번 0 으로 돌아가
+// 면제가 다시 무한해진다 — 소모성 크레딧이 조용히 무력화된다.
 func (s *Store) Advance(path string, offset, size int64) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.Offset, cp.Size = offset, size
+		st.Checkpoints[path] = cp
+	})
+}
+
+// Credit 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
+//
+// **마지막 확인 이후 새 노트가 생겼으면 면제한다.** 노트가 새로 생겼다는 것은 그
+// 사이에 에이전트가 기록을 했다는 직접 증거이고, 안 늘었다면 이 구간은 아직 아무도
+// 안 본 것이다. 그때 걸린 노트들은 거기서 **소모된다** — 다음 구간을 또 면제하지 못한다.
+//
+// 옛 구현은 "노트가 하나라도 있는가" 였고, 그래서 세션 첫머리에서 노트 하나를 남긴
+// 뒤로는 그 세션이 영원히 안전망 밖이었다. 컷오버 1일차에 이 세션의 노트 11건이
+// 정확히 그 상태를 만들어 판별기가 하루 종일 한 번도 못 돌았다.
+//
+// **두 축을 따로 본다.** 하나로 합치면 날짜 축의 창이 바뀔 때 세션 축까지 같이
+// 망가진다(위 DayCredited 주석).
+func (s *Store) Credit(path string, sessionN int, perDay map[string]int) (bool, error) {
+	suppress := false
+	err := s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		fresh := sessionN > cp.SessionCredited
+		for d, n := range perDay {
+			if n > cp.DayCredited[d] {
+				fresh = true
+			}
+		}
+		if !fresh {
+			return
+		}
+		if sessionN > cp.SessionCredited {
+			cp.SessionCredited = sessionN
+		}
+		for d, n := range perDay {
+			if cp.DayCredited == nil {
+				cp.DayCredited = map[string]int{}
+			}
+			if n > cp.DayCredited[d] {
+				cp.DayCredited[d] = n
+			}
+		}
+		cp.Suppressed++
+		st.Checkpoints[path] = cp
+		suppress = true
+	})
+	return suppress, err
+}
+
+// CreditNote 는 **안전망이 방금 만든 노트**를 미리 소모 처리한다.
+//
+// 이게 없으면 안전망이 자기 출력으로 자기를 억제한다. 승격이 만든 노트는 그 구간의
+// 스캔 *이후* 에 생기므로, 다음 스캔에서 "새 노트가 생겼다" 로 세어져 **아직 아무도
+// 안 본 다음 구간**을 면제한다. 크레딧의 전제("노트 = 에이전트가 기록했다는 증거")가
+// 자동 경로에서만 깨지는 구조적 off-by-one 이다.
+//
+// 노트에 출처 필드가 없어 사후에는 구분할 수 없다(스펙: 자동/수기를 구분하지 않는다).
+// 그래서 만든 그 자리에서 소모시킨다.
+func (s *Store) CreditNote(path, date, sessionID string) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		if sessionID != "" {
+			cp.SessionCredited++
+		}
+		if date != "" {
+			if cp.DayCredited == nil {
+				cp.DayCredited = map[string]int{}
+			}
+			cp.DayCredited[date]++
+		}
+		st.Checkpoints[path] = cp
+	})
+}
+
+// CreditNoteFor 는 프로세스 밖에서 부르는 CreditNote 다 (훅의 승격 경로).
+func CreditNoteFor(dir, path, date, sessionID string) error {
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		return err
+	}
+	return s.CreditNote(path, date, sessionID)
+}
+
+// NoteScan 은 훑은 흔적을 남긴다. **아무 일도 안 한 스캔도 남긴다** — 그것이
+// "돌고 있다" 는 유일한 증거다.
+func (s *Store) NoteScan(path string, at time.Time) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.At = at
+		st.Checkpoints[path] = cp
+	})
+}
+
+// LastScan 은 어느 파일이든 마지막으로 훑은 시각이다. 하나도 없으면 제로값이다.
+func (s *Store) LastScan() time.Time {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.st.Checkpoints[path] = Checkpoint{Offset: offset, Size: size}
-	return s.save()
+	var last time.Time
+	for _, cp := range s.st.Checkpoints {
+		if cp.At.After(last) {
+			last = cp.At
+		}
+	}
+	return last
+}
+
+// Suppressed 는 전 파일의 누적 억제 횟수다.
+func (s *Store) Suppressed() int {
+	s.reload()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, cp := range s.st.Checkpoints {
+		n += cp.Suppressed
+	}
+	return n
 }
 
 // AddPending 은 구간을 표시한다. 같은 구간이면 새로 쌓지 않고 갱신한다.
 func (s *Store) AddPending(p Pending) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.st.Pending {
-		if s.st.Pending[i].key() == p.key() {
-			s.st.Pending[i] = p
-			return s.save()
+	return s.mutate(func(st *state) {
+		for i := range st.Pending {
+			if st.Pending[i].key() == p.key() {
+				st.Pending[i] = p
+				return
+			}
 		}
-	}
-	s.st.Pending = append(s.st.Pending, p)
-	return s.save()
+		st.Pending = append(st.Pending, p)
+	})
 }
 
 // Pending 은 표시된 구간을 오래된 순으로 준다.
 func (s *Store) Pending() []Pending {
+	s.reload()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]Pending, len(s.st.Pending))
@@ -208,17 +432,16 @@ func (s *Store) Pending() []Pending {
 
 // Resolve 는 확인이 끝난 구간을 지운다. 에이전트가 판단을 마쳤을 때 부른다.
 func (s *Store) Resolve(path string, from int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	k := Pending{Path: path, From: from}.key()
-	kept := s.st.Pending[:0]
-	for _, p := range s.st.Pending {
-		if p.key() != k {
-			kept = append(kept, p)
+	return s.mutate(func(st *state) {
+		k := Pending{Path: path, From: from}.key()
+		kept := st.Pending[:0]
+		for _, p := range st.Pending {
+			if p.key() != k {
+				kept = append(kept, p)
+			}
 		}
-	}
-	s.st.Pending = kept
-	return s.save()
+		st.Pending = kept
+	})
 }
 
 // ID 는 pending 하나를 가리키는 문자열이다. 에이전트가 해소할 때 되돌려 준다.
@@ -261,4 +484,38 @@ func ResolvePending(dir, id string) error {
 		return err
 	}
 	return s.Resolve(path, from)
+}
+
+// claimTTL 은 승격 선점이 유효한 시간이다.
+//
+// 승격은 판별기(`claude --print`) 호출이라 수 초가 걸리고, 그동안 다른 프로세스가
+// 같은 구간을 집으면 같은 대화에 결정 노트가 둘 생긴다. 선점 표시로 막는다.
+// **프로세스가 중간에 죽어도 이 시간이 지나면 자동으로 풀린다** — 잠금 파일을
+// 남기는 방식과 달리 사람이 치울 것이 없다.
+const claimTTL = 5 * time.Minute
+
+// ClaimPending 은 구간 하나를 승격 대상으로 선점한다. 이미 다른 쪽이 최근에 선점했으면
+// false 다. 선점은 상태 잠금 안에서 일어나므로 둘이 동시에 성공할 수 없다.
+func ClaimPending(dir, id string, now time.Time) (bool, error) {
+	path, from, err := ParseID(id)
+	if err != nil {
+		return false, err
+	}
+	got := false
+	s := NewStore(dir)
+	err = s.mutate(func(st *state) {
+		k := Pending{Path: path, From: from}.key()
+		for i := range st.Pending {
+			if st.Pending[i].key() != k {
+				continue
+			}
+			if !st.Pending[i].ClaimedAt.IsZero() && now.Sub(st.Pending[i].ClaimedAt) < claimTTL {
+				return // 다른 쪽이 처리 중이다
+			}
+			st.Pending[i].ClaimedAt = now
+			got = true
+			return
+		}
+	})
+	return got, err
 }
