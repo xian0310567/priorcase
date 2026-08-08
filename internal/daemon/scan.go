@@ -25,7 +25,11 @@ type ScanResult struct {
 	NoFilter bool     // 시그널 필터를 건너뛰었나 (판별기가 있어서)
 	Advanced bool     // 체크포인트를 전진시켰나
 	Excluded bool     // 제외된 경로라 표시를 건너뛰었나
-	Recorded bool     // 이미 기록된 결정이 있어 표시를 건너뛰었나
+	// Recorded 는 **면제 크레딧을 소모해 표시를 건너뛰었나**다.
+	//
+	// "이미 기록됐다" 가 아니다. 볼트에 노트가 있어도 그 크레딧을 이미 썼으면
+	// false 이고 표시된다 — 그것이 정상 동작이다. 이름은 옛 의미에서 왔다.
+	Recorded bool
 }
 
 // Scan 은 transcript 파일 하나의 새 구간을 처리한다. **파일에 쓰지 않는다.**
@@ -66,10 +70,17 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 	}
 	size := info.Size()
 
-	// **여기서부터는 무슨 일이 일어나든 훑은 흔적을 남긴다.** 읽을 게 없어서 바로
-	// 나가는 경로가 가장 흔한데, 그 경로가 흔적을 안 남기면 안전망이 도는지 알 방법이
-	// 없다 — 파일을 못 여는 위쪽 실패만 제외한다(그건 에러로 나간다).
-	defer func() { _ = s.NoteScan(path, time.Now().UTC()) }()
+	// **성공한 스캔만 흔적을 남긴다.** 읽을 게 없어서 바로 나가는 경로도 성공이다 —
+	// 그 경로가 가장 흔한데 흔적을 안 남기면 안전망이 도는지 알 방법이 없다.
+	//
+	// 다만 **실패한 스캔에는 남기지 않는다.** 깨진 줄로 매번 실패하는 파일이 doctor
+	// 에게 "방금 훑음" 으로 보이면, 생존 증거로 세운 바로 그 값이 거짓말을 한다.
+	var scanErr error
+	defer func() {
+		if scanErr == nil {
+			_ = s.NoteScan(path, time.Now().UTC())
+		}
+	}()
 
 	from := s.CheckpointFor(path, size)
 	if from >= size {
@@ -78,16 +89,19 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 
 	f, err := os.Open(path)
 	if err != nil {
-		return r, fmt.Errorf("transcript 를 열 수 없다 (%s): %w", path, err)
+		scanErr = fmt.Errorf("transcript 를 열 수 없다 (%s): %w", path, err)
+		return r, scanErr
 	}
 	defer f.Close()
 	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return r, err
+		scanErr = err
+		return r, scanErr
 	}
 
 	turns, meta, consumed, bad, err := claudecode.Parse(f)
 	if err != nil {
-		return r, fmt.Errorf("transcript 파싱 실패 (%s): %w", path, err)
+		scanErr = fmt.Errorf("transcript 파싱 실패 (%s): %w", path, err)
+		return r, scanErr
 	}
 	r.Bad = bad
 
@@ -125,15 +139,16 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 
 	if worthJudging && !r.Excluded {
 		domain := c.DomainForCwd(meta.Cwd)
-		n, ferr := coveringNotes(l, domain, meta.SessionID, days)
+		sessionN, perDay, ferr := coveringNotes(l, domain, meta.SessionID, days)
 		if ferr != nil {
 			// 볼트를 못 읽었다고 표시를 건너뛰면 안전망이 조용히 꺼진다.
 			// 모르면 표시하는 쪽으로 기운다 — 놓치는 것이 더 나쁘다.
 			r.Signals = append(r.Signals, "(볼트 대조 실패: "+ferr.Error()+")")
 		} else {
-			rec, cerr := s.Credit(path, n)
+			rec, cerr := s.Credit(path, sessionN, perDay)
 			if cerr != nil {
-				return r, cerr
+				scanErr = cerr
+				return r, scanErr
 			}
 			r.Recorded = rec
 		}
@@ -154,14 +169,16 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 			At:        time.Now().UTC(),
 		}
 		if err := s.AddPending(p); err != nil {
-			return r, err
+			scanErr = err
+			return r, scanErr
 		}
 		r.Flagged = true
 	}
 
 	if bad == 0 {
 		if err := s.Advance(path, from+consumed, size); err != nil {
-			return r, err
+			scanErr = err
+			return r, scanErr
 		}
 		r.Advanced = true
 	}
@@ -209,51 +226,54 @@ func segmentDays(turns []transcript.Turn) []string {
 	return out
 }
 
-// coveringNotes 는 이 구간을 가려 줄 수 있는 결정 노트가 **몇 건**인지 센다.
+// coveringNotes 는 이 구간을 가려 줄 수 있는 결정 노트를 **축별로** 센다.
 //
 // 있다/없다가 아니라 개수를 주는 것이 요점이다. 호출자(Store.Credit)가 지난번보다
-// 늘었는지를 보고 면제를 판정하므로, 노트 하나가 구간 하나만 면제하게 된다.
-// 있다/없다로 답하면 노트 하나가 그 세션 전체를 영구히 면제한다.
+// 늘었는지를 보고 면제를 판정하므로 면제가 소모성이 된다. 있다/없다로 답하면 노트
+// 하나가 그 세션 전체를 영구히 면제한다 — 컷오버 1일차가 그 상태였다.
 //
-// 두 축의 **합집합**을 세되 같은 노트를 두 번 세지 않는다.
-func coveringNotes(l *store.Layout, domain, sessionID string, days []string) (int, error) {
+// **두 축을 합치지 않는다.** 세션 축은 날짜에 무관해 단조지만 날짜 축은 구간이
+// 걸친 날짜로 걸러져 창이 움직인다. 하나로 합쳐 개수만 비교하면 넓은 창이 찍은
+// 고점을 좁은 창이 넘지 못해 면제가 영영 안 걸린다(state.go 의 DayCredited 주석).
+func coveringNotes(l *store.Layout, domain, sessionID string, days []string) (int, map[string]int, error) {
+	perDay := map[string]int{}
 	if l == nil {
-		return 0, nil
+		return 0, perDay, nil
 	}
 	notes, _, err := l.List()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	dayset := map[string]bool{}
 	for _, d := range days {
 		dayset[d] = true
+		perDay[d] = 0 // 노트가 없는 날도 0 으로 둔다 — 그래야 그날 첫 노트가 면제를 산다
 	}
 
-	n := 0
+	sessionN := 0
 	for _, note := range notes {
 		// ① 세션 대조 — 정확하다. 이 대화에서 나온 결정이 기록돼 있다는 직접 증거다.
 		//    도메인·날짜와 무관하게 성립하므로, 자정을 넘긴 세션이나 도메인이 바뀐 경우도 잡는다.
 		if sessionID != "" && note.Meta.SourceSession == sessionID {
-			n++
+			sessionN++
 			continue
 		}
 		// ② 날짜+도메인 폴백 — 거칠다. source_session 이 안 채워진 기록(에이전트가 세션 id 를
 		//    안 넘겼거나 사람이 손으로 쓴 노트)을 위한 그물이다.
 		//
 		//    ②를 떼면 세션 id 를 안 넘기는 경로에서 면제가 통째로 사라져 실질 세션의
-		//    99%가 표시된다(Plan 3 실측). 그래서 합집합으로 둔다. 소모성이 된 지금은
-		//    이 축이 거칠어도 손해가 구간 하나로 묶인다.
-		if domain == "" || len(dayset) == 0 || !dayset[note.Meta.Date] {
+		//    99%가 표시된다(Plan 3 실측). 그래서 남겨 두되 날짜별로 따로 센다.
+		if domain == "" || !dayset[note.Meta.Date] {
 			continue
 		}
 		for _, d := range note.Meta.Domain {
 			if d == domain {
-				n++
+				perDay[note.Meta.Date]++
 				break
 			}
 		}
 	}
-	return n, nil
+	return sessionN, perDay, nil
 }
 
 // maxExcerpt 는 pending 에 담는 발췌의 상한이다.

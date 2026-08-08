@@ -85,3 +85,21 @@ func ReadPromotions(dir string, since time.Time) ([]Promotion, error) {
 	}
 	return out, sc.Err()
 }
+
+// maxLedgerText 는 원장 한 줄에 담는 자유 문자열의 상한이다.
+//
+// 판별기 실패 메시지에는 호스트 CLI 의 stderr 가 통째로 들어올 수 있다 (MCP 스택
+// 트레이스, 대량 경고). 그것이 ReadPromotions 의 스캐너 상한(1MB)을 넘으면 **그 줄만
+// 사라지는 것이 아니라 그 뒤가 통째로 안 읽힌다** — 그리고 하필 그 순간이 진단이
+// 가장 필요한 순간이다. 이 프로젝트가 죄목으로 드는 침묵 무동작 그 자체다.
+const maxLedgerText = 2000
+
+// TrimLedgerText 는 원장에 넣을 문자열을 상한까지 자른다. 앞을 남긴다 — 오류
+// 메시지는 첫 줄에 원인이 있다.
+func TrimLedgerText(s string) string {
+	r := []rune(s)
+	if len(r) <= maxLedgerText {
+		return s
+	}
+	return string(r[:maxLedgerText]) + "…(잘림)"
+}

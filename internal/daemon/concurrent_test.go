@@ -76,3 +76,47 @@ func TestConcurrentAddPendingDoesNotLoseUpdates(t *testing.T) {
 		t.Errorf("pending %d건, want %d — 잃어버린 갱신이 있다", len(got), n)
 	}
 }
+
+// ★ 동시에 끝나는 두 세션이 같은 구간을 각자 판별기에 넘기면, 판별기가 비결정적이라
+// 같은 대화에 slug 가 다른 결정 노트가 둘 생긴다. 선점으로 막는다.
+func TestClaimIsExclusive(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	p := Pending{Path: "/t.jsonl", From: 0, Domain: "alpha", At: time.Now().UTC()}
+	if err := s.AddPending(p); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+
+	first, err := ClaimPending(dir, p.ID(), now)
+	if err != nil || !first {
+		t.Fatalf("첫 선점이 실패했다: %v %v", first, err)
+	}
+	second, err := ClaimPending(dir, p.ID(), now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second {
+		t.Error("둘이 같은 구간을 집었다 — 결정 노트가 둘 생긴다")
+	}
+
+	// 프로세스가 죽어도 사람이 치울 것이 없어야 한다.
+	later, err := ClaimPending(dir, p.ID(), now.Add(claimTTL+time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !later {
+		t.Error("선점이 영구히 남았다 — 죽은 프로세스가 구간을 인질로 잡는다")
+	}
+}
+
+// 없는 구간을 집으려 하면 false 다 (이미 해소됐다).
+func TestClaimMissingPendingIsFalse(t *testing.T) {
+	got, err := ClaimPending(t.TempDir(), "/t.jsonl@0", time.Now())
+	if err != nil || got {
+		t.Errorf("없는 구간을 집었다: %v %v", got, err)
+	}
+}

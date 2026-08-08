@@ -281,20 +281,28 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 	}
 	act += activity(o)
 
-	// **훑은 흔적이 오래됐으면 그것이 유일한 실패 증거다.**
+	// **훑은 흔적이 오래됐으면 그것이 안전망이 멎었다는 양성 증거다.**
 	//
 	// "미확인 구간 없음" 은 훑어서 비운 것과 한 번도 안 훑은 것을 구분하지 못한다 —
 	// 컷오버 1일차에 실제로 후자를 전자로 보고했다. 다만 **흔적이 없는 것**만으로는
 	// 경보를 울릴 수 없다. 갓 깐 설치도, 흔적 필드가 없던 옛 판에서 올라온 설치도
-	// 똑같이 비어 있기 때문이다. 그래서 "오래됐다" 는 양성 증거일 때만 경고한다.
+	// 똑같이 비어 있기 때문이다. 그래서 "오래됐다" 는 양성 증거일 때만 운다.
+	//
+	// **여기서 반환하지 않는다.** 조기 반환하면 아래의 회고 판정(기록 0인데 표시만
+	// 쌓인다 = Fail)을 가려 버린다. 가장 심각한 조합이 Warn 한 줄로 강등되는데,
+	// 그 조합이야말로 이 진단이 존재하는 이유다.
+	silent := ""
+	silentFix := ""
 	if last := lastScan(o); !last.IsZero() && o.Now.Sub(last) > pendingStale {
-		add(r, "안전망", health.Warn,
-			fmt.Sprintf("%s%s — **%s부터 훑은 흔적이 없다**", mode, act, humanAgo(o.Now, last)),
-			"훅이 아직 붙어 있는지 확인해라 (cb doctor 의 훅 배선 줄, 또는 cb init --apply)")
-		return
+		silent = fmt.Sprintf(" — **%s부터 훑은 흔적이 없다**", humanAgo(o.Now, last))
+		silentFix = "훅이 아직 붙어 있는지 확인해라 (cb doctor 의 훅 배선 줄, 또는 cb init --apply)"
 	}
 
 	if len(items) == 0 {
+		if silent != "" {
+			add(r, "안전망", health.Warn, mode+act+silent, silentFix)
+			return
+		}
 		add(r, "안전망", health.OK, mode+act+" · 미확인 구간 없음", "")
 		return
 	}
@@ -304,9 +312,12 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 			stale++
 		}
 	}
-	detail := fmt.Sprintf("%s%s · 미확인 구간 %d건", mode, act, len(items))
+	detail := fmt.Sprintf("%s%s · 미확인 구간 %d건%s", mode, act, len(items), silent)
 	lv := health.Warn
 	fix := "확인하고 실제 결정이면 cb capture 로 남겨라"
+	if silentFix != "" {
+		fix = silentFix
+	}
 
 	// **이 조합이 회고의 판정이다.** 표시는 쌓이는데 기록이 0이면 에이전트가
 	// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
@@ -347,6 +358,11 @@ func activity(o DoctorOptions) string {
 	if err != nil {
 		return out
 	}
+	// **억제 횟수를 낸다.** 이게 없으면 "볼 게 없어서 조용하다" 와 "N번 눈감았다" 가
+	// 여전히 같은 문장이다. 컷오버 1일차의 오진이 정확히 그 구분의 부재였다.
+	if n := suppressed(o); n > 0 {
+		out += fmt.Sprintf(" · 면제 %d회", n)
+	}
 	if len(proms) == 0 {
 		return out + " · 자동 기록 없음"
 	}
@@ -359,6 +375,15 @@ func activity(o DoctorOptions) string {
 	// 판정 건수를 같이 낸다 — 0/12 는 "판별기가 안 돈다" 가 아니라 "12번 봤는데
 	// 기록할 게 없었다" 이고, 그 둘은 전혀 다른 진단이다.
 	return out + fmt.Sprintf(" · 최근 7일 자동 기록 %d건/판정 %d건", made, len(proms))
+}
+
+// suppressed 는 안전망이 면제로 넘긴 구간 수다.
+func suppressed(o DoctorOptions) int {
+	s := daemon.NewStore(o.StateDir)
+	if s.Load() != nil {
+		return 0
+	}
+	return s.Suppressed()
 }
 
 // humanAgo 는 경과 시간을 짧게 만든다.

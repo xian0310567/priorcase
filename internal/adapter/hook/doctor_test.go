@@ -383,3 +383,28 @@ func TestDoctorDoesNotAlarmOnFreshInstall(t *testing.T) {
 		t.Errorf("갓 깐 설치에 경보가 울렸다 (%v): %s", got.Level, got.Detail)
 	}
 }
+
+// 억제 횟수가 안 보이면 "볼 게 없어서 조용하다" 와 "N번 눈감았다" 가 여전히 같다.
+func TestDoctorShowsSuppressionCount(t *testing.T) {
+	sd := t.TempDir()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NoteScan("/t.jsonl", now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		if _, err := s.Credit("/t.jsonl", i, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
+	if !strings.Contains(got.Detail, "면제 3회") {
+		t.Errorf("면제 횟수가 안 보인다 — 조용한 이유를 알 수 없다: %s", got.Detail)
+	}
+}

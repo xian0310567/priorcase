@@ -123,3 +123,68 @@ func TestPromotionIsRecordedInLedger(t *testing.T) {
 		})
 	}
 }
+
+// 내 세션 구간이 먼저 처리돼야 한다 — 세션이 끝나는 것은 *이* 대화의 마지막 기회이고,
+// 다른 프로젝트 구간은 그쪽 세션이 끝날 때가 그쪽의 마지막 기회다.
+func TestOwnTranscriptGoesFirst(t *testing.T) {
+	mine := daemon.Pending{Path: "/mine.jsonl", From: 0}
+	other := daemon.Pending{Path: "/other.jsonl", From: 0}
+	got := ownFirst([]daemon.Pending{other, mine, other}, "/mine.jsonl")
+	if len(got) != 3 {
+		t.Fatalf("구간을 잃었다: %d건", len(got))
+	}
+	if got[0].Path != "/mine.jsonl" {
+		t.Errorf("남의 구간이 먼저다: %v", got[0].Path)
+	}
+}
+
+func TestOwnFirstWithoutTranscriptKeepsOrder(t *testing.T) {
+	in := []daemon.Pending{{Path: "/a"}, {Path: "/b"}}
+	got := ownFirst(in, "")
+	if len(got) != 2 || got[0].Path != "/a" {
+		t.Errorf("순서가 바뀌었다: %v", got)
+	}
+}
+
+// 함수만 테스트하면 호출부를 떼어내도 안 잡힌다 — 실제로 승격 순서가 그렇게 나오는지 본다.
+func TestPromoteHandlesOwnSessionFirst(t *testing.T) {
+	sd := t.TempDir()
+	dir := t.TempDir()
+	mine := writeTranscript(t, dir, 8)
+	other := filepath.Join(dir, "other.jsonl")
+	c := cfg(t)
+	c.Capture.JudgePath = stubJudge(t, `{"record":false,"reason":"기록할 결정이 아니다"}`)
+
+	// 남의 구간을 **먼저** 넣는다. 우선순위가 없으면 이게 먼저 처리된다.
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []daemon.Pending{
+		{Path: other, From: 0, Domain: "alpha", Days: []string{"2026-08-07"},
+			Excerpt: "남의 구간", At: time.Now().UTC().Add(-time.Hour)},
+		{Path: mine, From: 0, Domain: "alpha", Days: []string{"2026-08-07"},
+			Excerpt: "내 구간", At: time.Now().UTC()},
+	} {
+		if err := s.AddPending(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := runHook(t, c, sd, EventSessionEnd, Input{
+		Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: mine})
+	if r.e != nil {
+		t.Fatal(r.e)
+	}
+	proms, err := daemon.ReadPromotions(sd, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proms) < 1 {
+		t.Fatalf("승격 기록이 없다:\n%s", r.err)
+	}
+	if !strings.HasPrefix(proms[0].ID, mine) {
+		t.Errorf("남의 구간을 먼저 처리했다 (%s) — 세션이 끝나는 것은 *이* 대화의 마지막 기회다",
+			proms[0].ID)
+	}
+}

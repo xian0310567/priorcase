@@ -132,13 +132,13 @@ func TestDayDomainSuppressionIsAlsoConsumed(t *testing.T) {
 // 다시 무한해진다. 조용히 되돌아가는 종류의 회귀라 따로 못 박는다.
 func TestAdvancePreservesCredit(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.Credit("/p", 3); err != nil {
+	if _, err := s.Credit("/p", 3, map[string]int{"2026-08-08": 2}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Advance("/p", 100, 100); err != nil {
 		t.Fatal(err)
 	}
-	again, err := s.Credit("/p", 3)
+	again, err := s.Credit("/p", 3, map[string]int{"2026-08-08": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,5 +219,147 @@ func TestLaterSuppressionDoesNotEraseEarlierFlag(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Errorf("표시가 %d건 — 2구간의 표시가 3구간의 면제에 지워졌다", len(items))
+	}
+}
+
+// ★★ 리뷰가 잡은 정반대 고장: 바쁜 날을 지나면 **영영 면제되지 않는다.**
+//
+// 처음 구현은 크레딧을 개수 하나로 두고 `Credited = count` 로 최댓값 래칫을 걸었다.
+// 그런데 count 는 *그 구간이 걸친 날짜*로 걸러진다 — 고점을 넓은 창으로 찍고 비교를
+// 좁은 창으로 하는 구조라, 8-01 에 노트 6건이 있는 날을 한 번 지나면 그 뒤로는 매일
+// 성실히 기록해도 count 가 6 을 못 넘어 면제가 안 걸린다. 자정 넘김 · claude --continue ·
+// 데몬 정지 뒤 backfill · 볼트 아카이브가 전부 이 상태를 만든다.
+//
+// 안전망이 소음이 되면 에이전트가 무시하는 법을 배운다 — 이 프로젝트가 죄목으로 드는 상태다.
+func TestBusyDayDoesNotPoisonLaterDays(t *testing.T) {
+	vc := creditCfg(t)
+	l := store.NewLayout(vc)
+	for i := 0; i < 6; i++ {
+		note(t, vc, fmt.Sprintf("남이쓴%d", i), "2026-08-01", "")
+	}
+
+	tp := filepath.Join(t.TempDir(), "s.jsonl")
+	s := newStore(t)
+	seg := func(day string) []string {
+		var out []string
+		for i := 0; i < 8; i++ {
+			out = append(out, fmt.Sprintf(
+				`{"type":"assistant","cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"%sT01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"여기서 결정했다"}]}}`+"\n",
+				day, i))
+		}
+		return out
+	}
+
+	writeLines(t, tp, seg("2026-08-01")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+		t.Fatal("바쁜 날은 면제돼야 한다")
+	}
+
+	// 이튿날. 에이전트가 이 세션으로 결정을 제대로 남겼다.
+	note(t, vc, "제대로기록", "2026-08-02", "S1")
+	writeLines(t, tp, seg("2026-08-02")...)
+	r2, err := Scan(s, vc, l, tp, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r2.Recorded {
+		t.Error("성실히 기록했는데 면제가 안 걸렸다 — 넓은 창의 고점이 좁은 창을 막고 있다")
+	}
+
+	// 사흘째. 또 기록했다.
+	note(t, vc, "또기록", "2026-08-03", "S1")
+	writeLines(t, tp, seg("2026-08-03")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+		t.Error("사흘째도 면제가 안 걸렸다 — 래칫이 살아 있다")
+	}
+}
+
+// 세션 축과 날짜 축이 서로를 오염시키면 안 된다. 같은 날 **다른 세션**이 남긴 노트가
+// 이쪽 세션의 고점을 밀어 올려 이쪽을 영구히 막던 경로다.
+func TestOtherSessionsNotesDoNotPoisonThisSession(t *testing.T) {
+	vc := creditCfg(t)
+	l := store.NewLayout(vc)
+	for i := 0; i < 5; i++ {
+		note(t, vc, fmt.Sprintf("다른세션%d", i), "2026-08-07", "다른세션ID")
+	}
+
+	tp := filepath.Join(t.TempDir(), "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07, S1
+	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+		t.Fatal("같은 날 노트가 있으니 첫 구간은 면제된다")
+	}
+
+	// 이 세션이 자기 결정을 기록한다. 날짜 축의 고점(5)에 막히면 안 된다.
+	note(t, vc, "내가기록", "2026-08-07", "S1")
+	writeLines(t, tp, turns(t, 8, "또 여기서 결정했다", "/tmp/proj/alpha")...)
+	r, err := Scan(s, vc, l, tp, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Recorded {
+		t.Error("내 세션 노트가 다른 세션의 고점에 막혔다 — 축이 섞였다")
+	}
+}
+
+// ★ 안전망은 **자기 출력으로 자기를 억제하면 안 된다.**
+//
+// 승격이 만든 노트는 그 구간의 스캔 뒤에 생긴다. 다음 스캔이 그것을 "새로 생겼다" 로
+// 세면, 아직 아무도 안 본 다음 구간이 면제된다 — 자동 경로에서만 깨지는 off-by-one 이다.
+// 노트에 출처 필드가 없어 사후 구분이 불가능하므로 만든 자리에서 소모시켜야 한다.
+func TestAutoPromotedNoteDoesNotBuyFutureExemption(t *testing.T) {
+	vc := creditCfg(t)
+	l := store.NewLayout(vc)
+	tp := filepath.Join(t.TempDir(), "s.jsonl")
+	s := newStore(t)
+
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+	if r, _ := Scan(s, vc, l, tp, false); !r.Flagged {
+		t.Fatal("1구간은 표시돼야 한다 (볼트에 가려 줄 노트가 없다)")
+	}
+
+	// 승격이 노트를 만들고, 그 자리에서 크레딧을 소모시킨다.
+	note(t, vc, "판별기가만듦", "2026-08-07", "S1")
+	if err := s.CreditNote(tp, "2026-08-07", "S1"); err != nil {
+		t.Fatal(err)
+	}
+
+	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
+	r, err := Scan(s, vc, l, tp, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recorded {
+		t.Error("승격이 만든 노트가 다음 구간을 면제했다 — 안전망이 자기 출력으로 자기를 껐다")
+	}
+	if !r.Flagged {
+		t.Error("2구간을 표시하지 않았다")
+	}
+}
+
+// 실패한 스캔은 훑은 흔적을 남기면 안 된다. 매번 실패하는 파일이 doctor 에게
+// "방금 훑음" 으로 보이면, 생존 증거로 세운 값이 거짓말을 한다.
+//
+// (깨진 *줄*은 실패가 아니다 — 파서가 세어서 돌려주고 전진만 막는다. 여기서 말하는
+// 실패는 파일을 못 읽는 것 같은 진짜 실패다.)
+func TestFailedScanLeavesNoTrace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 는 권한을 무시한다")
+	}
+	vc := creditCfg(t)
+	l := store.NewLayout(vc)
+	tp := filepath.Join(t.TempDir(), "s.jsonl")
+	s := newStore(t)
+	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
+	if err := os.Chmod(tp, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tp, 0o644) })
+
+	if _, err := Scan(s, vc, l, tp, false); err == nil {
+		t.Fatal("읽을 수 없는 파일인데 성공했다")
+	}
+	if got := s.LastScan(); !got.IsZero() {
+		t.Errorf("실패한 스캔이 흔적을 남겼다 (%v) — 생존 증거가 거짓말을 한다", got)
 	}
 }
