@@ -65,6 +65,12 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 		return r, fmt.Errorf("transcript 를 볼 수 없다 (%s): %w", path, err)
 	}
 	size := info.Size()
+
+	// **여기서부터는 무슨 일이 일어나든 훑은 흔적을 남긴다.** 읽을 게 없어서 바로
+	// 나가는 경로가 가장 흔한데, 그 경로가 흔적을 안 남기면 안전망이 도는지 알 방법이
+	// 없다 — 파일을 못 여는 위쪽 실패만 제외한다(그건 에러로 나간다).
+	defer func() { _ = s.NoteScan(path, time.Now().UTC()) }()
+
 	from := s.CheckpointFor(path, size)
 	if from >= size {
 		return r, nil // 새로 읽을 것이 없다
@@ -119,12 +125,16 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 
 	if worthJudging && !r.Excluded {
 		domain := c.DomainForCwd(meta.Cwd)
-		rec, ferr := alreadyRecorded(l, domain, meta.SessionID, days)
+		n, ferr := coveringNotes(l, domain, meta.SessionID, days)
 		if ferr != nil {
 			// 볼트를 못 읽었다고 표시를 건너뛰면 안전망이 조용히 꺼진다.
 			// 모르면 표시하는 쪽으로 기운다 — 놓치는 것이 더 나쁘다.
 			r.Signals = append(r.Signals, "(볼트 대조 실패: "+ferr.Error()+")")
 		} else {
+			rec, cerr := s.Credit(path, n)
+			if cerr != nil {
+				return r, cerr
+			}
 			r.Recorded = rec
 		}
 	}
@@ -199,55 +209,51 @@ func segmentDays(turns []transcript.Turn) []string {
 	return out
 }
 
-// alreadyRecorded 는 이 도메인·이 날짜에 결정 노트가 이미 있는지 본다.
+// coveringNotes 는 이 구간을 가려 줄 수 있는 결정 노트가 **몇 건**인지 센다.
 //
-// 두 축으로 본다 — 자세한 이유는 본문 주석에 있다.
+// 있다/없다가 아니라 개수를 주는 것이 요점이다. 호출자(Store.Credit)가 지난번보다
+// 늘었는지를 보고 면제를 판정하므로, 노트 하나가 구간 하나만 면제하게 된다.
+// 있다/없다로 답하면 노트 하나가 그 세션 전체를 영구히 면제한다.
 //
-// 한계는 그대로다: 같은 날 같은 도메인에서 **두 번째** 결정은 표시되지 않는다.
-// 안전망의 주된 값은 "아무것도 기록 안 된 세션" 을 잡는 데 있으므로 이 쪽으로 기울였다.
-func alreadyRecorded(l *store.Layout, domain, sessionID string, days []string) (bool, error) {
+// 두 축의 **합집합**을 세되 같은 노트를 두 번 세지 않는다.
+func coveringNotes(l *store.Layout, domain, sessionID string, days []string) (int, error) {
 	if l == nil {
-		return false, nil
+		return 0, nil
 	}
 	notes, _, err := l.List()
 	if err != nil {
-		return false, err
-	}
-
-	// ① 세션 대조 — 정확하다. 이 대화에서 나온 결정이 기록돼 있다는 직접 증거다.
-	//    도메인·날짜와 무관하게 성립하므로, 자정을 넘긴 세션이나 도메인이 바뀐 경우도 잡는다.
-	if sessionID != "" {
-		for _, n := range notes {
-			if n.Meta.SourceSession == sessionID {
-				return true, nil
-			}
-		}
-	}
-
-	// ② 날짜+도메인 폴백 — 거칠다. source_session 이 안 채워진 기록(에이전트가 세션 id 를
-	//    안 넘겼거나 사람이 손으로 쓴 노트)을 위한 그물이다.
-	//
-	//    ①을 더해도 억제가 **줄지는 않는다** — 둘의 합집합이기 때문이다. 정밀해지려면
-	//    ②를 떼야 하는데, 그러면 세션 id 를 안 넘기는 경로에서 억제가 통째로 사라져
-	//    실질 세션의 99%가 표시된다(Plan 3 실측). 그래서 지금은 합집합으로 둔다.
-	if domain == "" || len(days) == 0 {
-		return false, nil
+		return 0, err
 	}
 	dayset := map[string]bool{}
 	for _, d := range days {
 		dayset[d] = true
 	}
-	for _, n := range notes {
-		if !dayset[n.Meta.Date] {
+
+	n := 0
+	for _, note := range notes {
+		// ① 세션 대조 — 정확하다. 이 대화에서 나온 결정이 기록돼 있다는 직접 증거다.
+		//    도메인·날짜와 무관하게 성립하므로, 자정을 넘긴 세션이나 도메인이 바뀐 경우도 잡는다.
+		if sessionID != "" && note.Meta.SourceSession == sessionID {
+			n++
 			continue
 		}
-		for _, d := range n.Meta.Domain {
+		// ② 날짜+도메인 폴백 — 거칠다. source_session 이 안 채워진 기록(에이전트가 세션 id 를
+		//    안 넘겼거나 사람이 손으로 쓴 노트)을 위한 그물이다.
+		//
+		//    ②를 떼면 세션 id 를 안 넘기는 경로에서 면제가 통째로 사라져 실질 세션의
+		//    99%가 표시된다(Plan 3 실측). 그래서 합집합으로 둔다. 소모성이 된 지금은
+		//    이 축이 거칠어도 손해가 구간 하나로 묶인다.
+		if domain == "" || len(dayset) == 0 || !dayset[note.Meta.Date] {
+			continue
+		}
+		for _, d := range note.Meta.Domain {
 			if d == domain {
-				return true, nil
+				n++
+				break
 			}
 		}
 	}
-	return false, nil
+	return n, nil
 }
 
 // maxExcerpt 는 pending 에 담는 발췌의 상한이다.

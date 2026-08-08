@@ -40,6 +40,24 @@ type Checkpoint struct {
 	// Size 는 그때 본 파일 크기다. 다음에 파일이 이보다 작으면 잘렸거나 다른 파일로
 	// 바뀐 것이므로 Offset 을 믿을 수 없다.
 	Size int64 `json:"size"`
+
+	// At 은 이 파일을 **마지막으로 훑은 시각**이다.
+	//
+	// 전진하지 않은 스캔도 기록한다. 이게 없으면 "안전망이 도는데 표시할 게 없다" 와
+	// "안전망이 한 번도 안 돌았다" 가 똑같이 보인다 — 컷오버 1일차 회고에서 실제로
+	// cb doctor 가 후자를 전자로 보고했다.
+	At time.Time `json:"at,omitempty"`
+
+	// Credited 는 **면제로 이미 소모한 결정 노트 수**다.
+	//
+	// 결정 노트 하나는 구간 하나를 면제한다. 노트가 새로 생기지 않으면 다음 구간은
+	// 면제되지 않는다. 옛 구현은 노트가 하나라도 있으면 그 세션을 영구 면제했는데,
+	// 그러면 세션 앞부분에서 한 번 기록한 뒤로는 무엇을 놓쳐도 안전망이 안 본다.
+	Credited int `json:"credited,omitempty"`
+
+	// Suppressed 는 이 파일에서 면제로 넘긴 구간 수다. 진단용이다 — 억제가 그냥
+	// 사라지면 안전망이 일을 안 하는 것과 구분되지 않는다.
+	Suppressed int `json:"suppressed,omitempty"`
 }
 
 // Pending 은 "이 구간에 결정이 있었을 수 있다" 는 표시다. 결정 노트가 아니다.
@@ -175,11 +193,74 @@ func (s *Store) CheckpointFor(path string, size int64) int64 {
 
 // Advance 는 진행 지점을 옮긴다. **구간을 끝까지 성공 처리했을 때만 부른다**
 // (스펙 §7.2 단일 규칙). 파싱 실패가 하나라도 있으면 부르지 않는다.
+//
+// 나머지 필드는 **보존한다.** 통째로 갈아치우면 Credited 가 매번 0 으로 돌아가
+// 면제가 다시 무한해진다 — 소모성 크레딧이 조용히 무력화된다.
 func (s *Store) Advance(path string, offset, size int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.st.Checkpoints[path] = Checkpoint{Offset: offset, Size: size}
+	cp := s.st.Checkpoints[path]
+	cp.Offset, cp.Size = offset, size
+	s.st.Checkpoints[path] = cp
 	return s.save()
+}
+
+// Credit 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
+//
+// count 는 지금 볼트에서 "이 구간을 가려 줄 수 있는" 결정 노트 수다(세션 대조 또는
+// 날짜+도메인 대조에 걸린 수). **지난번 소모분보다 늘었을 때만** 면제한다 — 노트가
+// 새로 생겼다는 것은 그 사이에 에이전트가 기록을 했다는 직접 증거이고, 안 늘었다면
+// 이 구간은 아직 아무도 안 본 것이다.
+//
+// 이 한 줄이 옛 구현과 갈린다. 옛 구현은 `count > 0` 이면 면제였고, 그래서 세션
+// 첫머리에서 노트 하나를 남긴 뒤로는 그 세션이 영원히 안전망 밖이었다. 컷오버
+// 1일차에 이 세션의 노트 11건이 정확히 그 상태를 만들어 판별기가 한 번도 못 돌았다.
+func (s *Store) Credit(path string, count int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := s.st.Checkpoints[path]
+	if count <= cp.Credited {
+		return false, nil
+	}
+	cp.Credited = count
+	cp.Suppressed++
+	s.st.Checkpoints[path] = cp
+	return true, s.save()
+}
+
+// NoteScan 은 훑은 흔적을 남긴다. **아무 일도 안 한 스캔도 남긴다** — 그것이
+// "돌고 있다" 는 유일한 증거다.
+func (s *Store) NoteScan(path string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := s.st.Checkpoints[path]
+	cp.At = at
+	s.st.Checkpoints[path] = cp
+	return s.save()
+}
+
+// LastScan 은 어느 파일이든 마지막으로 훑은 시각이다. 하나도 없으면 제로값이다.
+func (s *Store) LastScan() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var last time.Time
+	for _, cp := range s.st.Checkpoints {
+		if cp.At.After(last) {
+			last = cp.At
+		}
+	}
+	return last
+}
+
+// Suppressed 는 전 파일의 누적 억제 횟수다.
+func (s *Store) Suppressed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, cp := range s.st.Checkpoints {
+		n += cp.Suppressed
+	}
+	return n
 }
 
 // AddPending 은 구간을 표시한다. 같은 구간이면 새로 쌓지 않고 갱신한다.
