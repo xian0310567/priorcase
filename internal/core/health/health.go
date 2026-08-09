@@ -110,17 +110,35 @@ func RecentDecisions(l *store.Layout, now time.Time, days int) int {
 // 손으로 쓴 노트는 이 검증을 통째로 우회하므로, 여기가 그 그물이다.
 func checkSchema(r *Report, l *store.Layout, notes []store.Note) {
 	var bad []string
+	future := 0
 	for _, n := range notes {
+		// **더 새 판으로 쓰인 노트는 결함이 아니다.** 팀이 볼트를 공유하면 한 명이
+		// 먼저 올린 상태가 정상이다. 그걸 "깨졌다" 로 보고하면 사용자가 멀쩡한
+		// 남의 결정을 고치거나 지운다.
+		if schema.IsFuture(n.Meta) {
+			future++
+			continue
+		}
 		if err := schema.Validate(l.DecisionMarker(), n.Stem, n.Meta); err != nil {
 			bad = append(bad, fmt.Sprintf("%s (%v)", n.Stem, err))
 		}
 	}
+
+	note := ""
+	if future > 0 {
+		note = fmt.Sprintf(" · 더 새 판으로 쓰인 노트 %d건 (읽기는 되지만 고칠 수 없다)", future)
+	}
 	if len(bad) == 0 {
-		r.add("스키마", OK, fmt.Sprintf("%d건 전부 통과", len(notes)), "")
+		lv, fix := OK, ""
+		if future > 0 {
+			// 경고다. 지금 바이너리로는 그 노트를 갱신할 수 없으니 사람이 알아야 한다.
+			lv, fix = Warn, "cb 를 올려라 — 팀원 중 누가 먼저 올렸다"
+		}
+		r.add("스키마", lv, fmt.Sprintf("%d건 전부 통과%s", len(notes)-future, note), fix)
 		return
 	}
 	sort.Strings(bad)
-	r.add("스키마", Fail, strings.Join(bad, " · "),
+	r.add("스키마", Fail, strings.Join(bad, " · ")+note,
 		"cb capture 를 거치면 애초에 거부된다. 손으로 고치거나 다시 만들어라")
 }
 

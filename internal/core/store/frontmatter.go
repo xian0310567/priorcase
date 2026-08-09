@@ -22,6 +22,15 @@ type Meta struct {
 	Tags          []string `yaml:"tags"`
 	SourceSession string   `yaml:"source_session"`
 
+	// Schema 는 이 노트를 쓴 casebook 의 스키마 판이다. **없으면 1 이다.**
+	//
+	// 팀이 볼트를 공유하면 버전이 갈린다 — 한 명이 먼저 올리면 나머지가 그 사람의
+	// 노트를 만난다. 판을 안 적어 두면 옛 바이너리가 새 값(예: 아직 모르는 status)을
+	// "허용값 밖" 으로 보고 거부하는데, 그건 남의 결정을 지우는 것과 같다.
+	//
+	// 1 일 때는 방출하지 않는다 — 기존 노트의 바이트를 안 건드리기 위해서다.
+	Schema int `yaml:"schema,omitempty"`
+
 	// Extra 는 **10키 밖의 키를 사용자가 쓴 그대로** 담는다.
 	//
 	// 이것이 없으면 사용자가 Obsidian 에서 노트에 `aliases:` 한 줄만 넣어도 파싱이
@@ -117,6 +126,10 @@ func EmitFrontmatter(m Meta) []byte {
 	b.WriteString("related: " + quoted(m.Related) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")
 	b.WriteString("source_session: " + quote(m.SourceSession) + "\n")
+	// 판이 1(기본)이면 안 쓴다. 기존 노트가 재기록될 때 바이트가 안 바뀐다.
+	if m.Schema > 1 {
+		fmt.Fprintf(&b, "schema: %d\n", m.Schema)
+	}
 	b.WriteString(emitExtra(m.Extra))
 	b.WriteString("---\n")
 	return []byte(b.String())

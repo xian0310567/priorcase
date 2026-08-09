@@ -83,6 +83,9 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	// 새 노트 검증이 실패했는데 옛 노트가 이미 superseded 로 바뀌어 있으면,
 	// 뒤집은 결정은 없는데 옛 결정만 뒤집힌 반쪽 상태가 디스크에 남는다.
 	if hasOld {
+		if err := refuseFutureNote(old); err != nil {
+			return Result{}, err
+		}
 		if err := schema.Validate(l.DecisionMarker(), old.Stem, old.Meta); err != nil {
 			return Result{}, fmt.Errorf("옛 노트 검증 실패: %w", err)
 		}
