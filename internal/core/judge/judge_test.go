@@ -215,3 +215,20 @@ func TestCheckDistinguishesUsableFromPresent(t *testing.T) {
 		t.Errorf("이유가 안 보인다: %v", err)
 	}
 }
+
+// 판별기 지시문에서 **도구 활동 설명이 사라지면** 판별기가 "· Edit foo.go" 를
+// 에이전트가 한 말로 읽는다. 지시문은 긴 raw 문자열이라 편집 중 통째로 날아가기 쉽다.
+func TestPromptExplainsToolActivity(t *testing.T) {
+	got := prompt(Request{Excerpt: "x", Domain: "alpha", Date: "2026-08-09"})
+	for _, want := range []string{"한 일", "가운뎃점", "일상적 작업이면 결정이 아니다"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("지시문에 %q 가 없다 — 판별기가 도구 활동을 말로 읽는다", want)
+		}
+	}
+	// 회수 구조 설명도 같이 지킨다. 이게 빠지면 tags 가 검색어가 아니라 분류가 된다.
+	for _, want := range []string{"검색어", "record=false"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("지시문에 %q 가 없다", want)
+		}
+	}
+}

@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"fmt"
+	"github.com/xian0310567/casebook/internal/transcript"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -361,5 +363,43 @@ func TestFailedScanLeavesNoTrace(t *testing.T) {
 	}
 	if got := s.LastScan(); !got.IsZero() {
 		t.Errorf("실패한 스캔이 흔적을 남겼다 (%v) — 생존 증거가 거짓말을 한다", got)
+	}
+}
+
+// 도구 활동은 반복이 흔하다. 같은 테스트를 세 번 돌린 것이 발췌 세 줄을 먹으면
+// 정작 필요한 발화가 예산 밖으로 밀린다.
+func TestExcerptFoldsRepeatedActivity(t *testing.T) {
+	turns := []transcript.Turn{
+		{Kind: transcript.KindUser, Text: "고쳐 줘"},
+		{Kind: transcript.KindTool, Text: "Bash go test ./..."},
+		{Kind: transcript.KindTool, Text: "Bash go test ./..."},
+		{Kind: transcript.KindTool, Text: "Bash go test ./..."},
+		{Kind: transcript.KindTool, Text: "Edit main.go"},
+		{Kind: transcript.KindAssistant, Text: "고쳤다"},
+	}
+	got := excerpt(turns)
+	if strings.Count(got, "Bash go test") != 1 {
+		t.Errorf("반복이 안 접혔다:\n%s", got)
+	}
+	if !strings.Contains(got, "(×3)") {
+		t.Errorf("반복 횟수가 안 보인다 — 세 번 돌린 것과 한 번이 같아 보인다:\n%s", got)
+	}
+	if !strings.Contains(got, "Edit main.go") || !strings.Contains(got, "사용자: 고쳐 줘") {
+		t.Errorf("접다가 다른 줄을 잃었다:\n%s", got)
+	}
+}
+
+// 도구 활동에는 발화와 다른 표지가 붙어야 한다 — 판별기가 "Edit foo.go" 를
+// 에이전트가 한 말로 읽으면 안 된다.
+func TestExcerptMarksActivityDistinctly(t *testing.T) {
+	got := excerpt([]transcript.Turn{
+		{Kind: transcript.KindAssistant, Text: "저장 엔진을 바꾼다"},
+		{Kind: transcript.KindTool, Text: "Edit store.go"},
+	})
+	if !strings.Contains(got, "· Edit store.go") {
+		t.Errorf("도구 활동 표지가 없다:\n%s", got)
+	}
+	if strings.Contains(got, "에이전트: Edit store.go") {
+		t.Errorf("도구 활동을 발화로 실었다:\n%s", got)
 	}
 }

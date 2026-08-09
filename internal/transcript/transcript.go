@@ -18,6 +18,15 @@ import "time"
 //
 // 규칙은 **턴 수는 User·Assistant 만 세고, 시그널 검색은 셋 다 본다** 이다.
 //
+// **KindTool 이 있는 이유 (2026-08-09).** 이 세션의 트랜스크립트를 재보니 바이트의
+// **67.6%** 가 tool_use(43.4%) + tool_result(24.2%) 였고 전부 버려지고 있었다.
+// 그 안에 Bash 757회 · Write 48 · Edit 31 · Agent 40 이 있다 — 되돌리기 어려운 선택은
+// **산문이 아니라 편집과 명령으로** 남는 경우가 많다. "저장 엔진을 바꾼다" 는 문장이
+// 아니라 파일 편집이다. 판별기에게 산문만 보여 주면 그걸 못 본다.
+//
+// tool_result 본문은 담지 않는다 — 이 세션만 840KB 라 발췌가 터진다. 도구 이름과
+// 대상(파일 경로·명령 첫 줄)만으로도 "무슨 일이 있었나" 는 충분히 전해진다.
+//
 // ⚠️ **다만 Claude Code 에서 KindThinking 은 사실상 나오지 않는다.** transcript 의
 // thinking 블록은 암호화된 `signature` 만 담고 `thinking` 본문은 비어 있다 — 실측으로
 // 파일 1173개의 블록 13451개가 **전부** 그랬다. 그래서 파서는 이 종류를 다룰 줄 알지만
@@ -32,9 +41,14 @@ const (
 	KindUser      Kind = "user"      // 사람의 발화
 	KindAssistant Kind = "assistant" // 에이전트가 밖으로 낸 말
 	KindThinking  Kind = "thinking"  // 에이전트의 내부 사고
+	KindTool      Kind = "tool"      // 에이전트가 실제로 한 일 (도구 호출)
 )
 
 // Counts 는 턴 수 임계에 세는 발화인지 알려준다.
+//
+// **KindTool 은 세지 않는다.** 감사 결함 6 이 정확히 그것 때문에 생겼다 — 툴 한 번에
+// tool_use + tool_result 로 두 턴이 차서 임계가 6배 빨리 채워졌다. 도구 활동은
+// 발췌에 실어 판별기에게 보여 주되, "대화가 얼마나 진행됐나" 의 척도로는 쓰지 않는다.
 func (k Kind) Counts() bool { return k == KindUser || k == KindAssistant }
 
 // Turn 은 대화 한 조각이다.

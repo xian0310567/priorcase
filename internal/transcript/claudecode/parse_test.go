@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -33,6 +34,19 @@ func parse(t *testing.T, body string) ([]transcript.Turn, transcript.Meta, int64
 	return turns, meta, consumed, bad
 }
 
+// nonTool 은 도구 활동을 뺀 발화다. 감사 결함 6 이 지키려던 것은 "툴 한 번에 턴이
+// 여러 개 차는 것" 을 막는 것이라, 도구 활동이 Turn 으로 들어온 뒤로는 이쪽으로 봐야
+// 원래 계약을 검사하게 된다. (thinking 은 발화라서 남긴다 — 임계에 안 셀 뿐이다.)
+func nonTool(turns []transcript.Turn) []transcript.Turn {
+	var out []transcript.Turn
+	for _, tn := range turns {
+		if tn.Kind != transcript.KindTool {
+			out = append(out, tn)
+		}
+	}
+	return out
+}
+
 func kinds(turns []transcript.Turn) []transcript.Kind {
 	var k []transcript.Kind
 	for _, tn := range turns {
@@ -49,14 +63,18 @@ func TestToolRecordsAreNotTurns(t *testing.T) {
 	if bad != 0 {
 		t.Fatalf("깨진 줄 %d개, 0이어야 한다", bad)
 	}
-	// 발화는 셋뿐이다: user 질문 · thinking · assistant 답.
+	// ★ 계약이 정밀해졌다 (2026-08-09). 도구 활동은 이제 Turn 으로 들어오지만
+	// **임계에는 안 센다**. 감사 결함 6 이 막으려던 것은 "툴 한 번에 턴이 여러 개
+	// 차는 것" 이지 "도구 활동을 아예 안 보는 것" 이 아니었다 — 되돌리기 어려운
+	// 선택은 산문이 아니라 편집과 명령으로 남는 경우가 많다.
 	want := []transcript.Kind{transcript.KindUser, transcript.KindThinking, transcript.KindAssistant}
-	if got := kinds(turns); len(got) != len(want) {
-		t.Fatalf("Turn %d개 (%v), %d개여야 한다 (%v)", len(got), got, len(want), want)
+	c := nonTool(turns)
+	if got := kinds(c); len(got) != len(want) {
+		t.Fatalf("임계에 세는 Turn %d개 (%v), %d개여야 한다 (%v)", len(got), got, len(want), want)
 	}
 	for i := range want {
-		if turns[i].Kind != want[i] {
-			t.Errorf("turns[%d].Kind = %s, want %s", i, turns[i].Kind, want[i])
+		if c[i].Kind != want[i] {
+			t.Errorf("counted[%d].Kind = %s, want %s", i, c[i].Kind, want[i])
 		}
 	}
 	// 턴 수 임계에 세는 것은 둘뿐 — thinking 은 안 센다.
@@ -114,8 +132,8 @@ func TestTruncatedLastLineIsNotConsumed(t *testing.T) {
 	if consumed != int64(len(complete)) {
 		t.Errorf("consumed = %d, 완결 구간 %d 여야 한다 (잘린 줄을 삼켰다)", consumed, len(complete))
 	}
-	if len(turns) != 3 {
-		t.Errorf("앞 구간 Turn %d개, 3개여야 한다 — 잘린 줄 하나가 구간 전체를 삼켰다", len(turns))
+	if got := len(nonTool(turns)); got != 3 {
+		t.Errorf("앞 구간 발화 %d개, 3개여야 한다 — 잘린 줄 하나가 구간 전체를 삼켰다", got)
 	}
 }
 
@@ -134,8 +152,8 @@ func TestCorruptCompleteLineIsCountedNotSwallowed(t *testing.T) {
 	if consumed != int64(len(body)) {
 		t.Errorf("consumed = %d, %d 여야 한다", consumed, len(body))
 	}
-	if len(turns) != 3 {
-		t.Errorf("Turn %d개, 3개여야 한다 — 깨진 줄 하나가 나머지를 삼켰다", len(turns))
+	if got := len(nonTool(turns)); got != 3 {
+		t.Errorf("발화 %d개, 3개여야 한다 — 깨진 줄 하나가 나머지를 삼켰다", got)
 	}
 }
 
@@ -180,5 +198,114 @@ func TestEmptyThinkingProducesNoTurn(t *testing.T) {
 	}
 	if bad != 0 {
 		t.Errorf("bad = %d — 빈 thinking 은 깨진 줄이 아니다", bad)
+	}
+}
+
+// ★★ 도구 활동은 Turn 으로 들어오지만 **임계에는 절대 안 센다.**
+//
+// 감사 결함 6 이 그것 때문에 생겼다 — 툴 한 번에 tool_use + tool_result 로 두 턴이
+// 차서, 어시스턴트가 툴을 세 번 부르면 여섯 턴이 찼다. 실측으로 레코드 5920개 중
+// 실제 발화는 991개였다(6배). 발췌에 실으면서 이 규칙이 깨지면 안전망이 대화가
+// 없는데도 계속 발동한다.
+func TestToolActivityNeverCountsTowardThreshold(t *testing.T) {
+	if transcript.KindTool.Counts() {
+		t.Fatal("KindTool 이 임계에 센다 — 감사 결함 6 이 되살아난다")
+	}
+	body := strings.Join(fixture(), "\n") + "\n"
+	turns, _, _, _ := parse(t, body)
+
+	tools, counted := 0, 0
+	for _, tn := range turns {
+		if tn.Kind == transcript.KindTool {
+			tools++
+		}
+		if tn.Kind.Counts() {
+			counted++
+		}
+	}
+	if tools == 0 {
+		t.Fatal("도구 활동이 하나도 안 잡혔다 — 67.6% 를 여전히 버리고 있다")
+	}
+	if counted != 2 {
+		t.Errorf("임계에 세는 발화 %d개, 2개(user+assistant)여야 한다", counted)
+	}
+}
+
+// 도구 활동은 **무엇을 했는지**를 담아야 한다. 이름만으로는 판별기가 못 쓴다.
+func TestToolActivityCarriesTarget(t *testing.T) {
+	lines := []string{
+		`{"type":"assistant","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"a","name":"Edit","input":{"file_path":"internal/core/store/frontmatter.go"}}]}}`,
+		`{"type":"assistant","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:01.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"go test ./... -race\nsecond line"}}]}}`,
+	}
+	turns, _, _, _ := parse(t, strings.Join(lines, "\n")+"\n")
+	var got []string
+	for _, tn := range turns {
+		if tn.Kind == transcript.KindTool {
+			got = append(got, tn.Text)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("도구 활동 %d개, 2개여야 한다: %v", len(got), got)
+	}
+	if got[0] != "Edit internal/core/store/frontmatter.go" {
+		t.Errorf("편집 대상이 안 담겼다: %q", got[0])
+	}
+	if got[1] != "Bash go test ./... -race" {
+		t.Errorf("명령 첫 줄이 안 담겼다 (여러 줄은 첫 줄만): %q", got[1])
+	}
+}
+
+// ★ 명령줄에는 자격증명이 섞인다. 발화보다 위험하다 — 이 줄은 state.json 에 남고
+// 판별기에게도 넘어가므로, 우리가 새로 만드는 노출이다.
+func TestToolActivityRedactsSecrets(t *testing.T) {
+	for _, tc := range []struct{ cmd, mustNot string }{
+		{`export GITHUB_TOKEN=ghp_abcdefghijklmnop`, "ghp_abcdefghijklmnop"},
+		{`curl -H "Authorization: Bearer sk-abc123456789"`, "sk-abc123456789"},
+		{`psql "password=hunter2secret"`, "hunter2secret"},
+		{`aws --key AKIAIOSFODNN7EXAMPLE`, "AKIAIOSFODNN7EXAMPLE"},
+	} {
+		line := `{"type":"assistant","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"a","name":"Bash","input":{"command":` +
+			mustJSON(tc.cmd) + `}}]}}`
+		turns, _, _, _ := parse(t, line+"\n")
+		for _, tn := range turns {
+			if tn.Kind == transcript.KindTool && strings.Contains(tn.Text, tc.mustNot) {
+				t.Errorf("자격증명이 그대로 남았다: %q", tn.Text)
+			}
+		}
+	}
+}
+
+func mustJSON(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// ★★ 명령 첫 줄만 담으면 **아무것도 안 담는 것과 같다.**
+//
+// 실측으로 드러났다 — 실 트랜스크립트에서 발췌 12줄이 전부 `cd /Users/…` 였다.
+// 에이전트는 거의 모든 Bash 를 `cd`·`export` 로 시작한다. 실제로 한 일은 그다음이다.
+func TestBashActivitySkipsPrelude(t *testing.T) {
+	for _, tc := range []struct{ cmd, want string }{
+		{"cd /Users/x/proj\ngo test ./... -race", "Bash go test ./... -race"},
+		{"cd /a && export GOTOOLCHAIN=auto && git checkout -b feat/x", "Bash git checkout -b feat/x"},
+		{"export A=1\nset -e\nmake build", "Bash make build"},
+		{"cd /a\ncd /b", "Bash cd /a"}, // 전부 준비 동작이면 첫 조각이라도 준다
+		{"go build ./...", "Bash go build ./..."},
+	} {
+		line := `{"type":"assistant","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"a","name":"Bash","input":{"command":` +
+			mustJSON(tc.cmd) + `}}]}}`
+		turns, _, _, _ := parse(t, line+"\n")
+		var got string
+		for _, tn := range turns {
+			if tn.Kind == transcript.KindTool {
+				got = tn.Text
+			}
+		}
+		if got != tc.want {
+			t.Errorf("command %q → %q, want %q", tc.cmd, got, tc.want)
+		}
 	}
 }
