@@ -7,32 +7,77 @@
 
 ## 설치
 
-**바이너리를 받는다.** casebook 은 소스를 공개하지 않는다 — `go install` 은 쓸 수 없다.
+```sh
+npm install -g casebook
+```
 
-    # macOS (Homebrew)
-    brew install xian0310567/tap/casebook
+`cb` 가 PATH 에 들어가고, 훅·CLI·MCP 가 전부 그 하나로 돈다.
 
-    # 그 밖 — GitHub Releases 에서 받는다
-    curl -L https://github.com/xian0310567/casebook-releases/releases/latest/download/casebook_darwin_arm64.tar.gz | tar xz
-    sudo mv cb /usr/local/bin/
+**MCP 만 쓸 거면 설치도 필요 없다.**
 
-darwin/linux × amd64/arm64 를 낸다.
+```json
+{ "mcpServers": { "casebook": { "command": "npx", "args": ["-y", "casebook", "mcp"] } } }
+```
 
-> **⚠️ 배포 저장소는 아직 만들지 않았다.** 위 두 경로 모두 첫 릴리스를 내야 켜진다.
-> 현재 상태와 남은 일은 [현재 상태](#현재-상태) 절을 보라.
+**팀이면 레포에 묶어라.** 그래야 팀원 전원이 같은 판을 쓴다 — 공유 볼트에 서로 다른
+판이 쓰면 갱신이 막힌다(아래 [스키마 판](#스키마-판) 참고).
+
+```jsonc
+// package.json
+"devDependencies": { "casebook": "1.2.3" }
+```
+
+darwin/linux × arm64/x64. npm 이 자기 플랫폼 바이너리만 받는다 —
+실행되는 것은 정적 Go 바이너리이고 **실행 시점 런타임 의존은 0 이다.**
+(Node 는 설치 경로일 뿐 실행에 관여하지 않는다.)
+
+> **⚠️ 아직 게시 전이다.** 첫 릴리스 태그를 밀어야 위 명령이 동작한다.
+
+### 배선
+
+```sh
+cb doctor        # 지금 상태를 진단한다
+cb init          # 훅 배선 계획을 보여 준다 (파일을 안 고친다)
+cb init --apply  # 실제로 배선한다
+```
 
 **`cb` 가 PATH 에 있는지 확인하라.** 훅은 절대 경로로 배선되므로, PATH 에 없으면
 **시스템은 멀쩡히 도는데 사람만 명령을 못 친다.** `cb doctor` 가 이걸 검사한다.
 
-    cb doctor        # 지금 상태를 진단한다
-    cb init          # 훅 배선 계획을 보여 준다 (파일을 안 고친다)
-    cb init --apply  # 실제로 배선한다
+> **`npx` 로는 훅이 안 된다.** 훅은 `settings.json` 에 절대 경로가 박히고
+> `user-prompt-submit` 은 매 프롬프트마다 도는데, npx 해석 지연이 거기 얹히면
+> 대화가 느려진다. 훅을 쓰려면 `npm install -g` 로 깔아라.
+
+### macOS 서명
+
+**서명·공증하지 않는다. 그래도 막히지 않는다.**
+
+macOS 의 `com.apple.quarantine` 딱지는 **다운로드한 프로그램이** 붙인다.
+`npm`·`curl` 은 안 붙이고 브라우저는 붙인다. npm 으로 깔면 딱지가 없으므로
+Gatekeeper 를 만나지 않는다.
+
+브라우저로 tar.gz 를 직접 받았다면 그때만 한 줄이 필요하다:
+
+```sh
+xattr -dr com.apple.quarantine ./cb
+```
+
+Apple Developer 계정은 이 셋 중 하나가 될 때 든다 — 브라우저 다운로드를 주 경로로
+삼을 때, `.app`·`.pkg` 를 낼 때, B2B 고객이 보안 심사에서 서명을 요구할 때.
 
 ### 라이선스
 
 독점 소프트웨어다 ([LICENSE](LICENSE)). **다만 casebook 이 쓰는 파일은 당신 것이다** —
 평문 마크다운이고, 라이선스가 끝나도 그대로 남는다. 포함된 오픈소스 구성요소는
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 를 보라.
+
+### 스키마 판
+
+결정 노트에는 `schema` 판이 붙는다 (판 1 은 생략한다).
+
+**팀이 볼트를 공유하면 한 명이 먼저 올린 상태가 정상이다.** 그때 옛 `cb` 는
+그 사람의 노트를 **읽고 회수하지만 고치지는 않는다** — 모르는 규칙으로 쓰인 것을
+우리 규칙으로 되쓰면 조용히 망가뜨리기 때문이다. `cb doctor` 가 그걸 경고로 알린다.
 
 ## 현재 상태
 

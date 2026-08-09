@@ -1,9 +1,11 @@
 version: 2
 
 # **아카이브 이름을 고정한다.** goreleaser 는 project_name 을 저장소 이름에서
-# 유추하는데, 릴리스를 별도 저장소(casebook-releases)로 보내는 순간 그것이
-# 파일명에 새어 들어간다 — `casebook-releases_darwin_arm64.tar.gz` 가 나와서
-# README 의 다운로드 URL 이 통째로 404 가 된다. 실제로 그렇게 나왔다.
+# 유추한다. 한때 릴리스를 별도 저장소로 보내려고 release.github.name 을 적었더니
+# 그것이 파일명에 새어 들어가 `casebook-releases_darwin_arm64.tar.gz` 가 나왔다 —
+# 빌드도 테스트도 통과하고 다운로드 링크만 죽는 종류다. 지금은 npm 이 배포 경로라
+# 그 설정이 없지만, **이름을 유추에 맡기지 않는 규칙은 남긴다.**
+# scripts/npm-pack.sh 가 이 파일명에 의존한다.
 project_name: casebook
 
 before:
@@ -44,45 +46,15 @@ changelog:
 
 # Homebrew tap.
 #
-# ⚠️ tap 저장소(github.com/xian0310567/homebrew-tap)는 아직 만들지 않았다.
-# 그래서 이 절은 토큰이 있을 때만 업로드한다 — 토큰 없이 태그를 밀어도 릴리스
-# 자체는 성공하고 cask 만 조용히 건너뛴다. tap 저장소를 만들고 릴리스 워크플로에
-# HOMEBREW_TAP_GITHUB_TOKEN 시크릿을 넣는 순간 이 절이 켜진다.
-#
-# formula 가 아니라 cask 인 이유: Homebrew 가 사전 빌드된 바이너리 배포를
-# cask 로 옮기는 중이고, goreleaser 2.10+ 도 brews 를 homebrew_casks 로 대체했다.
-# cask 는 macOS 전용이다 — 리눅스는 go install 이나 GitHub Releases 를 쓴다.
-homebrew_casks:
-  - name: casebook
-    # cask 이름은 casebook 인데 아카이브 안의 실행 파일은 cb 다. 적어 주지 않으면
-    # goreleaser 가 cask 이름으로 심볼릭 링크를 걸어 없는 파일을 가리킨다.
-    binaries: [cb]
-    homepage: https://github.com/xian0310567/casebook-releases
-    description: 에이전트의 결정을 마크다운 볼트에 기록하고 다시 꺼내 주는 CLI
-    license: proprietary
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
-    repository:
-      owner: xian0310567
-      name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
 
-    hooks:
-      post:
-        # 서명·공증하지 않은 바이너리라 Gatekeeper 격리 속성이 붙는다.
-        # 떼지 않으면 설치는 되는데 실행이 막힌다.
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cb"]
-          end
-
-# **소스 저장소는 private 이다** ([[casebook-결정-소스비공개-클로즈드배포]]).
-# private 저장소의 Releases 는 인증이 있어야 받을 수 있어서, 낯선 사람에게는
-# 다운로드 링크가 그대로 죽는다. 그래서 산출물만 **별도 public 저장소**로 민다.
+# **npm 이 1차 배포 경로다** ([[casebook-결정-배포경로-npm우선]]).
 #
-# ⚠️ 아래 저장소를 아직 만들지 않았다. 만들기 전에 태그를 밀면 릴리스가 실패한다 —
-# 조용히 성공하는 것보다 낫다(빈 릴리스가 나가면 사용자가 404 를 만난다).
-# RELEASE_GITHUB_TOKEN 시크릿도 필요하다 (GITHUB_TOKEN 은 다른 저장소에 못 쓴다).
+# GitHub Releases 는 소스 저장소가 private 이라 낯선 사람이 못 받는다. npm 은 그
+# 문제가 없고, MCP 생태계의 규범이며(`npx -y casebook mcp`), 팀이 package.json 으로
+# 버전을 묶을 수 있다.
+#
+# 여기서는 **tar.gz 만 만든다.** npm 패키지 5개는 scripts/npm-pack.sh 가 그것으로
+# 만들고, 릴리스 워크플로가 게시한다.
 release:
-  github:
-    owner: xian0310567
-    name: casebook-releases
+  # private 저장소에도 릴리스는 남긴다 — 팀 내부 기록용이고, 배포 경로는 아니다.
+  draft: false
