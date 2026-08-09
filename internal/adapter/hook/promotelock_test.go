@@ -127,28 +127,6 @@ func TestPromotionIsRecordedInLedger(t *testing.T) {
 	}
 }
 
-// 내 세션 구간이 먼저 처리돼야 한다 — 세션이 끝나는 것은 *이* 대화의 마지막 기회이고,
-// 다른 프로젝트 구간은 그쪽 세션이 끝날 때가 그쪽의 마지막 기회다.
-func TestOwnTranscriptGoesFirst(t *testing.T) {
-	mine := daemon.Pending{Path: "/mine.jsonl", From: 0}
-	other := daemon.Pending{Path: "/other.jsonl", From: 0}
-	got := ownFirst([]daemon.Pending{other, mine, other}, "/mine.jsonl")
-	if len(got) != 3 {
-		t.Fatalf("구간을 잃었다: %d건", len(got))
-	}
-	if got[0].Path != "/mine.jsonl" {
-		t.Errorf("남의 구간이 먼저다: %v", got[0].Path)
-	}
-}
-
-func TestOwnFirstWithoutTranscriptKeepsOrder(t *testing.T) {
-	in := []daemon.Pending{{Path: "/a"}, {Path: "/b"}}
-	got := ownFirst(in, "")
-	if len(got) != 2 || got[0].Path != "/a" {
-		t.Errorf("순서가 바뀌었다: %v", got)
-	}
-}
-
 // 함수만 테스트하면 호출부를 떼어내도 안 잡힌다 — 실제로 승격 순서가 그렇게 나오는지 본다.
 func TestPromoteHandlesOwnSessionFirst(t *testing.T) {
 	sd := t.TempDir()

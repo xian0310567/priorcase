@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -127,7 +128,7 @@ func (d *watcher) run(ctx context.Context) error {
 	if err := d.watchTree(w, d.o.TranscriptRoot); err != nil {
 		return err
 	}
-	d.startupPass()
+	d.startupPass(ctx)
 	d.emit(Event{Kind: "ready", Note: fmt.Sprintf("감시 시작 (%s)", d.o.TranscriptRoot)})
 
 	// 디바운스 타이머. 처음에는 멈춰 있다.
@@ -185,7 +186,7 @@ func (d *watcher) run(ctx context.Context) error {
 
 		case <-timer.C:
 			armed = false
-			d.drain()
+			d.drain(ctx, true)
 		}
 	}
 }
@@ -222,7 +223,7 @@ func (d *watcher) watchTree(w *fsnotify.Watcher, root string) error {
 //     그 파일은 다시 바뀌지 않으므로 fsnotify 이벤트가 두 번 다시 오지 않는다.
 //
 // 기동 후에 새로 생기는 파일은 여기 오지 않으므로 체크포인트가 없어도 0부터 읽힌다.
-func (d *watcher) startupPass() {
+func (d *watcher) startupPass(ctx context.Context) {
 	paths, unreadable, err := claudecode.List(d.o.TranscriptRoot)
 	if err != nil {
 		d.emit(Event{Kind: "error", Err: err})
@@ -255,12 +256,12 @@ func (d *watcher) startupPass() {
 	d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
 		"transcript %d개 — 현재 지점부터 감시 %d개 · 밀린 구간 확인 %d개", len(paths), seeded, queued)})
 	if queued > 0 {
-		d.drain()
+		d.drain(ctx, false)
 	}
 }
 
 // drain 은 쌓인 파일을 훑는다.
-func (d *watcher) drain() {
+func (d *watcher) drain(ctx context.Context, promote bool) {
 	d.mu.Lock()
 	paths := make([]string, 0, len(d.dirty))
 	for p := range d.dirty {
@@ -269,14 +270,55 @@ func (d *watcher) drain() {
 	d.dirty = map[string]bool{}
 	d.mu.Unlock()
 
+	flagged := false
 	for _, p := range paths {
 		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
 			continue
 		}
+		if r.Flagged {
+			flagged = true
+		}
 		d.emit(Event{Kind: "scan", Path: p, Result: r})
 	}
+
+	// **표시한 것을 여기서 승격한다.**
+	//
+	// 스펙 §9 는 훅 없는 호스트에서도 "놓친 기록 줍기 | 데몬 | 동일" 이라고 약속하는데,
+	// 승격을 부르는 곳이 훅 하나뿐이었다 — Codex·Cursor 처럼 훅이 없는 호스트에서는
+	// 표시만 쌓이고 아무것도 안 남았다. 약속과 코드가 어긋나 있었다.
+	//
+	// 표시가 새로 생겼을 때만 부른다. 매 drain 마다 부르면 판별기가 이미 기각한 것을
+	// 계속 다시 물게 되는데, 기각된 구간은 곧 해소되므로 실제로는 빈 목록을 도는
+	// 비용뿐이다 — 그래도 판별기 탐색(exec)이 매번 도는 것은 낭비다.
+	// **기동 패스에서는 승격하지 않는다** (promote=false).
+	//
+	// 두 가지 때문이다. 하나, 판별기 호출은 초 단위인데 기동을 거기서 막으면
+	// `cb watch` 가 한참 뜨지 않는다. 둘, `--backfill` 이면 밀린 구간이 수백 개일 수
+	// 있고 그걸 한꺼번에 판별기에 밀어 넣으면 호스트 CLI 를 두들기게 된다.
+	// 정상 감시 루프의 drain 이 곧 다시 와서 처리한다.
+	if promote && flagged {
+		Promote(ctx, PromoteOptions{
+			StateDir: d.o.StateDir, Config: d.o.Config, Layout: d.l,
+			Err: d.promoteWriter(), Label: "cb watch",
+		})
+	}
+}
+
+// promoteWriter 는 승격 진행 보고가 나갈 자리다. 데몬은 이벤트로 말하므로
+// 그 통로에 얹는다 — 별도 stderr 로 새면 `cb watch` 의 출력이 두 갈래가 된다.
+func (d *watcher) promoteWriter() io.Writer { return eventWriter{d} }
+
+type eventWriter struct{ d *watcher }
+
+func (w eventWriter) Write(b []byte) (int, error) {
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		if line != "" {
+			w.d.emit(Event{Kind: "promote", Note: line})
+		}
+	}
+	return len(b), nil
 }
 
 // ScanOnce 는 데몬이 돌고 있지 않을 때만 파일 하나를 훑는다.

@@ -3,12 +3,9 @@ package hook
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/core/promote"
 	"github.com/xian0310567/casebook/internal/daemon"
 )
 
@@ -79,13 +76,6 @@ func (o Options) safetyNet(ctx context.Context) error {
 	return nil
 }
 
-// promote 는 아직 기록되지 않은 구간을 판별기에 넘긴다.
-//
-// **판별기가 없으면 아무것도 하지 않는다.** 그때는 표시만 남고 에이전트가 판단한다 —
-// 그것이 판별기 없는 설치의 정상 동작이고, 경고를 낼 일이 아니다.
-//
-// 재귀 차단: 판별기가 띄운 세션에도 훅이 붙는다. CASEBOOK_JUDGE 가 있으면 그
-// 세션이므로 즉시 끝낸다. 안 그러면 판별기가 판별기를 부른다.
 // 시간 상한 셋은 **반드시 이 순서**여야 한다:
 //
 //	judge.DefaultTimeout  <  promoteBudget  <  promoteHookTimeout
@@ -107,109 +97,19 @@ const (
 	promoteHookTimeout = 120 * time.Second
 )
 
-// ownFirst 는 이 세션의 구간을 앞으로 옮긴다. 순서만 바꾸고 버리지 않는다.
-func ownFirst(items []daemon.Pending, transcript string) []daemon.Pending {
-	if transcript == "" {
-		return items
-	}
-	out := make([]daemon.Pending, 0, len(items))
-	for _, p := range items {
-		if p.Path == transcript {
-			out = append(out, p)
-		}
-	}
-	for _, p := range items {
-		if p.Path != transcript {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
+// promote 는 승격을 daemon 에 위임한다.
+//
+// **로직을 여기 두지 않는다.** 승격은 볼트에 쓰는 일이고, 훅과 데몬이 각자 구현하면
+// 쓰기 경로가 둘로 갈라진다 — 그건 이 프로젝트가 죄목으로 드는 바로 그것이다.
+// 훅이 더 아는 것은 "지금 끝나는 세션이 어느 것인가" 하나뿐이라 그것만 넘긴다.
 func (o Options) promote(ctx context.Context) {
-	if os.Getenv("CASEBOOK_JUDGE") == "1" {
-		return
-	}
-	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
-	if j == nil {
-		return
-	}
-	items, err := daemon.ReadPending(o.StateDir)
-	if err != nil || len(items) == 0 {
-		return
-	}
-
-	// **내 세션 것을 먼저 한다.** 세션이 끝나는 것은 *이* 대화의 마지막 기회이고,
-	// 다른 프로젝트의 구간은 그쪽 세션이 끝날 때가 그쪽의 마지막 기회다.
-	items = ownFirst(items, o.Input.TranscriptPath)
-
-	// **총 시한을 둔다.** 판별기 한 건이 최대 90초인데 전 프로젝트의 pending 을 모두
-	// 직렬로 돌면 SessionEnd 훅이 몇 분씩 멎는다 — 훅은 대화 흐름 위에 있으므로
-	// 그건 사용자가 겪는 정지다. 못 한 것은 남는다. 다음 기회에 다시 온다.
-	deadline := time.Now().Add(promoteBudget)
-
-	for _, p := range items {
-		if time.Now().After(deadline) {
-			fmt.Fprintf(o.Err, "cb hook %s: 시간이 다 돼 나머지는 다음 기회에 넘긴다\n", o.Event)
-			return
-		}
-		if p.Domain == "" {
-			// 조용히 넘기면 "안전망이 도는데 아무것도 안 남는" 상태가 된다.
-			// 새 사용자가 정확히 이 상태에 빠진다 — 설정에 도메인이 없으면 그렇다.
-			fmt.Fprintf(o.Err, "cb hook %s: 도메인을 알 수 없어 기록하지 못했다 (%s) — "+
-				"설정에 [[domain]] 을 추가하거나 default_domain 을 적어라\n", o.Event, p.ID())
-			continue
-		}
-		day := p.When()
-		if i := strings.Index(day, "~"); i > 0 {
-			day = day[:i] // 여러 날에 걸쳤으면 첫날로
-		}
-
-		// **집어 간다.** 동시에 끝나는 두 세션이 같은 구간을 각자 판별기에 넘기면
-		// 같은 대화에 결정 노트가 둘 생긴다 (판별기는 비결정적이라 slug 가 갈린다).
-		if ok, cerr := daemon.ClaimPending(o.StateDir, p.ID(), time.Now().UTC()); cerr != nil || !ok {
-			continue
-		}
-		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
-			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt, Session: p.SessionID,
-		})
-
-		// **세 갈래 전부 원장에 남긴다.** stderr 는 사람이 그 순간 보지 않으면
-		// 사라지고, 표시는 곧 해소돼 지워진다. 원장이 없으면 "판별기가 보고
-		// 기록할 게 아니라고 했다" 와 "판별기가 아예 안 돌았다" 가 같아 보인다.
-		rec := daemon.Promotion{
-			At: time.Now().UTC(), ID: p.ID(), Domain: p.Domain,
-			Recorded: r.Recorded, Reason: r.Reason,
-		}
-		if r.Path != "" {
-			rec.Path = o.Layout.RelPath(r.Path)
-		}
-		if r.Err != nil {
-			rec.Err = daemon.TrimLedgerText(r.Err.Error())
-		}
-		rec.Reason = daemon.TrimLedgerText(rec.Reason)
-		if lerr := daemon.AppendPromotion(o.StateDir, rec); lerr != nil {
-			fmt.Fprintf(o.Err, "cb hook %s: 승격 원장을 쓰지 못했다: %v\n", o.Event, lerr)
-		}
-
-		switch {
-		case r.Err != nil:
-			fmt.Fprintf(o.Err, "cb hook %s: 승격 실패 (%s): %v\n", o.Event, p.ID(), r.Err)
-			// 실패한 구간은 지우지 않는다 — 다음 기회에 다시 시도한다.
-		case r.Recorded:
-			fmt.Fprintf(o.Err, "cb hook %s: 자동 기록 %s\n", o.Event, o.Layout.RelPath(r.Path))
-			// **방금 만든 노트를 그 자리에서 소모시킨다.** 안 그러면 다음 스캔이 이
-			// 노트를 "새로 생겼다" 로 세어 **아직 아무도 안 본 다음 구간**을 면제한다 —
-			// 안전망이 자기 출력으로 자기를 억제하는 off-by-one 이다. 노트에 출처
-			// 필드가 없어 사후에는 구분할 수 없으므로 여기서 처리해야 한다.
-			if cerr := daemon.CreditNoteFor(o.StateDir, p.Path, day, p.SessionID); cerr != nil {
-				fmt.Fprintf(o.Err, "cb hook %s: 크레딧을 새기지 못했다: %v\n", o.Event, cerr)
-			}
-			_ = daemon.ResolvePending(o.StateDir, p.ID())
-		default:
-			// 기록할 결정이 아니라는 판정. 표시를 지운다 — 안 지우면 매 세션 다시 묻는다.
-			fmt.Fprintf(o.Err, "cb hook %s: 기록 안 함 (%s): %s\n", o.Event, p.ID(), r.Reason)
-			_ = daemon.ResolvePending(o.StateDir, p.ID())
-		}
-	}
+	daemon.Promote(ctx, daemon.PromoteOptions{
+		StateDir: o.StateDir,
+		Config:   o.Config,
+		Layout:   o.Layout,
+		First:    o.Input.TranscriptPath,
+		Budget:   promoteBudget,
+		Err:      o.Err,
+		Label:    "cb hook " + string(o.Event),
+	})
 }
