@@ -161,7 +161,11 @@ func starterKO(vault, home string) string {
 vault = %q
 lang  = "ko"
 
-# 여기 적힌 경로에서는 결정을 기록하지 않는다 (회수는 계속 동작한다).
+# 여기 적힌 경로에서는 결정을 **기록**하지 않는다.
+#
+# ⚠️ 회수도 그 경로의 문서를 대부분 못 본다 — cb 는 frontmatter 에
+# type: decision 이 적힌 문서만 읽는다. 다른 도구가 만든 문서(위키·노트 앱
+# 산출물)는 그 표식이 없어 회수에 안 잡힌다.
 exclude = []
 
 # 어느 [[domain]] 의 paths 에도 안 걸릴 때 쓸 도메인.
@@ -207,7 +211,11 @@ func starterEN(vault, home string) string {
 vault = %q
 lang  = "en"
 
-# Decisions are never recorded under these paths (recall still works).
+# Decisions are never **recorded** under these paths.
+#
+# ⚠️ Recall also misses most documents there — cb only reads notes whose
+# frontmatter says type: decision. Documents produced by other tools lack
+# that marker.
 exclude = []
 
 # Domain used when the working directory matches no [[domain]] paths.

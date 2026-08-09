@@ -378,3 +378,24 @@ func TestRevertFailsLoudlyWhenAllBackupsAreDirty(t *testing.T) {
 		t.Errorf("왜 못 되돌리는지 안 알려준다: %v", err)
 	}
 }
+
+// ★ 스타터 설정이 **거짓 약속을 하면 안 된다.**
+//
+// 예전에 "회수는 계속 동작한다" 고 적혀 있었는데 거짓이었다. exclude 는 쓰기를
+// 막는 것이고, 회수는 별개 이유로 막힌다 — cb 는 type: decision 인 문서만 읽는다.
+// 실측으로 볼트 392개 중 회수 대상은 76개(19%)뿐이었다. 이 문장은 **새 사용자
+// 전원에게** 나가므로 특히 비싸다.
+func TestStarterConfigDoesNotPromiseRecallEverywhere(t *testing.T) {
+	src, err := os.ReadFile("initcmd.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"회수는 계속 동작한다", "recall still works"} {
+		if strings.Contains(string(src), banned) {
+			t.Errorf("스타터 설정이 %q 라고 약속한다 — 거짓이다", banned)
+		}
+	}
+	if strings.Count(string(src), "type: decision") < 2 {
+		t.Error("회수 한계 설명이 ko·en 양쪽에 없다")
+	}
+}
