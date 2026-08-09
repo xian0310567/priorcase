@@ -31,6 +31,10 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	if err != nil {
 		return ReviewResult{}, fmt.Errorf("대상 없음: %s (%w)", r.Stem, err)
 	}
+	// 고칠 대상이 더 새 판이면 손대지 않는다. 아래 supersede 대상(old)에도 같은 가드가 있다.
+	if err := refuseFutureNote(n); err != nil {
+		return ReviewResult{}, err
+	}
 
 	if r.Outcome != "" {
 		n.Meta.Outcome = r.Outcome
@@ -57,6 +61,9 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	// 상태로 디스크에 고정된다 — supersedes 링크는 없는데 옛 노트는 이미
 	// 뒤집힌 것으로 기록돼, 회수 시 두 노트 다 사실과 다르게 잡힌다.
 	if hasOld {
+		if err := refuseFutureNote(old); err != nil {
+			return ReviewResult{}, err
+		}
 		if err := schema.Validate(l.DecisionMarker(), old.Stem, old.Meta); err != nil {
 			return ReviewResult{}, fmt.Errorf("옛 노트 검증 실패: %w", err)
 		}
@@ -175,4 +182,22 @@ func appendRetrospective(body []byte, text string, lang i18n.Lang) []byte {
 		b.WriteString("\n")
 	}
 	return []byte(b.String())
+}
+
+// refuseFutureNote 는 **더 새 판으로 쓰인 노트를 고치려는 것**을 막는다.
+//
+// 읽는 것은 안전하다 — ParseFrontmatter 가 모르는 값을 그대로 받고 Extra 가 잉여 키를
+// 보존한다. 그런데 **쓰는 것**은 다르다. 우리가 모르는 규칙으로 쓰인 노트를 우리 규칙으로
+// 되쓰면 조용히 망가뜨린다.
+//
+// 팀이 볼트를 공유하면 한 명이 먼저 올린 상태가 정상이다. 그때 나머지가 그 사람의
+// 결정을 뭉개는 자리가 여기다.
+func refuseFutureNote(n store.Note) error {
+	if !schema.IsFuture(n.Meta) {
+		return nil
+	}
+	return fmt.Errorf(
+		"이 결정은 더 새 판(schema %d)으로 쓰였다. 지금 cb 는 판 %d 까지 안다 — "+
+			"고치면 망가뜨릴 수 있어 멈춘다. cb 를 올려라",
+		n.Meta.Schema, schema.Current)
 }
