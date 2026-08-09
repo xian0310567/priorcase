@@ -5,8 +5,8 @@ on:
 permissions:
   contents: write
 jobs:
-  # **테스트를 게이트로 건다.** 예전에는 태그만 밀면 그대로 나갔다 — 깨진 커밋에
-  # 태그를 붙이면 깨진 바이너리가 배포된다. 릴리스는 되돌리기 어려운 일이다.
+  # **테스트를 게이트로 건다.** 태그만 밀면 깨진 커밋도 그대로 나간다.
+  # 릴리스는 되돌리기 어렵다 — npm 은 24시간 뒤 unpublish 도 막힌다.
   test:
     strategy:
       fail-fast: false
@@ -21,7 +21,7 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
-  goreleaser:
+  release:
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +31,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
       # 배포물에 EULA 와 제3자 고지가 반드시 들어가야 한다. 독점 소프트웨어라
       # 라이선스 동봉이 의무이고, 링크된 오픈소스의 고지 의무도 여기서 진다.
       - name: 라이선스 파일 존재 확인
@@ -40,13 +45,28 @@ jobs:
           done
           grep -q 'proprietary software' LICENSE || {
             echo "LICENSE 가 독점 라이선스가 아니다 — 소스 비공개 배포와 어긋난다"; exit 1; }
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # tap 저장소는 별개 저장소라 GITHUB_TOKEN 으로는 밀 수 없다.
-          # 시크릿이 없으면 빈 문자열이 되고, .goreleaser.yaml 의 skip_upload 가
-          # 그때 cask 업로드를 건너뛴다 — 릴리스 자체는 성공한다.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      # **npm 이 1차 배포 경로다.** goreleaser 가 만든 tar.gz 를 풀어 패키지 5개로
+      # 재포장한다. 플랫폼 패키지를 먼저 올려야 런처의 optionalDependencies 가
+      # 해석된다 — 순서를 바꾸면 첫 설치가 바이너리를 못 찾는다.
+      - name: npm 패키지 만들기
+        run: ./scripts/npm-pack.sh "${GITHUB_REF_NAME}"
+
+      - name: npm 게시
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for d in dist/npm/darwin-* dist/npm/linux-*; do
+            echo "게시: $d"
+            npm publish "$d" --access public --provenance
+          done
+          # 런처는 마지막이다. 이게 올라가는 순간 사용자가 설치를 시작한다.
+          npm publish dist/npm/casebook --access public --provenance

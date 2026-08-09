@@ -8,33 +8,28 @@ import (
 	"testing"
 )
 
-// ★★ README 가 약속하는 다운로드 파일명과 goreleaser 가 실제로 만드는 이름이
-// 어긋나면 **사용자가 404 를 만난다.**
+// ★★ 아카이브 이름을 유추에 맡기면 조용히 바뀐다.
 //
-// 실제로 어긋났다. 릴리스를 별도 저장소로 보내려고 `release.github.name` 을
-// 적었더니 goreleaser 가 그것으로 project_name 을 유추해서
-// `casebook-releases_darwin_arm64.tar.gz` 를 만들었다 — README 는
-// `casebook_darwin_arm64.tar.gz` 를 가리키고 있었다. 빌드는 성공하고 테스트도
-// 통과하는데 링크만 죽는, 배포에서 가장 잡기 어려운 종류다.
-func TestReleaseArchiveNameMatchesReadme(t *testing.T) {
+// 한때 릴리스를 별도 저장소로 보내려고 `release.github.name` 을 적었더니 goreleaser 가
+// 그것으로 project_name 을 유추해 `casebook-releases_darwin_arm64.tar.gz` 를 만들었다.
+// 빌드도 테스트도 `goreleaser check` 도 통과하고 **다운로드 링크만 죽는** 종류다.
+//
+// 지금은 npm 이 배포 경로라 그 링크가 README 에 없지만, `scripts/npm-pack.sh` 가
+// 이 파일명에 의존한다 — 이름이 바뀌면 npm 패키징이 통째로 깨진다.
+func TestArchiveNameIsPinned(t *testing.T) {
 	root := repoRoot(t)
 	cfg := readFile(t, filepath.Join(root, ".goreleaser.yaml"))
-	readme := readFile(t, filepath.Join(root, "README.md"))
-
-	// project_name 이 명시돼 있어야 한다. 없으면 저장소 이름에서 유추되고,
-	// 그 유추가 바뀌는 순간 파일명이 조용히 달라진다.
 	if !regexp.MustCompile(`(?m)^project_name:\s*casebook\s*$`).MatchString(cfg) {
 		t.Error(".goreleaser.yaml 에 `project_name: casebook` 이 없다 — " +
 			"저장소 이름이 파일명에 새어 들어간다")
 	}
-
-	// README 가 가리키는 아카이브 이름을 뽑아 name_template 과 대조한다.
-	want := regexp.MustCompile(`casebook_(darwin|linux)_(amd64|arm64)\.tar\.gz`).FindString(readme)
-	if want == "" {
-		t.Fatal("README 에 다운로드 파일명이 없다")
-	}
 	if !strings.Contains(cfg, `name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"`) {
-		t.Errorf("아카이브 name_template 이 README 의 %q 형태와 맞지 않는다", want)
+		t.Error("아카이브 name_template 이 바뀌었다")
+	}
+	// npm-pack.sh 가 기대하는 이름과 실제로 맞는지 본다.
+	pack := readFile(t, filepath.Join(root, "scripts", "npm-pack.sh"))
+	if !strings.Contains(pack, `casebook_${goos}_${goarch}.tar.gz`) {
+		t.Error("npm-pack.sh 가 기대하는 아카이브 이름이 goreleaser 와 어긋난다")
 	}
 }
 
@@ -72,8 +67,9 @@ func TestLicenseIsProprietary(t *testing.T) {
 	}
 }
 
-// README 가 `go install` 을 다시 권하면 안 된다 — private 저장소에서는 죽는 명령이다.
-func TestReadmeDoesNotPromiseGoInstall(t *testing.T) {
+// README 가 `go install` 을 다시 권하면 안 된다 — 소스가 private 이라 죽는 명령이다.
+// 그리고 npm 이 1차 경로라는 것이 설치 절에 있어야 한다.
+func TestReadmeInstallPathIsNpm(t *testing.T) {
 	body := readFile(t, filepath.Join(repoRoot(t), "README.md"))
 	install := body
 	if i := strings.Index(body, "## 설치"); i >= 0 {
@@ -84,6 +80,16 @@ func TestReadmeDoesNotPromiseGoInstall(t *testing.T) {
 	}
 	if strings.Contains(install, "go install github.com/") {
 		t.Error("설치 절이 `go install` 을 권한다 — 소스가 private 이라 낯선 사람에게는 죽는다")
+	}
+	for _, want := range []string{"npm install -g casebook", "npx", "mcpServers"} {
+		if !strings.Contains(install, want) {
+			t.Errorf("설치 절에 %q 가 없다 — npm 이 1차 경로다", want)
+		}
+	}
+	// 훅이 npx 로 안 된다는 사실을 반드시 적어야 한다. 안 적으면 사용자가
+	// mcpServers 만 걸고 훅이 도는 줄 안다.
+	if !strings.Contains(install, "npx` 로는 훅이 안 된다") {
+		t.Error("npx 로 훅이 안 된다는 경고가 없다 — 사용자가 자동 기록이 도는 줄 안다")
 	}
 }
 

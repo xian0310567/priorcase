@@ -1,13 +1,12 @@
-# build
-/dist/
-/cb
-*.test
 
-# local agent settings (permission grants — never publish)
 .claude/settings.local.json
-
-# local
 .DS_Store
-
-# sdd scratch
 .superpowers/
+*.test
+/cb
+/dist/
+# build
+# local
+# local agent settings (permission grants — never publish)
+# sdd scratch
+dist/

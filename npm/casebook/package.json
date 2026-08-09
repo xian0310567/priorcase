@@ -1,0 +1,16 @@
+{
+  "name": "casebook",
+  "version": "0.0.0",
+  "description": "Record your agent's decisions and surface them at the next judgment point",
+  "keywords": ["mcp", "claude", "agent", "memory", "decisions", "obsidian"],
+  "license": "SEE LICENSE IN LICENSE",
+  "bin": { "cb": "bin/cb.js" },
+  "files": ["bin/", "LICENSE", "THIRD-PARTY-NOTICES.md", "README.md"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "@casebook/darwin-arm64": "0.0.0",
+    "@casebook/darwin-x64": "0.0.0",
+    "@casebook/linux-arm64": "0.0.0",
+    "@casebook/linux-x64": "0.0.0"
+  }
+}
