@@ -33,6 +33,10 @@ type block struct {
 	Type     string `json:"type"`
 	Text     string `json:"text"`
 	Thinking string `json:"thinking"`
+	// Name·Input 은 tool_use 블록의 것이다. **무엇을 했는지**를 발췌에 싣기 위해 읽는다
+	// (toolactivity.go). tool_result 는 읽지 않는다 — 본문이 커서 발췌가 터진다.
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 // maxLine 은 한 줄의 상한이다. tool_result 에 큰 파일이 통째로 들어오는 일이 있어
@@ -146,8 +150,16 @@ func (rec *record) turns() []transcript.Turn {
 				continue
 			}
 			out = append(out, mk(transcript.KindThinking, b.Thinking))
+		case "tool_use":
+			// **발화가 아니지만 일어난 일이다.** 턴 수에는 안 센다(감사 결함 6) —
+			// Kind.Counts() 가 KindTool 을 뺀다. 발췌에는 싣는다: 되돌리기 어려운
+			// 선택은 산문이 아니라 편집과 명령으로 남는 경우가 많다.
+			if line := toolLine(b.Name, b.Input); line != "" {
+				out = append(out, mk(transcript.KindTool, line))
+			}
 		}
-		// tool_use·tool_result·image 는 발화가 아니다 (감사 결함 6).
+		// tool_result·image 는 담지 않는다. 결과 본문은 크고(실측 840KB), 무엇을
+		// 했는지는 tool_use 만으로 충분하다.
 	}
 	return out
 }

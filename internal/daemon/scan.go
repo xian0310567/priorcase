@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -282,7 +284,15 @@ func coveringNotes(l *store.Layout, domain, sessionID string, days []string) (in
 // 구간 끝쪽에서 내려지므로 **뒤에서부터** 담는다 — 앞을 자르는 편이 낫다.
 const maxExcerpt = 6000
 
-// excerpt 는 발화 원문을 뒤에서부터 maxExcerpt 만큼 모은다.
+// excerpt 는 구간의 원문을 뒤에서부터 maxExcerpt 만큼 모은다.
+//
+// **도구 활동도 싣는다.** 되돌리기 어려운 선택은 산문이 아니라 편집과 명령으로 남는
+// 경우가 많다 — "저장 엔진을 바꾼다" 는 문장이 아니라 파일 편집이다. 실측으로
+// 트랜스크립트 바이트의 67.6%가 도구 활동인데 전부 버리고 있었고, 판별기는 산문만
+// 보고 "기록할 결정인가" 를 판정하고 있었다.
+//
+// 결과 본문은 담지 않는다(파서가 tool_result 를 아예 안 읽는다) — 이 세션만 840KB 라
+// 발췌가 터진다. 무엇을 했는지는 도구 이름과 대상만으로 전해진다.
 func excerpt(turns []transcript.Turn) string {
 	var parts []string
 	total := 0
@@ -291,13 +301,25 @@ func excerpt(turns []transcript.Turn) string {
 		if t == "" {
 			continue
 		}
-		who := "에이전트"
-		if turns[i].Kind == transcript.KindUser {
-			who = "사용자"
+		var line string
+		switch turns[i].Kind {
+		case transcript.KindUser:
+			line = "사용자: " + t
+		case transcript.KindTool:
+			// **한 일**이다. 발화와 다른 표지를 붙여 판별기가 구분하게 한다 —
+			// "Edit foo.go" 를 에이전트가 한 말로 읽으면 안 된다.
+			line = "· " + t
+		default:
+			line = "에이전트: " + t
 		}
-		line := who + ": " + t
 		if total+len(line) > maxExcerpt {
 			break
+		}
+		// **같은 줄이 잇달아 오면 접는다.** 도구 활동은 반복이 흔하다 —
+		// 같은 테스트를 세 번 돌리는 것이 발췌 세 줄을 먹으면 안 된다.
+		if n := len(parts); n > 0 && sameActivity(parts[n-1], line) {
+			parts[n-1] = bumpRepeat(parts[n-1])
+			continue
 		}
 		parts = append(parts, line)
 		total += len(line)
@@ -307,4 +329,21 @@ func excerpt(turns []transcript.Turn) string {
 		parts[i], parts[j] = parts[j], parts[i]
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// repeatSuffix 는 접은 반복 횟수를 적는 꼬리다.
+var repeatSuffix = regexp.MustCompile(` \(×(\d+)\)$`)
+
+// sameActivity 는 두 줄이 같은 활동인지 본다 (반복 표시는 무시).
+func sameActivity(prev, line string) bool {
+	return repeatSuffix.ReplaceAllString(prev, "") == line
+}
+
+// bumpRepeat 는 반복 횟수를 하나 올린다.
+func bumpRepeat(s string) string {
+	if m := repeatSuffix.FindStringSubmatch(s); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return repeatSuffix.ReplaceAllString(s, fmt.Sprintf(" (×%d)", n+1))
+	}
+	return s + " (×2)"
 }
