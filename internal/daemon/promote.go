@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/xian0310567/casebook/internal/core/config"
@@ -81,10 +80,7 @@ func Promote(ctx context.Context, o PromoteOptions) {
 				"설정에 [[domain]] 을 추가하거나 default_domain 을 적어라", p.ID()))
 			continue
 		}
-		day := p.When()
-		if i := strings.Index(day, "~"); i > 0 {
-			day = day[:i] // 여러 날에 걸쳤으면 첫날로
-		}
+		day := p.DecidedOn()
 
 		// **집어 간다.** 승격이 스캔 소유권 밖으로 나온 뒤로(D12) 훅과 데몬이 동시에
 		// 같은 구간을 집을 수 있다 — 판별기는 비결정적이라 같은 대화에 slug 가 다른

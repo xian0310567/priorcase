@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xian0310567/casebook/internal/core/config"
 	"github.com/xian0310567/casebook/internal/core/store"
@@ -434,6 +435,37 @@ func TestPendingCarriesConversationDate(t *testing.T) {
 	}
 	if got := p.When(); got != "2026-08-07" {
 		t.Errorf("When() = %q, 대화 날짜여야 한다 (표시 시각이 아니라)", got)
+	}
+}
+
+// 여러 날에 걸친 구간의 결정 날짜는 **마지막 날**이다.
+//
+// 옛 구현은 첫날로 잘랐고("여러 날에 걸쳤으면 첫날로"), 그래서 2026-08-10 에 내린
+// 개명 결정이 08-08 로 기록됐다 — 그 세션이 08-08 에 시작했기 때문이다. 결정은
+// 대화가 흘러간 끝에서 내려지므로 첫날은 언제나 틀린 쪽이고, 세션이 길수록 더
+// 벌어진다. 날짜는 파일명과 회수 정렬에 둘 다 들어가서 조용히 틀린다.
+func TestDecidedOnTakesLastDay(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		days []string
+		want string
+	}{
+		{"하루", []string{"2026-08-08"}, "2026-08-08"},
+		{"사흘", []string{"2026-08-08", "2026-08-09", "2026-08-10"}, "2026-08-10"},
+		{"이틀", []string{"2026-08-08", "2026-08-10"}, "2026-08-10"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := Pending{Days: c.days}
+			if got := p.DecidedOn(); got != c.want {
+				t.Errorf("DecidedOn() = %q, %q 여야 한다 (구간 %v)", got, c.want, c.days)
+			}
+		})
+	}
+
+	// Days 를 모르면 표시 시각으로 떨어진다 — When 과 같은 규칙이다.
+	at := time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC)
+	if got := (Pending{At: at}).DecidedOn(); got != "2026-08-11" {
+		t.Errorf("Days 가 없을 때 DecidedOn() = %q, 표시 시각이어야 한다", got)
 	}
 }
 
