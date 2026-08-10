@@ -26,6 +26,29 @@ func TestLauncherPinsPlatformPackagesExactly(t *testing.T) {
 	if len(p.OptionalDependencies) != 4 {
 		t.Errorf("플랫폼 패키지 %d개, want 4 (darwin/linux × arm64/x64)", len(p.OptionalDependencies))
 	}
+
+	// ★ **런처가 찾는 이름과 팩 스크립트가 만드는 이름이 같아야 한다.**
+	//
+	// 어긋나면 npm 이 바이너리를 받아 놓고도 런처가 못 찾아 "no binary for
+	// darwin-arm64" 로 죽는다 — 설치는 성공하는데 실행이 안 되는, 사용자가 원인을
+	// 짐작할 수 없는 종류다. 스코프를 걷어내며 실제로 세 곳을 같이 고쳐야 했다.
+	launcher := readFile(t, filepath.Join(root, "npm", "casebook", "bin", "cb.js"))
+	pack := readFile(t, filepath.Join(root, "scripts", "npm-pack.sh"))
+	for _, want := range []string{"darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"} {
+		if _, ok := p.OptionalDependencies["casebook-"+want]; !ok {
+			t.Errorf("optionalDependencies 에 casebook-%s 가 없다", want)
+		}
+	}
+	if !strings.Contains(launcher, "`casebook-${os}-${arch}`") {
+		t.Error("런처가 찾는 패키지 이름이 casebook-<os>-<arch> 가 아니다")
+	}
+	if !strings.Contains(pack, `"name": "casebook-${goos}-${npmarch}"`) {
+		t.Error("팩 스크립트가 만드는 이름이 casebook-<os>-<arch> 가 아니다")
+	}
+	// 스코프를 다시 쓰려면 npm 조직이 필요하다. 조용히 되돌아가면 게시가 실패한다.
+	if strings.Contains(launcher, "@casebook/") || strings.Contains(pack, "@casebook/") {
+		t.Error("@casebook 스코프가 되살아났다 — 그 조직 이름은 npm 에서 쓸 수 없다")
+	}
 	for name, ver := range p.OptionalDependencies {
 		if strings.ContainsAny(ver, "^~><*") {
 			t.Errorf("%s 를 %q 로 느슨하게 걸었다 — 런처와 바이너리의 판이 갈린다", name, ver)

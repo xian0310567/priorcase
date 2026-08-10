@@ -24,7 +24,9 @@ function binaryPath() {
   const os = PKG[process.platform];
   const arch = ARCH[process.arch];
   if (!os || !arch) return null;
-  const pkg = `@casebook/${os}-${arch}`;
+  // 스코프를 안 쓴다 — npm 조직 이름 casebook 이 막혀 있다.
+  // 사용자가 치는 명령(npx -y casebook mcp)에는 스코프가 안 나오므로 차이가 없다.
+  const pkg = `casebook-${os}-${arch}`;
   try {
     // require.resolve 가 node_modules 해석을 대신한다 — 경로를 직접 짜면
     // pnpm·yarn PnP 같은 배치에서 깨진다.

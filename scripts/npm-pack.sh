@@ -33,7 +33,7 @@ for t in "${TARGETS[@]}"; do
   # 사용자가 4개를 전부 받아 디스크를 4배 쓴다.
   cat > "$pkgdir/package.json" <<JSON
 {
-  "name": "@casebook/${goos}-${npmarch}",
+  "name": "casebook-${goos}-${npmarch}",
   "version": "${VERSION}",
   "description": "casebook binary for ${goos}-${npmarch}",
   "license": "SEE LICENSE IN LICENSE",
