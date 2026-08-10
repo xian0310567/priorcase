@@ -2,8 +2,22 @@ name: release
 on:
   push:
     tags: ['v*']
+# **토큰을 쓰지 않는다.** npm 게시는 트러스티드 퍼블리싱(OIDC)으로 한다 —
+# GitHub Actions 가 발급한 단명 토큰을 npm 이 직접 검증하므로, 레포 시크릿에
+# 장기 토큰을 두지 않는다.
+#
+# 2026-08-10 에 옛 이름으로 첫 게시를 하며 겪은 것: 클래식 토큰은 폐지됐고,
+# TOTP 2FA 는 등록 자체가 사라졌고, 보안 키는 CLI 에서 6자리 코드를 못 만든다.
+# 남은 길이 "Granular token + Bypass 2FA 를 만들어 한 번 쓰고 폐기" 뿐이었다.
+# OIDC 는 그 절차 전체를 없앤다.
+#
+# **트러스티드 퍼블리싱은 패키지가 이미 존재해야 설정할 수 있다.** 그래서 첫
+# 게시만 사람이 하고(`npm publish` → 브라우저 WebAuthn), 그 뒤 `npm trust github`
+# 로 이 워크플로를 등록한다. 등록 전에 이 파일이 먼저 들어가면 태그를 밀 때
+# 인증이 없어서 실패한다.
 permissions:
-  contents: write
+  contents: write # goreleaser 가 GitHub 릴리스를 만든다
+  id-token: write # OIDC 토큰 발급 — npm 게시가 이것에 기댄다
 jobs:
   # **테스트를 게이트로 건다.** 태그만 밀면 깨진 커밋도 그대로 나간다.
   # 릴리스는 되돌리기 어렵다 — npm 은 24시간 뒤 unpublish 도 막힌다.
@@ -31,9 +45,13 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+      # **node 24 여야 한다.** 트러스티드 퍼블리싱은 npm 11.5.1 이상 · node 22.14
+      # 이상을 요구한다. 옛 설정의 node 20 은 npm 10 을 물고 와서 OIDC 교환 자체를
+      # 못 한다 — 그리고 그 실패는 "토큰이 없다" 로 보여서 원인이 안 드러난다.
+      # registry-url 은 그대로 둔다. OIDC 여도 어느 레지스트리에 말하는지는 필요하다.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       # 배포물에 EULA 와 제3자 고지가 반드시 들어가야 한다. 독점 소프트웨어라
@@ -59,14 +77,15 @@ jobs:
       - name: npm 패키지 만들기
         run: ./scripts/npm-pack.sh "${GITHUB_REF_NAME}"
 
+      # 토큰 환경변수를 주지 않는다 — npm 이 OIDC 로 스스로 인증한다.
+      # `--provenance` 도 붙이지 않는다: 트러스티드 퍼블리싱이면 기본으로 붙는다.
       - name: npm 게시
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm --version
           for d in dist/npm/darwin-* dist/npm/linux-*; do
             echo "게시: $d"
-            npm publish "$d" --access public --provenance
+            npm publish "$d" --access public
           done
           # 런처는 마지막이다. 이게 올라가는 순간 사용자가 설치를 시작한다.
-          npm publish dist/npm/priorcase --access public --provenance
+          npm publish dist/npm/priorcase --access public

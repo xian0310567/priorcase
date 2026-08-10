@@ -101,3 +101,44 @@ func readFile(t *testing.T, p string) string {
 	}
 	return string(b)
 }
+
+// ★ **릴리스가 npm 토큰으로 되돌아가면 안 된다.**
+//
+// 2026-08-10 에 옛 이름으로 첫 게시를 하며 알게 된 것: 클래식 토큰은 폐지됐고,
+// TOTP 2FA 는 등록 자체가 사라졌고, 보안 키는 CLI 에서 6자리 코드를 못 만든다.
+// 남은 길이 "Granular token + Bypass 2FA 를 만들어 한 번 쓰고 폐기" 뿐이었다.
+// 트러스티드 퍼블리싱(OIDC)이 그 절차 전체를 없앤다.
+//
+// 되돌아가는 방식이 둘이라 둘 다 막는다.
+//   - `NODE_AUTH_TOKEN`/`NPM_TOKEN` 이 다시 들어오는 것 (옛 워크플로를 복붙)
+//   - `id-token: write` 가 빠지는 것 — 이쪽이 더 나쁘다. 권한만 없으면 npm 은
+//     "인증이 없다" 고 하는데, 그 메시지가 토큰 문제처럼 보여서 사람이 다시
+//     토큰을 넣게 만든다.
+func TestReleaseUsesTrustedPublishingNotTokens(t *testing.T) {
+	root := repoRoot(t)
+	wf := readFile(t, filepath.Join(root, ".github/workflows/release.yml"))
+
+	for _, bad := range []string{"NODE_AUTH_TOKEN", "NPM_TOKEN"} {
+		if strings.Contains(wf, bad) {
+			t.Errorf("release.yml 에 %s 가 돌아왔다 — 게시는 OIDC 로 한다. "+
+				"장기 토큰을 레포 시크릿에 두지 않기로 했다", bad)
+		}
+	}
+	// 줄 끝 주석을 허용한다 — 왜 이 권한이 있는지 적어 두는 편이 낫고,
+	// 주석 때문에 검사가 헛도는 것이 더 나쁘다.
+	if !regexp.MustCompile(`(?m)^\s*id-token:\s*write\s*(#.*)?$`).MatchString(wf) {
+		t.Error("release.yml 에 `id-token: write` 가 없다 — OIDC 토큰이 발급되지 않아 " +
+			"게시가 인증 실패로 죽는다 (그 에러는 토큰 문제처럼 보인다)")
+	}
+
+	// **node 22.14 미만이면 npm 이 10.x 라 OIDC 교환을 못 한다.** setup-node 의
+	// node-version 은 문자열이라 오타나 옛 값이 조용히 통과한다.
+	m := regexp.MustCompile(`node-version:\s*'(\d+)'`).FindStringSubmatch(wf)
+	if m == nil {
+		t.Fatal("release.yml 에서 node-version 을 찾지 못했다")
+	}
+	if major := m[1]; major < "22" || len(major) < 2 {
+		t.Errorf("node-version 이 %q 다 — 트러스티드 퍼블리싱은 node 22.14 이상, "+
+			"npm 11.5.1 이상을 요구한다", major)
+	}
+}
