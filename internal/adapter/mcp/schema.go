@@ -1,6 +1,6 @@
 package mcp
 
-import "github.com/xian0310567/casebook/internal/core/i18n"
+import "github.com/xian0310567/priorcase/internal/core/i18n"
 
 // 도구 입력 스키마를 **손으로 짓는다.**
 //

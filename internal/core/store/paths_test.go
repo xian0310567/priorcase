@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
 func testLayout(t *testing.T) (*Layout, string) {

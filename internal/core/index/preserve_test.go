@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // ★★ 색인 경로에 사용자가 손으로 쓴 문서가 있으면 **경고도 백업도 없이 사라졌다.**
@@ -69,7 +69,7 @@ func TestOwnIndexIsNotPreserved(t *testing.T) {
 			t.Fatalf("%d회차에 우리 색인을 대피시켰다: %s", i+2, res.Preserved)
 		}
 	}
-	m, _ := filepath.Glob(l.IndexPath() + ".casebook-replaced*")
+	m, _ := filepath.Glob(l.IndexPath() + ".priorcase-replaced*")
 	if len(m) != 0 {
 		t.Errorf("백업이 쌓였다: %v", m)
 	}

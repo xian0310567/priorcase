@@ -8,7 +8,7 @@
 // ⚠️ 옛 D5("데몬은 LLM 을 부르지 않는다")는 2026-08-08 에 뒤집혔다 → D8.
 // 규칙으로는 결정을 판정할 수 없다는 것이 실측으로 확인됐고(한 세션 후보 160개),
 // 호스트 CLI 는 이미 인증돼 있어 추가 키가 0이다
-// ([[casebook-결정-자동기록-판별기복원-2026-08-08]]).
+// ([[priorcase-결정-자동기록-판별기복원-2026-08-08]]).
 package daemon
 
 import (
@@ -25,8 +25,8 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/core/xdgpath"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/xdgpath"
 )
 
 const stateFile = "state.json"
@@ -38,7 +38,7 @@ func DefaultDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(state, "casebook"), nil
+	return filepath.Join(state, "priorcase"), nil
 }
 
 // Checkpoint 는 transcript 파일 하나의 진행 지점이다.
@@ -53,7 +53,7 @@ type Checkpoint struct {
 	//
 	// 전진하지 않은 스캔도 기록한다. 이게 없으면 "안전망이 도는데 표시할 게 없다" 와
 	// "안전망이 한 번도 안 돌았다" 가 똑같이 보인다 — 컷오버 1일차 회고에서 실제로
-	// cb doctor 가 후자를 전자로 보고했다.
+	// prior doctor 가 후자를 전자로 보고했다.
 	//
 	// omitzero 다 — time.Time 은 구조체라 omitempty 가 안 먹어서, 흔적이 없는
 	// 체크포인트에 `"at": "0001-01-01T00:00:00Z"` 가 박힌다. 사람이 상태 파일을
@@ -199,7 +199,7 @@ func (s *Store) mutate(fn func(*state)) error {
 	got, err := lk.TryLockContext(ctx, 20*time.Millisecond)
 	if err != nil || !got {
 		return fmt.Errorf("상태 파일 잠금을 잡을 수 없다 (%s): %v — "+
-			"다른 casebook 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
+			"다른 priorcase 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
 	}
 	defer func() { _ = lk.Unlock() }()
 

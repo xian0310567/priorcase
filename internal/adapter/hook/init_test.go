@@ -59,7 +59,7 @@ func opts(t *testing.T, settings string) InitOptions {
 	return InitOptions{
 		SettingsPath: settings,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.toml"),
-		Binary:       "/usr/local/bin/cb",
+		Binary:       "/usr/local/bin/prior",
 		Now:          time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC),
 	}
 }
@@ -102,7 +102,7 @@ func apply(t *testing.T, o InitOptions) *Plan {
 
 // ★ 이 태스크에서 가장 중요한 테스트다.
 //
-// `~/.claude/settings.json` 은 casebook 만의 파일이 아니다. 실측으로 orca 훅 12개가
+// `~/.claude/settings.json` 은 priorcase 만의 파일이 아니다. 실측으로 orca 훅 12개가
 // 같이 산다. 하나라도 잘못 지우면 **사용자의 다른 시스템이 죽는다** — 그리고 그 사람은
 // 무엇이 자기 훅을 지웠는지 모른다.
 func TestInitPreservesOtherToolsHooks(t *testing.T) {
@@ -178,7 +178,7 @@ func TestInitRemovesOldHooksAndAddsOurs(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("%s 에 casebook 훅이 안 심겼다: %v", name, after[name])
+			t.Errorf("%s 에 priorcase 훅이 안 심겼다: %v", name, after[name])
 		}
 	}
 }
@@ -286,7 +286,7 @@ func TestPlanMatchesWhatHappens(t *testing.T) {
 
 // ★★ `--apply` 를 두 번 하면 `--revert` 가 "되돌렸다" 고 말하면서 아무것도 안 되돌렸다.
 //
-// 두 번째 apply 가 **이미 casebook 훅이 든 파일**을 백업하고, revert 는 사전순
+// 두 번째 apply 가 **이미 priorcase 훅이 든 파일**을 백업하고, revert 는 사전순
 // 마지막(=그 백업)을 골랐다. 사용자는 지운 줄 아는데 훅 5개가 그대로 산다.
 func TestRevertAfterDoubleApply(t *testing.T) {
 	dir := t.TempDir()
@@ -309,7 +309,7 @@ func TestRevertAfterDoubleApply(t *testing.T) {
 	}
 
 	// 백업은 하나만 생겨야 한다 — 두 번째는 이미 우리 훅이 든 파일이라 백업 대상이 아니다.
-	baks, _ := filepath.Glob(sp + ".casebook-backup-*")
+	baks, _ := filepath.Glob(sp + ".priorcase-backup-*")
 	if len(baks) != 1 {
 		t.Errorf("백업 %d개, want 1 — 우리 훅이 든 파일까지 백업했다: %v", len(baks), baks)
 	}
@@ -322,7 +322,7 @@ func TestRevertAfterDoubleApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(got), hookMarker) {
-		t.Errorf("되돌렸다는데 casebook 훅이 남아 있다:\n%s", got)
+		t.Errorf("되돌렸다는데 priorcase 훅이 남아 있다:\n%s", got)
 	}
 	if !strings.Contains(string(got), "남의훅") {
 		t.Errorf("남의 훅이 사라졌다:\n%s", got)
@@ -338,13 +338,13 @@ func TestRevertSkipsBackupsThatAlreadyContainOurHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 깨끗한 옛 백업 하나, 오염된 최근 백업 둘.
-	clean := sp + ".casebook-backup-20260101-000000"
+	clean := sp + ".priorcase-backup-20260101-000000"
 	if err := os.WriteFile(clean, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo 원본"}]}]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, ts := range []string{"20260808-000000", "20260809-000000"} {
-		dirty := sp + ".casebook-backup-" + ts
-		body := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + hookMarker + `=1 /bin/cb hook stop"}]}]}}`
+		dirty := sp + ".priorcase-backup-" + ts
+		body := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + hookMarker + `=1 /bin/prior hook stop"}]}]}}`
 		if err := os.WriteFile(dirty, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -367,14 +367,14 @@ func TestRevertFailsLoudlyWhenAllBackupsAreDirty(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"x":"` + hookMarker + `"}`
-	if err := os.WriteFile(sp+".casebook-backup-20260809-000000", []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(sp+".priorcase-backup-20260809-000000", []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LatestBackup(sp)
 	if err == nil {
 		t.Fatal("전부 오염됐는데 성공했다 — 되돌린 척하게 된다")
 	}
-	if !strings.Contains(err.Error(), "casebook 훅을 이미 담고") {
+	if !strings.Contains(err.Error(), "priorcase 훅을 이미 담고") {
 		t.Errorf("왜 못 되돌리는지 안 알려준다: %v", err)
 	}
 }
@@ -382,7 +382,7 @@ func TestRevertFailsLoudlyWhenAllBackupsAreDirty(t *testing.T) {
 // ★ 스타터 설정이 **거짓 약속을 하면 안 된다.**
 //
 // 예전에 "회수는 계속 동작한다" 고 적혀 있었는데 거짓이었다. exclude 는 쓰기를
-// 막는 것이고, 회수는 별개 이유로 막힌다 — cb 는 type: decision 인 문서만 읽는다.
+// 막는 것이고, 회수는 별개 이유로 막힌다 — prior 는 type: decision 인 문서만 읽는다.
 // 실측으로 볼트 392개 중 회수 대상은 76개(19%)뿐이었다. 이 문장은 **새 사용자
 // 전원에게** 나가므로 특히 비싸다.
 func TestStarterConfigDoesNotPromiseRecallEverywhere(t *testing.T) {

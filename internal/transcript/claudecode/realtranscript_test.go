@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript"
 )
 
 // 실 transcript 대조. 합성 픽스처는 내가 이해한 스키마를 검증할 뿐이라, 실물이
@@ -12,9 +12,9 @@ import (
 //
 // CI 에서는 돌지 않는다 (실 대화 기록이 있어야 한다). **읽기만 한다.**
 func TestRealTranscripts(t *testing.T) {
-	root := os.Getenv("CASEBOOK_TEST_TRANSCRIPT")
+	root := os.Getenv("PRIORCASE_TEST_TRANSCRIPT")
 	if root == "" {
-		t.Skip("CASEBOOK_TEST_TRANSCRIPT 없음 — 실 transcript 대조를 건너뛴다")
+		t.Skip("PRIORCASE_TEST_TRANSCRIPT 없음 — 실 transcript 대조를 건너뛴다")
 	}
 
 	paths, unreadable, err := List(root)

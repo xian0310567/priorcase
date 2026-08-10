@@ -10,23 +10,23 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/health"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/health"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
-// NewDoctorCommand 는 `cb doctor` 를 만든다.
+// NewDoctorCommand 는 `prior doctor` 를 만든다.
 //
 // 이 명령이 hook 패키지에 있는 이유는 검사 대상의 절반이 Claude Code 배선이기
-// 때문이다 — settings.json 형식과 CASEBOOK_HOOK 표식은 이 어댑터의 지식이다.
+// 때문이다 — settings.json 형식과 PRIORCASE_HOOK 표식은 이 어댑터의 지식이다.
 // cli 에 두면 cli 가 hook 을 import 해야 하고 §4.1 이 깨진다.
 func NewDoctorCommand() *cobra.Command {
 	var settingsPath, stateDir string
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "지금 casebook 이 제대로 돌고 있는지 검사한다",
+		Short: "지금 priorcase 가 제대로 돌고 있는지 검사한다",
 		Long: "설정 · 볼트 · 색인 · 훅 배선 · 안전망을 한 번에 본다.\n\n" +
 			"**이 명령이 있는 이유는 조용한 무동작이다.** 이 시스템의 부품은 전부 실패해도 " +
 			"대화를 막지 않도록 만들어졌다 — 훅은 무슨 일이 있어도 exit 0 이고, 회수는 못 " +
@@ -46,7 +46,7 @@ func NewDoctorCommand() *cobra.Command {
 				// 설정이 없으면 나머지를 볼 수 없다. 그래도 조용히 죽지는 않는다.
 				r.Checks = append(r.Checks, health.Check{
 					Name: "설정", Level: health.Fail, Detail: err.Error(),
-					Fix: "cb init --apply 가 기본 설정을 만든다"})
+					Fix: "prior init --apply 가 기본 설정을 만든다"})
 				return report(out, r)
 			}
 			resolved, _ := config.ResolvePath(cfgPath)
@@ -76,7 +76,7 @@ func NewDoctorCommand() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&settingsPath, "settings", "", "Claude Code 설정 경로 (기본: ~/.claude/settings.json)")
-	f.StringVar(&stateDir, "state-dir", "", "데몬 상태 디렉토리 (기본: $XDG_STATE_HOME/casebook)")
+	f.StringVar(&stateDir, "state-dir", "", "데몬 상태 디렉토리 (기본: $XDG_STATE_HOME/priorcase)")
 	return cmd
 }
 

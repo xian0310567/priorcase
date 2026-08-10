@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 type run struct {
@@ -36,7 +36,7 @@ func cfg(t *testing.T) *config.Config {
 	// **판별기를 끈다.** 안 그러면 테스트가 진짜 LLM 을 부른다 — 느리고 결정적이지
 	// 않다. 실제로 이 줄이 없었을 때 훅 테스트가 13초 걸렸다.
 	// 승격을 시험하는 테스트는 stubJudge 로 켠다.
-	c.Capture.JudgePath = "/casebook-test-판별기없음"
+	c.Capture.JudgePath = "/priorcase-test-판별기없음"
 	return c
 }
 
@@ -151,7 +151,7 @@ func TestRecallWorksInExcludedDir(t *testing.T) {
 
 func TestSessionStartCarriesDomainAndContract(t *testing.T) {
 	r := runHook(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
-	for _, want := range []string{"alpha", "cb capture", "최근 결정"} {
+	for _, want := range []string{"alpha", "prior capture", "최근 결정"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("세션 진입에 %q 가 없다:\n%s", want, r.out)
 		}
@@ -164,7 +164,7 @@ func TestSessionStartInExcludedDirForbidsCapture(t *testing.T) {
 	if !strings.Contains(r.out, "제외 구역") {
 		t.Errorf("제외 구역임을 안 알린다:\n%s", r.out)
 	}
-	if strings.Contains(r.out, "cb capture` 를 부른다") {
+	if strings.Contains(r.out, "prior capture` 를 부른다") {
 		t.Errorf("제외 구역인데 기록하라고 한다:\n%s", r.out)
 	}
 	if !strings.Contains(r.out, "회수는 계속") {
@@ -231,7 +231,7 @@ func TestNudgeRidesOnEveryPrompt(t *testing.T) {
 	if !strings.Contains(r.out, "SQLite 로 하기로") {
 		t.Errorf("발췌가 없다 — 무엇을 기록할지 모르면 안 부른다:\n%s", r.out)
 	}
-	if !strings.Contains(r.out, "cb capture") {
+	if !strings.Contains(r.out, "prior capture") {
 		t.Errorf("무엇을 하라는지 없다:\n%s", r.out)
 	}
 }
@@ -267,7 +267,7 @@ func TestNoNudgeWhenNothingPending(t *testing.T) {
 // ── 세션 진입 블록의 언어 ────────────────────────────────────────────────
 //
 // 세션 진입 블록은 ①층의 유일한 지시 통로다 — 에이전트가 읽고 행동하는 글이라
-// 대화 언어와 어긋나면 `cb capture` 를 부르는 정확도가 같이 떨어진다. 그래서
+// 대화 언어와 어긋나면 `prior capture` 를 부르는 정확도가 같이 떨어진다. 그래서
 // **두 언어 모두** 계약·도메인·미확인 구간이 실려 나오는지 검사한다.
 func cfgEN(t *testing.T) *config.Config {
 	t.Helper()
@@ -278,7 +278,7 @@ func cfgEN(t *testing.T) *config.Config {
 
 func TestSessionStartInEnglishCarriesDomainAndContract(t *testing.T) {
 	r := runHook(t, cfgEN(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
-	for _, want := range []string{"alpha", "cb capture", "Recent decisions"} {
+	for _, want := range []string{"alpha", "prior capture", "Recent decisions"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("영어 세션 진입에 %q 가 없다:\n%s", want, r.out)
 		}
@@ -297,7 +297,7 @@ func TestSessionStartInEnglishForbidsCaptureInExcludedDir(t *testing.T) {
 	if !strings.Contains(r.out, "exclusion zone") {
 		t.Errorf("제외 구역임을 안 알린다:\n%s", r.out)
 	}
-	if strings.Contains(r.out, "call `cb capture`") {
+	if strings.Contains(r.out, "call `prior capture`") {
 		t.Errorf("제외 구역인데 기록하라고 한다:\n%s", r.out)
 	}
 	if !strings.Contains(r.out, "Recall still works") {

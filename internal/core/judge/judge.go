@@ -1,7 +1,7 @@
 // Package judge 는 대화 발췌를 보고 "기록할 결정인가" 를 판정한다.
 //
 // **이 패키지는 이 프로젝트의 기록된 결정 하나를 뒤집는다.**
-// [[casebook-결정-기록회수모델-에이전트주도-2026-08-07]] 은 *"데몬은 LLM 을 부르지
+// [[priorcase-결정-기록회수모델-에이전트주도-2026-08-07]] 은 *"데몬은 LLM 을 부르지
 // 않는다"* 로 정했고, 이유는 키 등록이 오픈소스 진입 장벽이라는 것이었다.
 //
 // 뒤집는 근거는 둘이다.
@@ -88,7 +88,7 @@ func Find(explicitPath, model string) *CLI {
 	path := ""
 	if explicitPath != "" {
 		// **명시 경로도 검증한다.** 안 그러면 오타 하나로 매 세션 실행 실패가 뜬다.
-		// 여기서 조용히 nil 을 주고, "설정했는데 안 된다" 는 cb doctor 가 알린다 —
+		// 여기서 조용히 nil 을 주고, "설정했는데 안 된다" 는 prior doctor 가 알린다 —
 		// 훅은 대화 흐름에 있어서 반복 경고를 낼 자리가 아니다.
 		if usable(explicitPath) {
 			return newCLI(explicitPath, model)
@@ -97,7 +97,7 @@ func Find(explicitPath, model string) *CLI {
 	}
 	if path == "" {
 		// 옛 셸 구현이 쓰던 자리를 먼저 본다. PATH 에 없는 설치가 흔하다 —
-		// cb 자신이 오늘 그 문제로 걸렸다.
+		// prior 자신이 오늘 그 문제로 걸렸다.
 		if home, err := os.UserHomeDir(); err == nil {
 			cand := filepath.Join(home, ".local", "bin", "claude")
 			if usable(cand) {
@@ -132,7 +132,7 @@ func usable(path string) bool {
 }
 
 // Configured 는 설정에 판별기를 적었는데 쓸 수 없는 상태인지 알려 준다.
-// cb doctor 가 이걸로 "설정했는데 안 된다" 를 구별한다.
+// prior doctor 가 이걸로 "설정했는데 안 된다" 를 구별한다.
 func Configured(explicitPath string) (set bool, ok bool) {
 	if explicitPath == "" {
 		return false, false
@@ -154,7 +154,7 @@ func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 	cmd.Stdin = strings.NewReader(prompt(req))
 	// **재귀 차단.** 판별기가 띄우는 세션에도 훅이 붙으면 그 세션이 또 판별기를
 	// 부른다. 옛 셸 구현이 SECOND_BRAIN_SCRIBE 로 막던 것과 같은 자리다.
-	cmd.Env = append(os.Environ(), "CASEBOOK_JUDGE=1")
+	cmd.Env = append(os.Environ(), "PRIORCASE_JUDGE=1")
 
 	var o, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &errb
@@ -301,13 +301,13 @@ func head(s string, n int) string {
 
 // Check 는 판별기가 **실제로 답하는지** 본다. 있기만 한 것과 쓸 수 있는 것은 다르다 —
 // claude CLI 는 설치돼 있어도 로그인이 안 됐을 수 있고, 그러면 세션이 끝나는
-// 순간에야 실패를 알게 된다. cb doctor 가 미리 물어본다.
+// 순간에야 실패를 알게 된다. prior doctor 가 미리 물어본다.
 func (c *CLI) Check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.Path, "--print", "--model", c.Model, "--max-turns", "1")
 	cmd.Stdin = strings.NewReader(`{"ok":true} 를 그대로 출력하라. 다른 말은 하지 마라.`)
-	cmd.Env = append(os.Environ(), "CASEBOOK_JUDGE=1")
+	cmd.Env = append(os.Environ(), "PRIORCASE_JUDGE=1")
 	var o, e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &e
 	if err := cmd.Run(); err != nil {

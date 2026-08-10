@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func scanCfg() *config.Config {
@@ -167,7 +167,7 @@ func TestRepeatedScanOfBlockedSegmentDoesNotPileUp(t *testing.T) {
 	}
 }
 
-// **제외된 프로젝트는 표시하지 않는다.** NOI 처럼 casebook 이 손대면 안 되는 구역이
+// **제외된 프로젝트는 표시하지 않는다.** NOI 처럼 priorcase 가 손대면 안 되는 구역이
 // 있고, pending 은 다음 세션 에이전트에게 "여기 기록해라" 라고 말하는 것이다.
 func TestExcludedCwdIsNotFlagged(t *testing.T) {
 	dir := t.TempDir()

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // englishLayout 은 영어 파일명 템플릿을 쓰는 빈 볼트를 만든다.

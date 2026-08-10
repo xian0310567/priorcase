@@ -86,7 +86,7 @@ func TestFindUsesExplicitPath(t *testing.T) {
 // ★ **명시 경로가 잘못돼도 조용히 꺼진다.**
 //
 // 검증하지 않으면 오타 하나로 매 세션 끝에 "판별기 실행 실패" 가 뜬다. 훅은 대화
-// 흐름에 있어서 반복 경고를 낼 자리가 아니다 — "설정했는데 안 된다" 는 cb doctor 가 알린다.
+// 흐름에 있어서 반복 경고를 낼 자리가 아니다 — "설정했는데 안 된다" 는 prior doctor 가 알린다.
 func TestFindRejectsBrokenExplicitPath(t *testing.T) {
 	if j := Find(filepath.Join(t.TempDir(), "없는것"), ""); j != nil {
 		t.Errorf("없는 경로를 받아들였다: %+v", j)
@@ -101,7 +101,7 @@ func TestFindRejectsBrokenExplicitPath(t *testing.T) {
 	}
 }
 
-// 설정했는지와 쓸 수 있는지를 나눠 알려 준다 — cb doctor 가 둘을 구별해 말해야 한다.
+// 설정했는지와 쓸 수 있는지를 나눠 알려 준다 — prior doctor 가 둘을 구별해 말해야 한다.
 func TestConfiguredDistinguishesSetFromUsable(t *testing.T) {
 	if set, _ := Configured(""); set {
 		t.Error("안 적었는데 적었다고 한다")

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func TestRecallScoring(t *testing.T) {
@@ -201,8 +201,8 @@ func TestBodyOnlyKeywordExcluded(t *testing.T) {
 // TestRecallReportsVaultReadFailure 는 볼트를 읽지 못했을 때 Recall 이
 // 침묵하지 않는지 본다. 예전에는 l.List() 에러를 nil 로 버려서, 결정 폴더가
 // 읽기 불가여도 "관련 결정 없음" 과 똑같이 보였다 — 훅 주입 경로에서 에이전트가
-// 과거 결정을 못 본 채 "없다" 로 읽는다. cb index 는 같은 List() 에서 죽는데
-// cb recall 만 rc=0 으로 조용히 넘어가던 비대칭도 여기서 사라진다.
+// 과거 결정을 못 본 채 "없다" 로 읽는다. prior index 는 같은 List() 에서 죽는데
+// prior recall 만 rc=0 으로 조용히 넘어가던 비대칭도 여기서 사라진다.
 func TestRecallReportsVaultReadFailure(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root 는 디렉토리 퍼미션을 무시하므로 이 테스트가 성립하지 않는다")

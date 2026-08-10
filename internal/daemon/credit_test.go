@@ -2,16 +2,16 @@ package daemon
 
 import (
 	"fmt"
-	"github.com/xian0310567/casebook/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // note 는 픽스처 볼트에 결정 노트 하나를 심는다. session 이 비면 세션 대조에 안 걸린다.

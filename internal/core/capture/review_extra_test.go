@@ -1,7 +1,7 @@
 package capture
 
 import (
-	"github.com/xian0310567/casebook/internal/core/i18n"
+	"github.com/xian0310567/priorcase/internal/core/i18n"
 	"os"
 	"reflect"
 	"strings"

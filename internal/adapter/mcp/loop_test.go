@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/daemon"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // 스펙 §12 컷오버 게이트 4번:
@@ -91,14 +91,14 @@ func TestSafetyNetFullLoop(t *testing.T) {
 	}
 
 	// ── 5. 에이전트가 목록을 보고 ────────────────────────────────────
-	list := text(t, call(t, cs, "casebook_pending", map[string]any{}))
+	list := text(t, call(t, cs, "priorcase_pending", map[string]any{}))
 	id := pend[0].ID()
 	if !strings.Contains(list, id) {
 		t.Fatalf("목록에 id 가 없다 — 지울 수단이 없다:\n%s", list)
 	}
 
 	// ── 6. 실제 결정이므로 기록한다 ──────────────────────────────────
-	capOut := text(t, call(t, cs, "casebook_capture", map[string]any{
+	capOut := text(t, call(t, cs, "priorcase_capture", map[string]any{
 		"domain": "alpha", "slug": "캐시계층", "date": "2026-08-07",
 		"summary": "저장 엔진 앞에 캐시 계층을 둔다",
 		"body":    "## 결정\n캐시를 둔다.\n",
@@ -112,7 +112,7 @@ func TestSafetyNetFullLoop(t *testing.T) {
 	}
 
 	// ── 7. 확인이 끝났으니 지운다 ────────────────────────────────────
-	if r := call(t, cs, "casebook_pending", map[string]any{"resolve": id}); r.IsError {
+	if r := call(t, cs, "priorcase_pending", map[string]any{"resolve": id}); r.IsError {
 		t.Fatalf("해소 실패: %s", text(t, r))
 	}
 	left, err := daemon.ReadPending(stateDir)

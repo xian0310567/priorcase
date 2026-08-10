@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
-// **훅은 무슨 일이 있어도 exit 0 이다.** 실패해서 대화가 막히면 사용자는 casebook 을
+// **훅은 무슨 일이 있어도 exit 0 이다.** 실패해서 대화가 막히면 사용자는 priorcase 을
 // 고치는 게 아니라 지운다.
 //
 // 이건 프로세스 수준으로만 검증할 수 있다 — cobra 가 RunE 의 에러를 종료 코드로
@@ -95,7 +95,7 @@ func TestHookRecallStdoutIsOnlyTheBlock(t *testing.T) {
 	if !strings.HasPrefix(got, "[과거 결정 참조]\n") {
 		t.Errorf("주입 블록으로 시작하지 않는다:\n%q", got)
 	}
-	for _, forbidden := range []string{"경고", "깨짐", "cb hook"} {
+	for _, forbidden := range []string{"경고", "깨짐", "prior hook"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("stdout 에 %q 가 섞였다:\n%s", forbidden, got)
 		}

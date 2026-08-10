@@ -5,10 +5,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/i18n"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/i18n"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 type ReviewRequest struct {
@@ -197,7 +197,7 @@ func refuseFutureNote(n store.Note) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"이 결정은 더 새 판(schema %d)으로 쓰였다. 지금 cb 는 판 %d 까지 안다 — "+
-			"고치면 망가뜨릴 수 있어 멈춘다. cb 를 올려라",
+		"이 결정은 더 새 판(schema %d)으로 쓰였다. 지금 prior 는 판 %d 까지 안다 — "+
+			"고치면 망가뜨릴 수 있어 멈춘다. prior 를 올려라",
 		n.Meta.Schema, schema.Current)
 }

@@ -14,15 +14,15 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gofrs/flock"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
 )
 
 const lockFile = "watch.lock"
 
 // ErrAlreadyRunning 은 다른 인스턴스가 이미 돌고 있다는 뜻이다 (감사 결함 3).
-var ErrAlreadyRunning = errors.New("cb watch 가 이미 돌고 있다")
+var ErrAlreadyRunning = errors.New("prior watch 가 이미 돌고 있다")
 
 // Options 는 데몬 설정이다. 시간 값을 config 가 아니라 여기서 받는 이유는 테스트가
 // 밀리초 단위로 돌아야 하기 때문이다 — config 의 quiesce_seconds 는 초 단위다.
@@ -295,19 +295,19 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 	// **기동 패스에서는 승격하지 않는다** (promote=false).
 	//
 	// 두 가지 때문이다. 하나, 판별기 호출은 초 단위인데 기동을 거기서 막으면
-	// `cb watch` 가 한참 뜨지 않는다. 둘, `--backfill` 이면 밀린 구간이 수백 개일 수
+	// `prior watch` 가 한참 뜨지 않는다. 둘, `--backfill` 이면 밀린 구간이 수백 개일 수
 	// 있고 그걸 한꺼번에 판별기에 밀어 넣으면 호스트 CLI 를 두들기게 된다.
 	// 정상 감시 루프의 drain 이 곧 다시 와서 처리한다.
 	if promote && flagged {
 		Promote(ctx, PromoteOptions{
 			StateDir: d.o.StateDir, Config: d.o.Config, Layout: d.l,
-			Err: d.promoteWriter(), Label: "cb watch",
+			Err: d.promoteWriter(), Label: "prior watch",
 		})
 	}
 }
 
 // promoteWriter 는 승격 진행 보고가 나갈 자리다. 데몬은 이벤트로 말하므로
-// 그 통로에 얹는다 — 별도 stderr 로 새면 `cb watch` 의 출력이 두 갈래가 된다.
+// 그 통로에 얹는다 — 별도 stderr 로 새면 `prior watch` 의 출력이 두 갈래가 된다.
 func (d *watcher) promoteWriter() io.Writer { return eventWriter{d} }
 
 type eventWriter struct{ d *watcher }
@@ -323,7 +323,7 @@ func (w eventWriter) Write(b []byte) (int, error) {
 
 // ScanOnce 는 데몬이 돌고 있지 않을 때만 파일 하나를 훑는다.
 //
-// **이것이 데몬 없이도 안전망이 도는 이유다.** cb watch 는 상태 디렉토리에 flock 을
+// **이것이 데몬 없이도 안전망이 도는 이유다.** prior watch 는 상태 디렉토리에 flock 을
 // 잡고 산다. 훅이 TryLock 을 해서 **얻으면 데몬이 없는 것**이므로 자기가 훑고 놓는다.
 // 못 얻으면 데몬이 돌고 있으므로 건너뛴다. 소유자가 언제나 하나뿐이라 중복 처리가
 // 구조적으로 불가능하고(감사 결함 3 과 같은 방어), 데몬 등록에 실패한 사용자도
@@ -341,7 +341,7 @@ func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string, j
 		return r, false, fmt.Errorf("락을 잡을 수 없다: %w", err)
 	}
 	if !got {
-		return r, false, nil // cb watch 가 돌고 있다
+		return r, false, nil // prior watch 가 돌고 있다
 	}
 	defer func() {
 		if uerr := lk.Unlock(); uerr != nil && err == nil {
@@ -359,8 +359,8 @@ func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string, j
 
 // lockWait 는 "이미 돌고 있다" 고 단정하기 전에 기다리는 시간이다.
 //
-// 훅(cb hook stop 등)도 데몬이 없을 때 같은 락을 잡는다. 그 스캔은 밀리초 단위지만,
-// 하필 그 순간 사용자가 cb watch 를 띄우면 **아무도 안 도는데 "이미 돌고 있다" 고
+// 훅(prior hook stop 등)도 데몬이 없을 때 같은 락을 잡는다. 그 스캔은 밀리초 단위지만,
+// 하필 그 순간 사용자가 prior watch 를 띄우면 **아무도 안 도는데 "이미 돌고 있다" 고
 // 말한다.** 틀린 진단은 사용자를 엉뚱한 데로 보낸다. 잠깐 기다려 보고 판정한다.
 //
 // 진짜로 데몬이 돌고 있으면 이 시간만큼 에러가 늦어지는데, 장기 실행 프로세스의
@@ -385,13 +385,13 @@ func acquireLock(ctx context.Context, lk *flock.Flock) (bool, error) {
 	}
 }
 
-// IsRunning 은 cb watch 가 돌고 있는지 본다.
+// IsRunning 은 prior watch 가 돌고 있는지 본다.
 //
 // 락 **파일의 존재**는 증거가 아니다 — flock 이 풀려도 파일은 남는다. 잡아 보고
 // 바로 놓는 것만이 확실하다. 잡히면 아무도 안 잡고 있는 것이므로 false 다.
 //
 // 잡는 순간이 훅의 스캔과 겹치면 "돌고 있다" 로 잘못 나올 수 있는데, 진단 표시일
-// 뿐이라 Run 처럼 기다리지 않는다 — 기다리면 cb doctor 가 1.5초 멎는다.
+// 뿐이라 Run 처럼 기다리지 않는다 — 기다리면 prior doctor 가 1.5초 멎는다.
 func IsRunning(stateDir string) bool {
 	lk := flock.New(filepath.Join(stateDir, lockFile))
 	got, err := lk.TryLock()

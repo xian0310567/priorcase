@@ -11,10 +11,10 @@ import (
 // ★★ 런처와 플랫폼 패키지의 판이 갈리면 **진단이 가장 어려운 종류의 고장**이 된다.
 //
 // 런처가 `^1.2.0` 으로 느슨하게 걸면 npm 이 다른 판의 바이너리를 물어 올 수 있고,
-// 그러면 `cb --version` 이 말하는 것과 실제로 도는 것이 달라진다. 정확히 고정한다.
+// 그러면 `prior --version` 이 말하는 것과 실제로 도는 것이 달라진다. 정확히 고정한다.
 func TestLauncherPinsPlatformPackagesExactly(t *testing.T) {
 	root := repoRoot(t)
-	raw := readFile(t, filepath.Join(root, "npm", "casebook", "package.json"))
+	raw := readFile(t, filepath.Join(root, "npm", "priorcase", "package.json"))
 	var p struct {
 		Bin                  map[string]string `json:"bin"`
 		OptionalDependencies map[string]string `json:"optionalDependencies"`
@@ -32,30 +32,32 @@ func TestLauncherPinsPlatformPackagesExactly(t *testing.T) {
 	// 어긋나면 npm 이 바이너리를 받아 놓고도 런처가 못 찾아 "no binary for
 	// darwin-arm64" 로 죽는다 — 설치는 성공하는데 실행이 안 되는, 사용자가 원인을
 	// 짐작할 수 없는 종류다. 스코프를 걷어내며 실제로 세 곳을 같이 고쳐야 했다.
-	launcher := readFile(t, filepath.Join(root, "npm", "casebook", "bin", "cb.js"))
+	launcher := readFile(t, filepath.Join(root, "npm", "priorcase", "bin", "prior.js"))
 	pack := readFile(t, filepath.Join(root, "scripts", "npm-pack.sh"))
 	for _, want := range []string{"darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"} {
-		if _, ok := p.OptionalDependencies["casebook-"+want]; !ok {
-			t.Errorf("optionalDependencies 에 casebook-%s 가 없다", want)
+		if _, ok := p.OptionalDependencies["priorcase-"+want]; !ok {
+			t.Errorf("optionalDependencies 에 priorcase-%s 가 없다", want)
 		}
 	}
-	if !strings.Contains(launcher, "`casebook-${os}-${arch}`") {
-		t.Error("런처가 찾는 패키지 이름이 casebook-<os>-<arch> 가 아니다")
+	if !strings.Contains(launcher, "`priorcase-${os}-${arch}`") {
+		t.Error("런처가 찾는 패키지 이름이 priorcase-<os>-<arch> 가 아니다")
 	}
-	if !strings.Contains(pack, `"name": "casebook-${goos}-${npmarch}"`) {
-		t.Error("팩 스크립트가 만드는 이름이 casebook-<os>-<arch> 가 아니다")
+	if !strings.Contains(pack, `"name": "priorcase-${goos}-${npmarch}"`) {
+		t.Error("팩 스크립트가 만드는 이름이 priorcase-<os>-<arch> 가 아니다")
 	}
-	// 스코프를 다시 쓰려면 npm 조직이 필요하다. 조용히 되돌아가면 게시가 실패한다.
-	if strings.Contains(launcher, "@casebook/") || strings.Contains(pack, "@casebook/") {
-		t.Error("@casebook 스코프가 되살아났다 — 그 조직 이름은 npm 에서 쓸 수 없다")
+	// 스코프를 쓰려면 npm 조직이 있어야 한다. 조직 이름은 미리 확인할 API 가 없어
+	// 제출해 봐야만 알 수 있으므로(옛 이름 casebook 이 그렇게 막혔다), 스코프가
+	// 조용히 되살아나면 그날 게시가 통째로 멎는다.
+	if strings.Contains(launcher, "@priorcase/") || strings.Contains(pack, "@priorcase/") {
+		t.Error("@priorcase 스코프가 되살아났다 — 무스코프로 가기로 했고, 조직은 확보한 적이 없다")
 	}
 	for name, ver := range p.OptionalDependencies {
 		if strings.ContainsAny(ver, "^~><*") {
 			t.Errorf("%s 를 %q 로 느슨하게 걸었다 — 런처와 바이너리의 판이 갈린다", name, ver)
 		}
 	}
-	if p.Bin["cb"] == "" {
-		t.Error("bin.cb 가 없다 — npx casebook 이 안 된다")
+	if p.Bin["prior"] == "" {
+		t.Error("bin.prior 가 없다 — npx priorcase 가 안 된다")
 	}
 	// 라이선스 파일이 패키지에 들어가야 한다. 독점 소프트웨어다.
 	for _, want := range []string{"LICENSE", "THIRD-PARTY-NOTICES.md"} {
@@ -88,7 +90,7 @@ func TestPackScriptDeclaresOsAndCpu(t *testing.T) {
 
 // 런처는 자기 플랫폼 바이너리가 없을 때 **조용히 넘어가면 안 된다.**
 func TestLauncherFailsLoudlyWithoutBinary(t *testing.T) {
-	body := readFile(t, filepath.Join(repoRoot(t), "npm", "casebook", "bin", "cb.js"))
+	body := readFile(t, filepath.Join(repoRoot(t), "npm", "priorcase", "bin", "prior.js"))
 	for _, want := range []string{"process.exit(1)", "--include=optional"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("런처에 %q 가 없다 — 설치 실패가 조용해진다", want)

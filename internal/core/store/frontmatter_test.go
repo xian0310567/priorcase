@@ -74,7 +74,7 @@ func TestEmitIsIdempotent(t *testing.T) {
 
 func TestEmitKeyOrderAndFormat(t *testing.T) {
 	m := Meta{
-		Type: "decision", Date: "2026-08-07", Domain: []string{"casebook"},
+		Type: "decision", Date: "2026-08-07", Domain: []string{"priorcase"},
 		Summary: `따옴표 " 와 백슬래시 \ 가 든 요약`, Status: "active", Outcome: "pending",
 		Related: []string{"[[a]]", "[[b]]"}, Tags: []string{"decision", "go"},
 	}
@@ -167,7 +167,7 @@ func TestQuoteDoesNotFoldLongScalar(t *testing.T) {
 	longSummary := b.String()
 
 	m := Meta{
-		Type: "decision", Date: "2026-08-07", Domain: []string{"casebook"},
+		Type: "decision", Date: "2026-08-07", Domain: []string{"priorcase"},
 		Summary: longSummary, Status: "active", Outcome: "pending",
 	}
 

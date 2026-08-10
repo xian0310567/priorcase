@@ -22,7 +22,7 @@ type Meta struct {
 	Tags          []string `yaml:"tags"`
 	SourceSession string   `yaml:"source_session"`
 
-	// Schema 는 이 노트를 쓴 casebook 의 스키마 판이다. **없으면 1 이다.**
+	// Schema 는 이 노트를 쓴 priorcase 의 스키마 판이다. **없으면 1 이다.**
 	//
 	// 팀이 볼트를 공유하면 버전이 갈린다 — 한 명이 먼저 올리면 나머지가 그 사람의
 	// 노트를 만난다. 판을 안 적어 두면 옛 바이너리가 새 값(예: 아직 모르는 status)을
@@ -90,12 +90,12 @@ func quote(s string) string {
 	n := yaml.Node{Kind: yaml.ScalarNode, Style: yaml.DoubleQuotedStyle, Value: s}
 	out, err := yaml.Marshal(&n)
 	if err != nil {
-		panic(fmt.Sprintf("casebook: YAML 스칼라 마샬 실패: %v", err))
+		panic(fmt.Sprintf("priorcase: YAML 스칼라 마샬 실패: %v", err))
 	}
 	q := strings.TrimRight(string(out), "\n")
 	if strings.ContainsAny(q, "\n") {
 		// emitter 가 긴 스칼라를 접으면 frontmatter 가 깨진다. 조용히 깨지느니 죽는다.
-		panic("casebook: YAML 스칼라가 여러 줄로 접혔다 — 방출기를 고쳐야 한다")
+		panic("priorcase: YAML 스칼라가 여러 줄로 접혔다 — 방출기를 고쳐야 한다")
 	}
 	return q
 }
@@ -111,7 +111,7 @@ func quoted(items []string) string {
 	return "[" + strings.Join(q, ", ") + "]"
 }
 
-// EmitFrontmatter 는 casebook 의 유일한 frontmatter 방출기다.
+// EmitFrontmatter 는 priorcase 의 유일한 frontmatter 방출기다.
 // 키 순서가 이 함수 본문의 리터럴이므로 방출기가 둘이 될 수 없다.
 func EmitFrontmatter(m Meta) []byte {
 	var b strings.Builder
@@ -158,7 +158,7 @@ func emitExtra(extra map[string]yaml.Node) string {
 		n := extra[k]
 		out, err := yaml.Marshal(map[string]yaml.Node{k: n})
 		if err != nil {
-			fmt.Fprintf(&b, "# casebook: %q 를 되쓸 수 없었다 (%v)\n", k, err)
+			fmt.Fprintf(&b, "# priorcase: %q 를 되쓸 수 없었다 (%v)\n", k, err)
 			continue
 		}
 		b.Write(out)

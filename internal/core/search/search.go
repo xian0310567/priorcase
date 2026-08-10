@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // 점수 가중치 — 현행 셸 sb_search 에서 이식했다.
@@ -38,7 +38,7 @@ type Options struct {
 // 볼트를 읽지 못하면 에러를 준다 — 빈 결과로 뭉개지 않는다. "관련 결정이 없다"
 // 와 "볼트를 못 읽었다" 는 훅 주입 경로에서 정반대 의미다: 전자는 참이지만
 // 후자를 침묵시키면 에이전트가 과거 결정을 못 본 채 "없다" 로 읽는다.
-// 같은 l.List() 를 부르는 cb index 는 이미 에러로 죽으므로, 두 명령이 같은
+// 같은 l.List() 를 부르는 prior index 는 이미 에러로 죽으므로, 두 명령이 같은
 // 에러 정책을 쓰게 맞춘다.
 //
 // 건너뛴 노트도 같은 이유로 돌려준다. 폴더 전체를 못 읽는 것(에러)과 노트

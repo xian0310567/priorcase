@@ -2,7 +2,7 @@
 
 > **에이전트 작업자에게:** 태스크 단위로 구현한다. 각 단계는 체크박스(`- [ ]`)다.
 
-**목표:** 에이전트가 `cb capture` 를 부르지 않고 지나간 구간을 데몬이 **놓치지 않고 표시**해,
+**목표:** 에이전트가 `prior capture` 를 부르지 않고 지나간 구간을 데몬이 **놓치지 않고 표시**해,
 다음 세션의 에이전트가 읽고 판단하게 한다.
 
 **아키텍처:** `internal/transcript`(호스트별 파서, 읽기 전용) + `internal/daemon`
@@ -19,7 +19,7 @@
 - **체크포인트 규칙은 하나뿐이다: 구간을 끝까지 성공 처리했을 때만 전진한다.**
   파싱 실패한 줄은 건너뛰되 전진하지 않는다 (스펙 §7.2).
 - **transcript 는 읽기만 한다.** 절대 쓰지 않는다.
-- 상태 파일(체크포인트·pending·락)은 **볼트 밖** `$XDG_STATE_HOME/casebook/` (스펙 §5).
+- 상태 파일(체크포인트·pending·락)은 **볼트 밖** `$XDG_STATE_HOME/priorcase/` (스펙 §5).
   볼트에는 문서만 둔다.
 - 상태 파일 쓰기는 `store.WriteFileAtomic`. 데몬은 SIGKILL 로 죽을 수 있고,
   잘린 체크포인트는 구간 전체를 잃는 것과 같다.
@@ -32,7 +32,7 @@
 |---|---|---|---|
 | 1 | 부분 기록된 한 줄이 구간 전체를 삼킨다 (빈 발췌 → "내용 없음" 오판 → 체크포인트 전진) | 줄 단위 파싱 + **완결된 줄(개행으로 끝난)만** 대상 + 실패 시 미전진 | T1·T2 |
 | 2 | `대상 없음` 실패만 체크포인트가 전진한다 | 단일 규칙으로 통합 — 성공 처리 시에만 전진 | T2 |
-| 3 | 서기 동시 실행 락이 없다 | `cb watch` 단일 인스턴스 (flock) | T4 |
+| 3 | 서기 동시 실행 락이 없다 | `prior watch` 단일 인스턴스 (flock) | T4 |
 | 6 | 턴 수 임계가 무력 (tool_result 까지 셈) | Turn 정의에서 `tool_use`·`tool_result`·`thinking`·`isMeta` 제외 | T1 |
 
 **실측 근거** (이 저장소 개발 중 실제 transcript 8607줄): 레코드 5920개 중
@@ -46,17 +46,17 @@
 | `internal/transcript/transcript.go` | `Turn` 타입과 `Parser` 인터페이스 — 호스트 중립 |
 | `internal/transcript/claudecode/parse.go` | JSONL → `[]Turn`. 완결 줄만, 실패 줄 보고 |
 | `internal/transcript/claudecode/discover.go` | `~/.claude/projects/**/*.jsonl` 탐색 |
-| `internal/daemon/state.go` | 체크포인트·pending 저장소 (`$XDG_STATE_HOME/casebook/`) |
+| `internal/daemon/state.go` | 체크포인트·pending 저장소 (`$XDG_STATE_HOME/priorcase/`) |
 | `internal/daemon/filter.go` | 필터 체인 — 턴 수 임계 · 키워드 시그널 |
 | `internal/daemon/daemon.go` | 락 · fsnotify · quiesce · 스캔 루프 |
-| `internal/adapter/cli/watch.go` | `cb watch` |
+| `internal/adapter/cli/watch.go` | `prior watch` |
 
 ## 이 계획에서 하지 않는 것
 
 - **다른 호스트 파서** — v2 (스펙 §10). 인터페이스만 열어 둔다.
-- **데몬 수명주기 등록**(launchd/systemd) — `cb init` 의 몫이고 그건 Plan 4 다.
-  지금은 사람이 `cb watch` 를 띄운다.
-- **pending 을 결정으로 승격** — 에이전트가 `casebook_capture` 로 한다. 데몬은 표시만.
+- **데몬 수명주기 등록**(launchd/systemd) — `prior init` 의 몫이고 그건 Plan 4 다.
+  지금은 사람이 `prior watch` 를 띄운다.
+- **pending 을 결정으로 승격** — 에이전트가 `priorcase_capture` 로 한다. 데몬은 표시만.
 
 ---
 
@@ -77,7 +77,7 @@
 - [ ] **Step 3: 중간 줄 깨짐 테스트** — 완결됐지만 JSON 이 깨진 줄은 `bad` 로 세고
       건너뛴다. `consumed` 는 전진하지 않는다.
 - [ ] **Step 4: 구현**
-- [ ] **Step 5: 실 transcript 대조 테스트** (`CASEBOOK_TEST_TRANSCRIPT` 게이트)
+- [ ] **Step 5: 실 transcript 대조 테스트** (`PRIORCASE_TEST_TRANSCRIPT` 게이트)
 
 > **T1 실측 결과 — 안전망의 한계 하나가 확정됐다.** Claude Code 의 thinking 블록은
 > 암호화된 `signature` 만 담고 본문은 비어 있다 (파일 1173개 · 블록 13451개 **전부**).
@@ -116,7 +116,7 @@
 - [ ] **Step 4: 구현**
 - [ ] **Step 5: 커밋**
 
-### Task 4: `cb watch` — 락 · fsnotify · quiesce
+### Task 4: `prior watch` — 락 · fsnotify · quiesce
 
 **Files:** `internal/daemon/daemon.go` · `internal/adapter/cli/watch.go` · 테스트
 
@@ -124,7 +124,7 @@
       두 번째가 즉시 종료한다.
 - [ ] **Step 2: quiesce 테스트** — 쓰기가 멎고 `quiesce_seconds` 가 지나야 스캔한다.
 - [ ] **Step 3: 구현.** flock · fsnotify · 디바운스.
-- [ ] **Step 4: `cb watch` 서브커맨드** (조립은 `cmd/cb`)
+- [ ] **Step 4: `prior watch` 서브커맨드** (조립은 `cmd/prior`)
 - [ ] **Step 5: 커밋**
 
 ### Task 5: pending 을 MCP instructions 에 노출
@@ -134,13 +134,13 @@
 Plan 2 에서 "소스가 없는 값을 0 으로 박으면 거짓말"이라 비워 둔 자리를 채운다.
 
 - [ ] **Step 1: 실패 테스트** — pending 이 N건이면 instructions 에 그 사실과
-      "확인하고 `casebook_capture` 하라"가 들어간다. 0건이면 그 문단이 없다.
+      "확인하고 `priorcase_capture` 하라"가 들어간다. 0건이면 그 문단이 없다.
 - [ ] **Step 2: 구현.** mcp 는 daemon 의 읽기 API 만 쓴다.
 - [ ] **Step 3: 커밋**
 
 ### Task 6: 문서
 
-- [ ] README — `cb watch` 절, 보장 표의 "놓친 기록 줍기" 갱신, 상태 파일 위치
+- [ ] README — `prior watch` 절, 보장 표의 "놓친 기록 줍기" 갱신, 상태 파일 위치
 - [ ] 스펙 — §7.2 구현 결과와 어긋난 곳, §11 테스트 표의 결함 대응 표시
 - [ ] 커밋
 
@@ -155,7 +155,7 @@ Plan 2 에서 "소스가 없는 값을 0 으로 박으면 거짓말"이라 비�
 | 3 | (없음) | **중복 방지 추가** | readme 4-B 조항을 빠뜨렸었다. 없으면 실질 세션의 99%가 표시된다 |
 | 4 | (없음) | **기동 시 밀린 구간 확인** | 데몬이 꺼진 사이 끝난 세션은 fsnotify 이벤트가 다시 오지 않아 영원히 안 보인다 |
 | 5 | (없음) | **무시그널 경고** | [capture] 없는 설정이면 조용히 무동작한다 |
-| 6 | T5 는 instructions 노출만 | **casebook_pending 도구까지** | 건수만 보여 주면 확인·해소할 수단이 없어 pending 이 영원히 쌓인다 |
+| 6 | T5 는 instructions 노출만 | **priorcase_pending 도구까지** | 건수만 보여 주면 확인·해소할 수단이 없어 pending 이 영원히 쌓인다 |
 
 **실측 근거** (실 transcript 1173개 · 476MB):
 - 눈에 보이는 발화는 15MB — **3.3%**. 나머지는 도구 호출·결과·빈 thinking 서명

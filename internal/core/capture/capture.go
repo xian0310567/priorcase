@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 type Request struct {
@@ -67,7 +67,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 		Tags:    ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
 	}
 
-	// --supersedes 는 cb review 와 같은 로직(supersede)을 탄다 — 대상 검증,
+	// --supersedes 는 prior review 와 같은 로직(supersede)을 탄다 — 대상 검증,
 	// "[[stem]]" 형식, 옛 노트의 status·related 갱신이 두 명령에서 동일하다.
 	var old store.Note
 	hasOld := false

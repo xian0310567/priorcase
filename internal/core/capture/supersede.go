@@ -3,11 +3,11 @@ package capture
 import (
 	"fmt"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // supersede 는 "이 결정이 저 결정을 뒤집는다" 를 양방향으로 엮는다.
-// cb capture --supersedes 와 cb review --supersedes 가 이 함수 하나를 쓴다.
+// prior capture --supersedes 와 prior review --supersedes 가 이 함수 하나를 쓴다.
 //
 // 예전에는 capture 가 받은 문자열을 검증도 감싸기도 없이 frontmatter 에 그대로
 // 넣었고 review 만 제대로 처리했다. 실측된 결과 셋:

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/capture"
 )
 
 func newReviewCmd() *cobra.Command {

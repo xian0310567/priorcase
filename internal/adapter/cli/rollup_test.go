@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // listWeeks 는 손으로만 확인하고 있었다. 여기 로직은 네 갈래(요약 필요·이미 요약됨·
@@ -40,8 +40,8 @@ func TestListWeeksShowsEachReason(t *testing.T) {
 		"2026-W30", "요약 필요",
 		"2026-W31", "내용 부족",
 		"2026-W32", "진행 중인 주",
-		"cb rollup <프로젝트> <주>", // 다음에 무엇을 하라는지
-		"에이전트가 한다",             // 요약문은 casebook 이 안 만든다
+		"prior rollup <프로젝트> <주>", // 다음에 무엇을 하라는지
+		"에이전트가 한다",             // 요약문은 priorcase 가 안 만든다
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("목록에 %q 가 없다:\n%s", want, got)
@@ -90,7 +90,7 @@ func writeWorklog(t *testing.T, vault, folder, body string) {
 }
 
 // 요약문은 에이전트가 파이프로 넣는다 — `-` 가 표준입력이라는 규약이 깨지면
-// cb 가 "-" 라는 이름의 파일을 찾다 실패한다.
+// prior 가 "-" 라는 이름의 파일을 찾다 실패한다.
 func TestReadBodyFromStdinAndFile(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetIn(strings.NewReader("파이프로 들어온 요약문"))

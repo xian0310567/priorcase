@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
-// hookMarker 는 casebook 이 심은 훅을 알아보는 표시다.
+// hookMarker 는 priorcase 가 심은 훅을 알아보는 표시다.
 //
 // 명령 문자열에 이 환경변수를 붙여 둔다. 해가 없고, 오탐이 불가능하며, 설정 파일을
 // 사람이 열어 봤을 때 무엇인지 바로 보인다. JSON 에는 주석이 없어서 이 방법이 필요하다.
 // 멱등성(두 번 돌려도 중복 등록 안 됨)과 `--revert` 가 전부 이 표시에 기댄다.
-const hookMarker = "CASEBOOK_HOOK=1"
+const hookMarker = "PRIORCASE_HOOK=1"
 
-// Plan 은 cb init 이 무엇을 할지 미리 계산한 것이다. --dry-run 이 이걸 보여 준다.
+// Plan 은 prior init 이 무엇을 할지 미리 계산한 것이다. --dry-run 이 이걸 보여 준다.
 //
 // 계획을 먼저 만들고 나중에 적용하는 구조로 둔 이유: 이 명령은 사용자의 다른 시스템
 // (orca 등)과 한 파일을 공유한다. 무엇을 지울지 **보여 준 뒤에** 지울 수 있어야 한다.
@@ -39,7 +39,7 @@ type Plan struct {
 type InitOptions struct {
 	SettingsPath string
 	ConfigPath   string
-	// Binary 는 훅이 실행할 cb 경로다. 비면 os.Executable().
+	// Binary 는 훅이 실행할 prior 경로다. 비면 os.Executable().
 	Binary string
 	// RemoveMatching 은 걷어낼 옛 훅을 알아보는 문자열이다. 명령에 이게 들어 있으면
 	// 지운다. 기본값은 셸 시절 경로 조각이다.
@@ -65,7 +65,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 	if o.Binary == "" {
 		exe, err := os.Executable()
 		if err != nil {
-			return nil, fmt.Errorf("cb 경로를 알 수 없다: %w", err)
+			return nil, fmt.Errorf("prior 경로를 알 수 없다: %w", err)
 		}
 		o.Binary = exe
 	}
@@ -79,7 +79,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 	p := &Plan{
 		SettingsPath: o.SettingsPath,
 		ConfigPath:   o.ConfigPath,
-		BackupPath: fmt.Sprintf("%s.casebook-backup-%s",
+		BackupPath: fmt.Sprintf("%s.priorcase-backup-%s",
 			o.SettingsPath, o.Now.Format("20060102-150405")),
 	}
 	if o.ConfigPath != "" {
@@ -103,7 +103,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 		}
 		// **이미 우리 훅이 들어 있으면 백업하지 않는다.**
 		//
-		// 백업의 목적은 "casebook 을 깔기 전 상태" 를 붙잡아 두는 것이다. 이미 배선된
+		// 백업의 목적은 "priorcase 을 깔기 전 상태" 를 붙잡아 두는 것이다. 이미 배선된
 		// 파일을 또 백업하면 그 백업에도 우리 훅이 들어 있고, --revert 가 사전순
 		// 마지막을 고르므로 **되돌려도 훅이 그대로 남는다.** 실측으로 재현했다 —
 		// `--apply` 를 두 번 한 뒤 `--revert` 하면 "되돌렸다" 고 말하면서 훅 5개가
@@ -124,7 +124,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 		}
 	}
 
-	// ① 걷어내기 — 옛 훅과 casebook 이 전에 심은 것. **그 밖에는 손대지 않는다.**
+	// ① 걷어내기 — 옛 훅과 priorcase 가 전에 심은 것. **그 밖에는 손대지 않는다.**
 	for event, groups := range hooks {
 		kept := groups[:0]
 		for _, g := range groups {
@@ -196,7 +196,7 @@ func ReadSettings(path string) []byte {
 // LatestBackup 은 가장 최근 백업 경로를 준다.
 func LatestBackup(settingsPath string) (string, error) {
 	dir := filepath.Dir(settingsPath)
-	base := filepath.Base(settingsPath) + ".casebook-backup-"
+	base := filepath.Base(settingsPath) + ".priorcase-backup-"
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
@@ -212,7 +212,7 @@ func LatestBackup(settingsPath string) (string, error) {
 	}
 	sort.Strings(found) // 이름이 타임스탬프라 사전순 = 시간순
 
-	// **casebook 훅이 들어 있지 않은 가장 최근 백업**을 고른다.
+	// **priorcase 훅이 들어 있지 않은 가장 최근 백업**을 고른다.
 	//
 	// 무조건 마지막을 고르면, 우리 훅이 이미 든 백업이 섞여 있을 때 되돌려도 훅이
 	// 남는다. BuildPlan 이 이제 그런 백업을 만들지 않지만, **옛 판으로 이미 만들어진
@@ -227,7 +227,7 @@ func LatestBackup(settingsPath string) (string, error) {
 			return full, nil
 		}
 	}
-	return "", fmt.Errorf("되돌릴 백업이 없다 — 있는 백업 %d개가 전부 casebook 훅을 이미 담고 있다 (%s*)",
+	return "", fmt.Errorf("되돌릴 백업이 없다 — 있는 백업 %d개가 전부 priorcase 훅을 이미 담고 있다 (%s*)",
 		len(found), filepath.Join(dir, base))
 }
 

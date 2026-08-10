@@ -3,9 +3,9 @@ package capture
 import (
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func fixtureLayoutConfig(t *testing.T) (*store.Layout, *config.Config) {

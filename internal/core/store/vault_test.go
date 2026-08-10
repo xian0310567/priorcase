@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // fixtureLayout 은 공용 픽스처로 Layout 을 만든다.
@@ -118,7 +118,7 @@ superseded-by: ""
 //
 // 건너뛰는 동작 자체는 의도된 것이다 — 노트 한 건이 깨졌다고 List 전체가
 // 죽으면 안 된다. 하지만 예전에는 건너뛴 것을 아무에게도 알리지 않아서,
-// 실볼트 53건 중 6건이 구 스키마로 빠졌는데도 `cb index` 가 아무 말 없이
+// 실볼트 53건 중 6건이 구 스키마로 빠졌는데도 `prior index` 가 아무 말 없이
 // 47행짜리 색인을 만들었다. 그래서 이 테스트는 두 가지를 동시에 고정한다:
 // (1) 정상 노트는 전부 나온다 (2) 빠진 노트가 경로·원인과 함께 보고된다.
 //

@@ -11,7 +11,7 @@ import (
 // ★★ 아카이브 이름을 유추에 맡기면 조용히 바뀐다.
 //
 // 한때 릴리스를 별도 저장소로 보내려고 `release.github.name` 을 적었더니 goreleaser 가
-// 그것으로 project_name 을 유추해 `casebook-releases_darwin_arm64.tar.gz` 를 만들었다.
+// 그것으로 project_name 을 유추해 `priorcase-releases_darwin_arm64.tar.gz` 를 만들었다.
 // 빌드도 테스트도 `goreleaser check` 도 통과하고 **다운로드 링크만 죽는** 종류다.
 //
 // 지금은 npm 이 배포 경로라 그 링크가 README 에 없지만, `scripts/npm-pack.sh` 가
@@ -19,8 +19,8 @@ import (
 func TestArchiveNameIsPinned(t *testing.T) {
 	root := repoRoot(t)
 	cfg := readFile(t, filepath.Join(root, ".goreleaser.yaml"))
-	if !regexp.MustCompile(`(?m)^project_name:\s*casebook\s*$`).MatchString(cfg) {
-		t.Error(".goreleaser.yaml 에 `project_name: casebook` 이 없다 — " +
+	if !regexp.MustCompile(`(?m)^project_name:\s*priorcase\s*$`).MatchString(cfg) {
+		t.Error(".goreleaser.yaml 에 `project_name: priorcase` 이 없다 — " +
 			"저장소 이름이 파일명에 새어 들어간다")
 	}
 	if !strings.Contains(cfg, `name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"`) {
@@ -28,7 +28,7 @@ func TestArchiveNameIsPinned(t *testing.T) {
 	}
 	// npm-pack.sh 가 기대하는 이름과 실제로 맞는지 본다.
 	pack := readFile(t, filepath.Join(root, "scripts", "npm-pack.sh"))
-	if !strings.Contains(pack, `casebook_${goos}_${goarch}.tar.gz`) {
+	if !strings.Contains(pack, `priorcase_${goos}_${goarch}.tar.gz`) {
 		t.Error("npm-pack.sh 가 기대하는 아카이브 이름이 goreleaser 와 어긋난다")
 	}
 }
@@ -81,7 +81,7 @@ func TestReadmeInstallPathIsNpm(t *testing.T) {
 	if strings.Contains(install, "go install github.com/") {
 		t.Error("설치 절이 `go install` 을 권한다 — 소스가 private 이라 낯선 사람에게는 죽는다")
 	}
-	for _, want := range []string{"npm install -g casebook", "npx", "mcpServers"} {
+	for _, want := range []string{"npm install -g priorcase", "npx", "mcpServers"} {
 		if !strings.Contains(install, want) {
 			t.Errorf("설치 절에 %q 가 없다 — npm 이 1차 경로다", want)
 		}

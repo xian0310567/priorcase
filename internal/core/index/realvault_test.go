@@ -8,19 +8,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // vaultEnv 는 실볼트 대조 테스트를 켜는 환경변수다.
-const vaultEnv = "CASEBOOK_TEST_VAULT"
+const vaultEnv = "PRIORCASE_TEST_VAULT"
 
 // TestRealVault 는 스펙 §11 이 "로컬 전용" 으로 남긴 실볼트 대조다.
-// CASEBOOK_TEST_VAULT 가 없으면 건너뛴다 — CI 에는 실볼트가 없고, 있어서도 안 된다
+// PRIORCASE_TEST_VAULT 가 없으면 건너뛴다 — CI 에는 실볼트가 없고, 있어서도 안 된다
 // (§11 "실볼트 사본을 저장소에 넣지 않는다": 결정 노트에 개인 내용이 들어 있다).
 //
-// 이 테스트가 있어야 §12 컷오버 게이트의 첫 항목("실볼트 46건을 cb index 가
+// 이 테스트가 있어야 §12 컷오버 게이트의 첫 항목("실볼트 46건을 prior index 가
 // 손실·왜곡 없이 재생성")을 확인할 수단이 생긴다. 합성 픽스처는 우리가 만든
 // 모양만 담고 있어서, 실볼트에만 있는 어긋남(손으로 고친 frontmatter, 옛
 // 방출기가 남긴 형식, 규약을 벗어난 파일명)은 여기서만 드러난다.

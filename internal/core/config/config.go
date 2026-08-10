@@ -1,4 +1,4 @@
-// Package config 는 casebook 의 유일한 설정 정본이다.
+// Package config 는 priorcase 의 유일한 설정 정본이다.
 // 코드에 개인 설정 리터럴을 두지 않는다 — 볼트 경로·도메인 매핑·제외·키워드가 전부 여기서 온다.
 package config
 
@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xian0310567/casebook/internal/core/xdgpath"
+	"github.com/xian0310567/priorcase/internal/core/xdgpath"
 )
 
 type Naming struct {
@@ -20,7 +20,7 @@ type Naming struct {
 	Index        string `toml:"index"`
 	// Rollup 은 주간 요약 파일 이름이다 (예: `98-{project}-작업-로그-요약.md`).
 	//
-	// **선택 키다.** 없으면 `cb rollup` 이 무엇을 적으라고 알려 주고 멈춘다.
+	// **선택 키다.** 없으면 `prior rollup` 이 무엇을 적으라고 알려 주고 멈춘다.
 	// 코드에 기본값을 숨기지 않는 이유는 스펙 §5 다 — 개인 설정 리터럴을 0으로 둔다.
 	// 여기 한국어 파일명을 박으면 영어권 사용자에게 조용히 이상한 파일이 생긴다.
 	Rollup string `toml:"rollup"`
@@ -78,16 +78,16 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "casebook", "config.toml"), nil
+	return filepath.Join(dir, "priorcase", "config.toml"), nil
 }
 
 // PathEnv 는 설정 파일 경로를 덮어쓰는 환경변수 이름이다.
-const PathEnv = "CASEBOOK_CONFIG"
+const PathEnv = "PRIORCASE_CONFIG"
 
 // ResolvePath 는 실제로 열 설정 파일 경로를 정한다.
-// 우선순위는 인자(--config 플래그) > CASEBOOK_CONFIG > XDG 기본 경로다.
+// 우선순위는 인자(--config 플래그) > PRIORCASE_CONFIG > XDG 기본 경로다.
 //
-// 환경변수가 필요한 이유: casebook 은 CLI 로만 불리는 물건이 아니다. Claude Code
+// 환경변수가 필요한 이유: priorcase 는 CLI 로만 불리는 물건이 아니다. Claude Code
 // 훅과 데몬 어댑터(Plan 3~4)는 실행 명령줄을 우리가 못 정하는 자리가 있어서
 // --config 를 붙일 수 없다. 그 경로들이 기본 XDG 경로가 아닌 설정을 가리키려면
 // 환경변수가 유일한 통로다. 스펙 §5 도 이 변수를 전제로 쓰여 있다.
@@ -102,8 +102,8 @@ func ResolvePath(path string) (string, error) {
 }
 
 // Load 는 설정을 읽는다. path 가 비면 ResolvePath 가 정한 경로를 쓴다
-// (CASEBOOK_CONFIG → XDG 기본 경로).
-// CASEBOOK_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
+// (PRIORCASE_CONFIG → XDG 기본 경로).
+// PRIORCASE_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
 func Load(path string) (*Config, error) {
 	path, err := ResolvePath(path)
 	if err != nil {
@@ -127,7 +127,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
 	}
 
-	if v := os.Getenv("CASEBOOK_VAULT"); v != "" {
+	if v := os.Getenv("PRIORCASE_VAULT"); v != "" {
 		c.Vault = v
 	}
 	if err := c.expand(); err != nil {
@@ -138,7 +138,7 @@ func Load(path string) (*Config, error) {
 
 // expand 는 ~ 를 홈 디렉토리로 편다. 경로 비교 전에 반드시 수행한다.
 // 홈 디렉토리 조회는 지연시킨다 — ~ 를 실제로 만났을 때만 os.UserHomeDir 를
-// 부른다. casebook 은 훅·데몬으로 뜨는 물건이라 $HOME 이 항상 보장되지
+// 부른다. priorcase 는 훅·데몬으로 뜨는 물건이라 $HOME 이 항상 보장되지
 // 않는데(launchd·cron·컨테이너), 설정에 ~ 가 하나도 없으면 $HOME 이 없어도
 // Load 가 성공해야 한다. ~ 를 만났는데 홈 디렉토리를 못 구하면 에러를
 // 반환한다 — 조용히 넘어가면 ~ 가 문자 그대로 남아 filepath.Rel 비교에서
@@ -274,7 +274,7 @@ func (c *Config) DomainForCwd(cwd string) string {
 		}
 	}
 	// 어디에도 안 걸리면 폴백이다. 없으면 빈 문자열 — 그건 기록이 막힌다는 뜻이고
-	// cb doctor 가 그 상태를 알린다.
+	// prior doctor 가 그 상태를 알린다.
 	return c.DefaultDomain
 }
 

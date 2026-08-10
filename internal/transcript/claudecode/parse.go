@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript"
 )
 
 // record 는 JSONL 한 줄 중 우리가 쓰는 부분만 담는다. 스키마 전체를 옮기지 않는 이유:
@@ -46,7 +46,7 @@ const maxLine = 8 << 20 // 8MB
 // Parse 는 JSONL 을 읽어 발화만 뽑는다.
 //
 // 반환값 넷이 다 쓰이라고 있는 것이다. 특히 뒤의 둘을 구조체로 감싸지 않은 이유는
-// [[casebook-결정-건너뛰기정책-침묵금지-2026-08-07]] 와 같다 — 필드로 두면 안 보는 게
+// [[priorcase-결정-건너뛰기정책-침묵금지-2026-08-07]] 와 같다 — 필드로 두면 안 보는 게
 // 티가 안 나는데, 여기서 안 보면 **구간이 통째로 사라진다.**
 //
 //   - consumed: **개행으로 끝난 줄까지의 바이트 수.** 호출자는 이 값으로만 체크포인트를

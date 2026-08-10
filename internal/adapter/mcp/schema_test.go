@@ -8,8 +8,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // ★★ 손으로 지은 스키마가 구조체와 어긋나면 **도구 호출이 통째로 실패한다.**
@@ -36,10 +36,10 @@ func TestToolSchemasMatchArgStructs(t *testing.T) {
 				props    []string
 				required []string
 			}{
-				"casebook_recall":  {[]string{"query", "limit", "cross_project"}, []string{"query"}},
-				"casebook_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "date", "session_id"}, []string{"domain", "slug", "summary"}},
-				"casebook_review":  {[]string{"stem", "outcome", "status", "retrospective", "supersedes"}, []string{"stem"}},
-				"casebook_pending": {[]string{"resolve"}, nil},
+				"priorcase_recall":  {[]string{"query", "limit", "cross_project"}, []string{"query"}},
+				"priorcase_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "date", "session_id"}, []string{"domain", "slug", "summary"}},
+				"priorcase_review":  {[]string{"stem", "outcome", "status", "retrospective", "supersedes"}, []string{"stem"}},
+				"priorcase_pending": {[]string{"resolve"}, nil},
 			}
 			for _, tool := range lt.Tools {
 				w, ok := want[tool.Name]
@@ -94,14 +94,14 @@ func TestEveryToolIsCallableInBothLanguages(t *testing.T) {
 				name string
 				args map[string]any
 			}{
-				{"casebook_recall", map[string]any{"query": "저장", "limit": 2, "cross_project": true}},
-				{"casebook_capture", map[string]any{
+				{"priorcase_recall", map[string]any{"query": "저장", "limit": 2, "cross_project": true}},
+				{"priorcase_capture", map[string]any{
 					"domain": "alpha", "slug": "스키마검증-" + lang, "summary": "스키마가 통하는지 본다",
 					"body": "## x\n", "tags": []string{"t"}, "related": []string{}, "date": "2026-08-09",
 					"session_id": "S1",
 				}},
-				{"casebook_review", map[string]any{"stem": "alpha-결정-스키마검증-" + lang + "-2026-08-09", "outcome": "good"}},
-				{"casebook_pending", map[string]any{}},
+				{"priorcase_review", map[string]any{"stem": "alpha-결정-스키마검증-" + lang + "-2026-08-09", "outcome": "good"}},
+				{"priorcase_pending", map[string]any{}},
 			}
 			for _, call := range calls {
 				res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: call.name, Arguments: call.args})
@@ -121,7 +121,7 @@ func TestUnknownArgumentDoesNotBreakCall(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	cs := connectWith(t, c)
 	_, err := cs.CallTool(context.Background(), &sdk.CallToolParams{
-		Name: "casebook_recall", Arguments: map[string]any{"query": "저장", "미래에생길인자": 1}})
+		Name: "priorcase_recall", Arguments: map[string]any{"query": "저장", "미래에생길인자": 1}})
 	if err != nil {
 		t.Errorf("모르는 인자 하나에 호출이 죽었다: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestRequiredArgumentIsEnforced(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	cs := connectWith(t, c)
 	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{
-		Name: "casebook_capture", Arguments: map[string]any{"slug": "x", "summary": "y"}})
+		Name: "priorcase_capture", Arguments: map[string]any{"slug": "x", "summary": "y"}})
 	if err == nil && (res == nil || !res.IsError) {
 		t.Error("domain 없이 통과했다 — 스키마의 required 가 안 먹는다")
 	}

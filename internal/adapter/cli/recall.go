@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/search"
 )
 
 func newRecallCmd() *cobra.Command {

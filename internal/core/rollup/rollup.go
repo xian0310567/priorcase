@@ -1,13 +1,13 @@
 // Package rollup 은 작업 로그를 주 단위로 묶는다.
 //
 // **LLM 을 부르지 않는다.** 옛 셸 구현(`rollup.sh`)은 `claude -p` 로 요약문을 만들었는데,
-// 그건 [[casebook-결정-기록회수모델-에이전트주도-2026-08-07]] 이 데몬에서 걷어낸 것과
+// 그건 [[priorcase-결정-기록회수모델-에이전트주도-2026-08-07]] 이 데몬에서 걷어낸 것과
 // 같은 의존이다 — 키 등록이 오픈소스 진입 장벽이고, 어차피 세션에 도는 에이전트가 이미
 // 전체 맥락을 갖고 있다.
 //
-// 그래서 역할을 나눈다. **casebook 은 기계적인 것만 한다** — 어느 주가 남았는지 찾고,
+// 그래서 역할을 나눈다. **priorcase 는 기계적인 것만 한다** — 어느 주가 남았는지 찾고,
 // 그 주의 블록을 뽑고, 중복 없이 붙인다. **판단(요약문)은 에이전트가 쓴다.**
-// `cb capture` 와 같은 구조다: 파일 규약은 우리가, 산문은 에이전트가.
+// `prior capture` 와 같은 구조다: 파일 규약은 우리가, 산문은 에이전트가.
 package rollup
 
 import (
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // minBlockBytes 보다 작은 주는 건너뛴다. 한 줄짜리 로그를 요약해 봐야 원본보다 길다.
@@ -176,8 +176,8 @@ tags: [rollup, %s]
 
 # %s — 작업 로그 주간 요약
 
-> `+"`cb rollup`"+` 이 %s 를 주 단위로 묶는다. **원본은 그대로 남는다.**
-> 요약문은 에이전트가 쓴다 — casebook 은 블록을 뽑고 붙이는 일만 한다.
+> `+"`prior rollup`"+` 이 %s 를 주 단위로 묶는다. **원본은 그대로 남는다.**
+> 요약문은 에이전트가 쓴다 — priorcase 는 블록을 뽑고 붙이는 일만 한다.
 `, prefix, prefix, prefix, l.RelPath(logPath))
 }
 

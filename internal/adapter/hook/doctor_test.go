@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/health"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/health"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 func wiringReport(t *testing.T, o DoctorOptions) *health.Report {
@@ -33,7 +33,7 @@ func check(t *testing.T, r *health.Report, name string) health.Check {
 	return health.Check{}
 }
 
-// 배선된 설정을 만든다 (cb init 이 만드는 것과 같은 모양).
+// 배선된 설정을 만든다 (prior init 이 만드는 것과 같은 모양).
 func wiredSettings(t *testing.T, binary string) string {
 	t.Helper()
 	sp := writeSettings(t, realisticSettings)
@@ -65,23 +65,23 @@ func TestDoctorSeesCompleteWiring(t *testing.T) {
 
 // 배선이 빠졌으면 **몇 개가 빠졌는지, 남의 훅은 몇 개인지** 같이 알려야 한다.
 func TestDoctorDetectsMissingHooks(t *testing.T) {
-	sp := writeSettings(t, realisticSettings) // casebook 훅이 없는 상태
+	sp := writeSettings(t, realisticSettings) // priorcase 훅이 없는 상태
 	got := check(t, wiringReport(t, DoctorOptions{SettingsPath: sp, StateDir: t.TempDir()}), "훅 배선")
 	if got.Level != health.Fail {
 		t.Errorf("Level = %v, Fail 이어야 한다", got.Level)
 	}
-	if got.Fix != "cb init --apply" {
+	if got.Fix != "prior init --apply" {
 		t.Errorf("Fix = %q", got.Fix)
 	}
 }
 
 // ★ 컷오버로 생긴 취약점을 덮는 검사다.
 //
-// 훅에는 cb 의 **절대 경로가 박혀** 있고 훅은 언제나 exit 0 이다. 그 파일이 사라지면
+// 훅에는 prior 의 **절대 경로가 박혀** 있고 훅은 언제나 exit 0 이다. 그 파일이 사라지면
 // 아무 일도 안 하면서 정상으로 보인다.
 func TestDoctorDetectsVanishedBinary(t *testing.T) {
 	dir := t.TempDir()
-	fake := filepath.Join(dir, "cb")
+	fake := filepath.Join(dir, "prior")
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDoctorDetectsVanishedBinary(t *testing.T) {
 
 // 훅이 부르는 것과 지금 도는 것이 다르면 고친 게 반영되지 않는다.
 func TestDoctorDetectsStaleBinaryPath(t *testing.T) {
-	other := filepath.Join(t.TempDir(), "cb")
+	other := filepath.Join(t.TempDir(), "prior")
 	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestDoctorTreatsNoDaemonAsNormal(t *testing.T) {
 }
 
 // ★ 컷오버 회고의 판정 기준. pending 이 오래 쌓인다는 것은 에이전트가
-// cb capture 를 안 부르고 있다는 뜻이다.
+// prior capture 를 안 부르고 있다는 뜻이다.
 func TestDoctorFlagsStalePending(t *testing.T) {
 	stateDir := t.TempDir()
 	s := daemon.NewStore(stateDir)
@@ -174,7 +174,7 @@ func TestDoctorDistinguishesBrokenStateFromZero(t *testing.T) {
 
 // 한글 이름이 섞여도 표가 어긋나지 않아야 한다 (%-Ns 는 바이트를 센다).
 func TestDisplayWidthCountsHangulAsTwo(t *testing.T) {
-	for s, want := range map[string]int{"볼트": 4, "미선언 도메인": 13, "cb": 2, "훅 배선": 7} {
+	for s, want := range map[string]int{"볼트": 4, "미선언 도메인": 13, "PATH": 4, "훅 배선": 7} {
 		if got := displayWidth(s); got != want {
 			t.Errorf("displayWidth(%q) = %d, want %d", s, got, want)
 		}
@@ -183,14 +183,14 @@ func TestDisplayWidthCountsHangulAsTwo(t *testing.T) {
 
 // ★ **PATH 검사가 없으면 진단 자체가 무용지물이다.**
 //
-// cb doctor 가 내는 모든 → 는 `cb 무엇무엇` 을 치라는 것인데, PATH 에 없으면 사용자는
+// prior doctor 가 내는 모든 → 는 `prior 무엇무엇` 을 치라는 것인데, PATH 에 없으면 사용자는
 // 그중 하나도 실행할 수 없다. 훅은 절대 경로로 배선되므로 **시스템은 멀쩡히 도는데
 // 사람만 손을 못 대는** 상태가 된다.
 //
-// 실제로 그랬다 — 개발 내내 절대 경로로 불러서 못 봤고, 사용자가 `cb doctor` 를 쳤을 때
+// 실제로 그랬다 — 개발 내내 절대 경로로 불러서 못 봤고, 사용자가 `prior doctor` 를 쳤을 때
 // "command not found" 로 처음 드러났다.
 func TestDoctorDetectsCbNotOnPath(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // cb 가 없는 PATH
+	t.Setenv("PATH", t.TempDir()) // prior 가 없는 PATH
 	got := check(t, wiringReport(t, DoctorOptions{
 		SettingsPath: writeSettings(t, realisticSettings), StateDir: t.TempDir()}), "PATH")
 
@@ -212,7 +212,7 @@ func TestDoctorAcceptsCbOnPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := os.Symlink(exe, filepath.Join(dir, "cb")); err != nil {
+	if err := os.Symlink(exe, filepath.Join(dir, "prior")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -224,10 +224,10 @@ func TestDoctorAcceptsCbOnPath(t *testing.T) {
 	}
 }
 
-// PATH 의 cb 가 지금 도는 것과 다르면 옛 사본을 부르고 있다는 뜻이다.
+// PATH 의 prior 가 지금 도는 것과 다르면 옛 사본을 부르고 있다는 뜻이다.
 func TestDoctorDetectsDifferentCbOnPath(t *testing.T) {
 	dir := t.TempDir()
-	other := filepath.Join(dir, "cb")
+	other := filepath.Join(dir, "prior")
 	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestDoctorDetectsDifferentCbOnPath(t *testing.T) {
 }
 
 // ★ **회고 판정이 이 한 줄이다.** 표시는 쌓이는데 기록이 0이면 에이전트가
-// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
+// prior capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
 func TestDoctorFailsWhenPendingGrowsButNothingRecorded(t *testing.T) {
 	stateDir := t.TempDir()
 	s := daemon.NewStore(stateDir)

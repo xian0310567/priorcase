@@ -34,7 +34,7 @@ type SkippedNote struct {
 // 죽으면 안 된다(TestListSkipsBrokenFile 이 이걸 고정한다). 문제는 예전에
 // 건너뛴 것을 **아무에게도 알리지 않았다**는 점이었다: 실볼트 53건 중 6건이
 // 구 스키마(title/project/created/superseded-by)로 쓰여 있어 KnownFields(true)
-// 파싱에서 거부됐고, `cb index` 는 아무 말 없이 47행짜리 색인을 만들었다.
+// 파싱에서 거부됐고, `prior index` 는 아무 말 없이 47행짜리 색인을 만들었다.
 // 스펙 §1.3 이 셸의 죄목으로 든 "조용히 데이터를 잃는다" 가 그대로 재현된 것이다.
 //
 // 반환값을 구조체 하나로 묶지 않고 셋으로 늘린 이유: 구조체면 호출자가
@@ -169,7 +169,7 @@ func (l *Layout) readNote(path string) (Note, error) {
 //
 // WriteFileAtomic 을 쓴다 — os.WriteFile 은 기존 파일을 먼저 비운 뒤 쓰기
 // 때문에 중간에 실패하면 결정 노트가 잘린 채로 남는다. 색인과 달리 결정
-// 노트는 `cb index` 로 재생성할 원본이 없으므로 이 보장이 특히 중요하다.
+// 노트는 `prior index` 로 재생성할 원본이 없으므로 이 보장이 특히 중요하다.
 func (l *Layout) Write(n Note) error {
 	if err := os.MkdirAll(filepath.Dir(n.Path), 0o755); err != nil {
 		return err

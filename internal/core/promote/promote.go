@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // Result 는 승격 시도 하나의 결과다.

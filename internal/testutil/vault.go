@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
 // VaultConfig 는 testdata/vault 를 임시 디렉토리로 복사하고 그것을 가리키는 설정을 준다.

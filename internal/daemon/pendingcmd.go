@@ -7,9 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewPendingCommand 는 `cb pending` 이다.
+// NewPendingCommand 는 `prior pending` 이다.
 //
-// MCP 에는 casebook_pending 도구가 있는데 CLI 에는 없었다. 훅 주입이 "cb pending 으로
+// MCP 에는 priorcase_pending 도구가 있는데 CLI 에는 없었다. 훅 주입이 "prior pending 으로
 // 지워라" 라고 안내하려면 그 명령이 실제로 있어야 한다 — 없는 명령을 안내하면
 // 안내 전체의 신뢰가 깎인다.
 func NewPendingCommand() *cobra.Command {
@@ -19,7 +19,7 @@ func NewPendingCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pending",
 		Short: "기록되지 않은 결정 구간을 보고 지운다",
-		Long: "안전망이 표시한 구간을 본다. 실제 결정이면 `cb capture` 로 남기고, " +
+		Long: "안전망이 표시한 구간을 본다. 실제 결정이면 `prior capture` 로 남기고, " +
 			"아니면 --resolve 로 지운다.\n\n" +
 			"그대로 두면 매 프롬프트마다 다시 뜬다 — 그게 이 표시의 목적이다.",
 		Args:          cobra.NoArgs,
@@ -67,15 +67,15 @@ func NewPendingCommand() *cobra.Command {
 					fmt.Fprintf(out, "  ---\n%s\n  ---\n", indent(ex))
 				}
 			}
-			fmt.Fprintln(out, "\n실제 결정이면 cb capture 로 남겨라.")
-			fmt.Fprintln(out, "결정이 아니면 cb pending --resolve <id> 로 지워라.")
+			fmt.Fprintln(out, "\n실제 결정이면 prior capture 로 남겨라.")
+			fmt.Fprintln(out, "결정이 아니면 prior pending --resolve <id> 로 지워라.")
 			return nil
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&resolve, "resolve", "", "지울 구간의 id")
 	f.BoolVar(&full, "full", false, "발췌를 자르지 않고 다 보여 준다")
-	f.StringVar(&stateDir, "state-dir", "", "상태 디렉토리 (기본: $XDG_STATE_HOME/casebook)")
+	f.StringVar(&stateDir, "state-dir", "", "상태 디렉토리 (기본: $XDG_STATE_HOME/priorcase)")
 	return cmd
 }
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // Options 는 훅 한 번을 도는 데 필요한 전부다.

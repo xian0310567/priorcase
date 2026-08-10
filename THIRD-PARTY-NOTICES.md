@@ -1,9 +1,9 @@
 # 제3자 라이선스 고지 / Third-Party Notices
 
-casebook 바이너리에는 아래 오픈소스 구성요소가 포함된다. 각 구성요소는 자체
+priorcase 바이너리에는 아래 오픈소스 구성요소가 포함된다. 각 구성요소는 자체
 라이선스를 따르며, 그 라이선스 전문은 각 프로젝트 저장소에 있다.
 
-casebook binaries include the open-source components listed below. Each is
+priorcase binaries include the open-source components listed below. Each is
 governed by its own license; full texts are available in the respective
 project repositories.
 
@@ -29,5 +29,5 @@ project repositories.
 Go 표준 라이브러리는 BSD-3-Clause 를 따른다 (https://go.dev/LICENSE).
 The Go standard library is BSD-3-Clause licensed.
 
-이 목록은 `go list -deps ./cmd/cb` 로 **실제 바이너리에 링크되는 것만** 추렸다.
+이 목록은 `go list -deps ./cmd/prior` 로 **실제 바이너리에 링크되는 것만** 추렸다.
 테스트 전용 의존성(testify, go-cmp 등)은 배포물에 들어가지 않아 제외했다.

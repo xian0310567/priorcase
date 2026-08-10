@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/i18n"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/i18n"
 )
 
 type Layout struct {

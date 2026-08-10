@@ -67,7 +67,7 @@ func TestDoReturnsRelated(t *testing.T) {
 	}
 }
 
-// TestDoSupersedesBothSides 는 cb capture --supersedes 가 cb review 와 같은
+// TestDoSupersedesBothSides 는 prior capture --supersedes 가 prior review 와 같은
 // 일을 하는지 본다: 새 노트의 supersedes 가 "[[stem]]" 형식이고, 옛 노트가
 // superseded 로 바뀌고 related 에 후속 문서가 들어간다. 예전에는 capture 가
 // 날문자열을 그대로 넣기만 해서 옛 노트가 active 로 남았고, 이미 뒤집힌 결정이

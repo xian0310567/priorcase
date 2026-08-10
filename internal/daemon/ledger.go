@@ -23,7 +23,7 @@ const ledgerFile = "promotions.jsonl"
 //
 // **성공만 남기면 안 된다.** "판별기가 봤는데 기록할 게 아니라고 했다" 와 "판별기가
 // 아예 안 돌았다" 는 완전히 다른 사실인데, 성공만 남기면 둘 다 빈 원장으로 보인다.
-// 컷오버 1일차 회고에서 cb doctor 가 정확히 그 둘을 구분하지 못했다.
+// 컷오버 1일차 회고에서 prior doctor 가 정확히 그 둘을 구분하지 못했다.
 type Promotion struct {
 	At       time.Time `json:"at"`
 	ID       string    `json:"id"`

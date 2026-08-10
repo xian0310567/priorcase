@@ -1,4 +1,4 @@
-// Package transcript 는 호스트의 대화 기록을 casebook 이 다룰 수 있는 형태로 옮긴다.
+// Package transcript 는 호스트의 대화 기록을 priorcase 가 다룰 수 있는 형태로 옮긴다.
 //
 // **읽기 전용이다.** 이 패키지도, 이걸 쓰는 데몬도 transcript 파일에 절대 쓰지 않는다.
 // 호스트가 소유한 파일이고, 우리가 건드리면 그 호스트의 대화가 깨진다.

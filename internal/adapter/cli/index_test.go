@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // fixtureNoteCount 는 픽스처 볼트(testdata/vault)의 결정 노트 수다.
-// `cb index` 가 보고하는 행 수의 기대값이므로, 픽스처에 노트를 더하면 여기도 는다.
+// `prior index` 가 보고하는 행 수의 기대값이므로, 픽스처에 노트를 더하면 여기도 는다.
 const fixtureNoteCount = 4
 
-// TestIndexCmd 는 `cb index` 가 --config 로 지정된 설정 파일을 읽어 색인을 실제로
+// TestIndexCmd 는 `prior index` 가 --config 로 지정된 설정 파일을 읽어 색인을 실제로
 // 만들고, "색인 N행 생성" 형식으로 행 수를 보고하는지 확인한다.
 func TestIndexCmd(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
@@ -27,7 +27,7 @@ func TestIndexCmd(t *testing.T) {
 	root.SetArgs([]string{"index", "--config", cfgPath})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb index 실행 실패: %v", err)
+		t.Fatalf("prior index 실행 실패: %v", err)
 	}
 
 	want := fmt.Sprintf("색인 %d행 생성\n", fixtureNoteCount)
@@ -77,7 +77,7 @@ func plantLegacyNote(t *testing.T, vault string) string {
 	return rel
 }
 
-// TestIndexCmdRevealsSkippedNotes 는 `cb index` 가 건너뛴 노트를 사용자에게
+// TestIndexCmdRevealsSkippedNotes 는 `prior index` 가 건너뛴 노트를 사용자에게
 // 드러내는지 확인한다.
 //
 // 예전에는 읽기 실패한 노트를 조용히 건너뛰고 "색인 N행 생성" 만 냈다. 실볼트
@@ -98,7 +98,7 @@ func TestIndexCmdRevealsSkippedNotes(t *testing.T) {
 	root.SetArgs([]string{"index", "--config", cfgPath})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("깨진 노트 한 건 때문에 cb index 가 죽으면 안 된다: %v", err)
+		t.Fatalf("깨진 노트 한 건 때문에 prior index 가 죽으면 안 된다: %v", err)
 	}
 
 	out := buf.String()

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // recentN 은 세션 진입에 이름까지 적는 결정 수다. 이 블록은 세션당 한 번 실리고
@@ -20,7 +20,7 @@ func (o Options) sessionStart() error {
 	lang := o.Layout.Lang()
 
 	var b strings.Builder
-	b.WriteString("## casebook\n\n")
+	b.WriteString("## priorcase\n\n")
 
 	domain := o.Config.DomainForCwd(o.Input.Cwd)
 	excluded := o.Input.Cwd != "" && o.Config.IsExcluded(o.Input.Cwd)
@@ -29,9 +29,9 @@ func (o Options) sessionStart() error {
 	case excluded:
 		// 자체 스키마 구역이다. 여기에 결정을 쓰면 그 저장소의 규약을 깬다.
 		b.WriteString(lang.T(
-			"**이 디렉토리는 casebook 제외 구역이다.** 결정 노트를 만들지 마라.\n"+
+			"**이 디렉토리는 priorcase 제외 구역이다.** 결정 노트를 만들지 마라.\n"+
 				"회수는 계속 동작한다 — 읽기 전용이라 이 구역의 규약을 건드리지 않는다.\n",
-			"**This directory is a casebook exclusion zone.** Do not create decision notes here.\n"+
+			"**This directory is a priorcase exclusion zone.** Do not create decision notes here.\n"+
 				"Recall still works — it is read-only, so it cannot touch this zone's conventions.\n"))
 	case domain == "":
 		b.WriteString(lang.T(
@@ -53,10 +53,10 @@ func (o Options) sessionStart() error {
 
 	if !excluded {
 		b.WriteString(lang.T(
-			"\n**되돌리기 어려운 선택을 했으면 그 자리에서 `cb capture` 를 부른다.**\n"+
+			"\n**되돌리기 어려운 선택을 했으면 그 자리에서 `prior capture` 를 부른다.**\n"+
 				"아키텍처·스키마·외부 서비스·가격처럼 나중에 \"왜 이렇게 했지\"를 묻게 될 선택이 대상이다.\n"+
 				"자잘한 것까지 남기면 회수가 오히려 어려워진다.\n",
-			"\n**The moment you make a hard-to-reverse choice, call `cb capture`.**\n"+
+			"\n**The moment you make a hard-to-reverse choice, call `prior capture`.**\n"+
 				"That means choices you will later ask \"why did we do it this way\" about — architecture, schema, external services, pricing.\n"+
 				"Recording every trivial thing only makes recall harder.\n"))
 	}
@@ -76,14 +76,14 @@ func (o Options) sessionStart() error {
 			fmt.Fprintf(&b, "- %s `%s` %s\n", date, strings.Join(n.Meta.Domain, "·"), sum)
 		}
 		b.WriteString(lang.T(
-			"\n주제가 바뀔 때마다 관련 결정이 자동으로 주입된다 — 더 파야 하면 `cb recall <주제>`.\n",
-			"\nRelated decisions are injected automatically whenever the topic shifts — to dig further, run `cb recall <topic>`.\n"))
+			"\n주제가 바뀔 때마다 관련 결정이 자동으로 주입된다 — 더 파야 하면 `prior recall <주제>`.\n",
+			"\nRelated decisions are injected automatically whenever the topic shifts — to dig further, run `prior recall <topic>`.\n"))
 	}
 
 	if len(skipped) > 0 {
 		fmt.Fprintf(&b, lang.T(
-			"\n⚠️ 결정 노트 %s을 읽지 못해 회수에서 빠져 있다. `cb index` 가 목록을 알려준다.\n",
-			"\n⚠️ %s missing from recall — could not be read. `cb index` lists them.\n"),
+			"\n⚠️ 결정 노트 %s을 읽지 못해 회수에서 빠져 있다. `prior index` 가 목록을 알려준다.\n",
+			"\n⚠️ %s missing from recall — could not be read. `prior index` lists them.\n"),
 			lang.Count(len(skipped), "건", "decision note", "decision notes"))
 	}
 	b.WriteString(o.pendingBlock())
@@ -126,9 +126,9 @@ func (o Options) pendingBlock() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, lang.T(
 		"\n⚠️ **데몬이 표시한 미확인 구간이 %s 있다.** 이전 세션에서 결정을 내리고도\n"+
-			"기록하지 않고 지나간 자리다. 확인해서 실제 결정이면 `cb capture` 로 남겨라.\n",
+			"기록하지 않고 지나간 자리다. 확인해서 실제 결정이면 `prior capture` 로 남겨라.\n",
 		"\n⚠️ **The daemon flagged %s.** These are spots where an earlier session made a\n"+
-			"decision and moved on without recording it. Check them, and record the real ones with `cb capture`.\n"),
+			"decision and moved on without recording it. Check them, and record the real ones with `prior capture`.\n"),
 		lang.Count(len(items), "건", "unreviewed segment", "unreviewed segments"))
 	for i, p := range items {
 		if i >= recentN {

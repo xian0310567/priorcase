@@ -161,7 +161,7 @@ func TestDefaultDirIsOutsideVault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join("/tmp/xdgstate", "casebook"); got != want {
+	if want := filepath.Join("/tmp/xdgstate", "priorcase"); got != want {
 		t.Errorf("DefaultDir() = %q, want %q", got, want)
 	}
 }
