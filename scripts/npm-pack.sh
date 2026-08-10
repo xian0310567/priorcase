@@ -60,4 +60,32 @@ json.dump(p, open(dst, "w"), indent=2, ensure_ascii=False)
 open(dst, "a").write("\n")
 PY
 
+# **바이너리가 자기를 뭐라고 부르는지 확인한다.**
+#
+# 판이 두 곳에서 따로 정해진다. goreleaser 가 ldflags 로 바이너리에 박고, 이
+# 스크립트는 인자로 받아 package.json 에 쓴다. **둘이 같은지 아무도 안 봤다.**
+#
+# 2026-08-10 에 그래서 틀렸다. `goreleaser --snapshot` 으로 빌드한 산출물을
+# `npm-pack.sh 0.1.0` 으로 포장해 게시했더니, 설치는 0.1.0 인데 `prior --version`
+# 은 `0.0.1-SNAPSHOT-<sha>` 라고 답했다. MCP 의 serverInfo.version 도 같이 틀렸다.
+# 설치도 실행도 멀쩡해서 **아무 데서도 안 걸린다** — 사용자가 판을 물어볼 때만 드러난다.
+#
+# 호스트와 같은 플랫폼 것 하나만 실제로 실행해 본다. 넷은 같은 빌드에서 나오므로
+# 하나가 맞으면 넷 다 맞고, 크로스 플랫폼 바이너리는 여기서 돌릴 수 없다.
+host_goos=$(go env GOOS 2>/dev/null || uname -s | tr 'A-Z' 'a-z')
+host_goarch=$(go env GOARCH 2>/dev/null || true)
+case "$host_goarch" in amd64) host_npmarch=x64 ;; arm64) host_npmarch=arm64 ;; *) host_npmarch="" ;; esac
+
+if [ -n "$host_npmarch" ] && [ -x "$OUT/${host_goos}-${host_npmarch}/bin/prior" ]; then
+  reported=$("$OUT/${host_goos}-${host_npmarch}/bin/prior" --version 2>&1 | awk '{print $NF}')
+  if [ "$reported" != "$VERSION" ]; then
+    echo "판이 어긋난다 — package.json 은 ${VERSION} 인데 바이너리는 ${reported} 라고 답한다." >&2
+    echo "  goreleaser 를 --snapshot 으로 돌렸을 때 이렇게 된다. 태그를 붙여 다시 빌드해라." >&2
+    exit 1
+  fi
+  echo "판 확인: 바이너리와 package.json 둘 다 ${VERSION}"
+else
+  echo "판 확인 건너뜀 — 호스트(${host_goos}/${host_goarch})와 같은 플랫폼 산출물이 없다" >&2
+fi
+
 echo "npm 패키지 5개: $OUT"
