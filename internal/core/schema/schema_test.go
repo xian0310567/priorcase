@@ -2,7 +2,7 @@ package schema
 
 import "testing"
 
-import "github.com/xian0310567/casebook/internal/core/store"
+import "github.com/xian0310567/priorcase/internal/core/store"
 
 // koMarker 는 기본 한국어 템플릿에서 유도되는 표식이다. 이 파일 안에서만
 // 리터럴로 둔다 — 제품 코드의 정본은 설정의 decision_file 템플릿이다.

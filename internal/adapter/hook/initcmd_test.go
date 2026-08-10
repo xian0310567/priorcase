@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
-// root 는 --config 를 물려주는 최소 루트다 (cmd/cb 와 같은 모양).
+// root 는 --config 를 물려주는 최소 루트다 (cmd/prior 와 같은 모양).
 func root(t *testing.T, args ...string) (*cobra.Command, *strings.Builder) {
 	t.Helper()
-	r := &cobra.Command{Use: "cb", SilenceUsage: true, SilenceErrors: true}
+	r := &cobra.Command{Use: "prior", SilenceUsage: true, SilenceErrors: true}
 	r.PersistentFlags().String("config", "", "")
 	r.AddCommand(NewInitCommand())
 	var out strings.Builder
@@ -69,13 +69,13 @@ func TestStarterConfigNeverOverwrites(t *testing.T) {
 	}
 }
 
-// --apply 없이는 아무것도 안 바뀐다. cb init 의 가장 중요한 안전장치다.
+// --apply 없이는 아무것도 안 바뀐다. prior init 의 가장 중요한 안전장치다.
 func TestInitCommandWithoutApplyChangesNothing(t *testing.T) {
 	sp := writeSettings(t, realisticSettings)
 	before, _ := os.ReadFile(sp)
 	cfgPath := filepath.Join(t.TempDir(), "config.toml")
 
-	r, out := root(t, "init", "--settings", sp, "--config", cfgPath, "--binary", "/usr/local/bin/cb")
+	r, out := root(t, "init", "--settings", sp, "--config", cfgPath, "--binary", "/usr/local/bin/prior")
 	if err := r.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestInitCommandApplyAndRevert(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.toml")
 
 	r, out := root(t, "init", "--settings", sp, "--config", cfgPath,
-		"--binary", "/usr/local/bin/cb", "--apply")
+		"--binary", "/usr/local/bin/prior", "--apply")
 	if err := r.Execute(); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -162,9 +162,9 @@ func TestStarterConfigIsImmediatelyUsable(t *testing.T) {
 	if fi, err := os.Stat(c.Vault); err != nil || !fi.IsDir() {
 		t.Errorf("볼트를 안 만들었다: %v", err)
 	}
-	// rollup·judge 키가 있어야 cb rollup 과 자동 기록이 바로 된다.
+	// rollup·judge 키가 있어야 prior rollup 과 자동 기록이 바로 된다.
 	if c.Naming.Rollup == "" {
-		t.Error("naming.rollup 이 없다 — cb rollup 이 실패한다")
+		t.Error("naming.rollup 이 없다 — prior rollup 이 실패한다")
 	}
 	if c.Capture.JudgeModel == "" {
 		t.Error("judge_model 이 없다")

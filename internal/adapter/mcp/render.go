@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // renderSkipped 는 읽지 못해 건너뛴 결정 노트를 **응답 본문에 실을 문자열**로 만든다.
@@ -12,7 +12,7 @@ import (
 // CLI 는 같은 정보를 stderr 로 낸다. MCP 에서 그렇게 하면 호스트 로그로 흘러가고
 // 에이전트 컨텍스트에는 들어가지 않는다 — 회수에서 노트가 빠졌다는 사실을 정작
 // 회수하는 쪽이 모르게 된다. 어댑터마다 노출 수단을 다시 고르라는 것이
-// [[casebook-결정-건너뛰기정책-침묵금지-2026-08-07]] 의 요지였고, 여기서는 본문이 답이다.
+// [[priorcase-결정-건너뛰기정책-침묵금지-2026-08-07]] 의 요지였고, 여기서는 본문이 답이다.
 func renderSkipped(l *store.Layout, skipped []store.SkippedNote) string {
 	if len(skipped) == 0 {
 		return ""
@@ -33,6 +33,6 @@ func renderPreserved(l *store.Layout, backup string) string {
 	if backup == "" {
 		return ""
 	}
-	return fmt.Sprintf("\n경고: 색인 자리에 casebook 이 만들지 않은 파일이 있어 옮겨 두었다: %s\n"+
+	return fmt.Sprintf("\n경고: 색인 자리에 priorcase 가 만들지 않은 파일이 있어 옮겨 두었다: %s\n"+
 		"설정의 [naming] index 를 확인하라.\n", l.RelPath(backup))
 }

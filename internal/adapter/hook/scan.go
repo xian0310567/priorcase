@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // safetyNet 은 stop·pre-compact·session-end 가 하는 일이다.
@@ -41,7 +41,7 @@ func (o Options) safetyNet(ctx context.Context) error {
 	//
 	// **소유권 게이트 앞에 둔다.** ScanOnce 의 락은 *훑기*의 주인을 하나로 정하는
 	// 것이고, 승격은 이미 표시된 구간을 읽어 처리할 뿐이라 훑기와 겹치지 않는다.
-	// 게이트 뒤에 두면 `cb watch` 를 켜는 것이 자동 기록을 끄는 행위가 된다 —
+	// 게이트 뒤에 두면 `prior watch` 를 켜는 것이 자동 기록을 끄는 행위가 된다 —
 	// 데몬의 drain 은 판별기를 부르지 않고, 데몬은 세션이 끝난 것도 모른다.
 	//
 	// 스캔이 실패해도 부른다. 이미 표시된 구간은 그것과 무관하게 처리해야 한다.
@@ -53,7 +53,7 @@ func (o Options) safetyNet(ctx context.Context) error {
 		return serr
 	}
 	if !owned {
-		return nil // cb watch 가 훑기의 주인이다 — 훑기는 그쪽이 한다
+		return nil // prior watch 가 훑기의 주인이다 — 훑기는 그쪽이 한다
 	}
 	// 사람이 볼 수 있게 stderr 로만 남긴다. 조용히 훑고 끝나면 동작하는지 알 수 없다.
 	if r.Turns > 0 {
@@ -71,7 +71,7 @@ func (o Options) safetyNet(ctx context.Context) error {
 		if !r.Advanced {
 			msg += fmt.Sprintf(" · ⚠️ 체크포인트 미전진 (깨진 줄 %d)", r.Bad)
 		}
-		fmt.Fprintf(o.Err, "cb hook %s: %s\n", o.Event, msg)
+		fmt.Fprintf(o.Err, "prior hook %s: %s\n", o.Event, msg)
 	}
 	return nil
 }
@@ -110,6 +110,6 @@ func (o Options) promote(ctx context.Context) {
 		First:    o.Input.TranscriptPath,
 		Budget:   promoteBudget,
 		Err:      o.Err,
-		Label:    "cb hook " + string(o.Event),
+		Label:    "prior hook " + string(o.Event),
 	})
 }

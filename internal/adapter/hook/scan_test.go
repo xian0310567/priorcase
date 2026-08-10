@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // writeTranscript 는 결정 시그널이 든 대화를 만든다.
@@ -215,7 +215,7 @@ func TestStopDoesNotPromote(t *testing.T) {
 
 // 판별기가 띄운 세션에서는 훅이 아무것도 하지 않는다 — 안 그러면 판별기가 판별기를 부른다.
 func TestJudgeSessionDoesNotRecurse(t *testing.T) {
-	t.Setenv("CASEBOOK_JUDGE", "1")
+	t.Setenv("PRIORCASE_JUDGE", "1")
 	sd := t.TempDir()
 	tp := writeTranscript(t, t.TempDir(), 8)
 	c := cfg(t)

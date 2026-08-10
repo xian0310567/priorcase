@@ -1,4 +1,4 @@
-// Package hook 은 casebook 을 Claude Code 훅으로 낸다.
+// Package hook 은 priorcase 을 Claude Code 훅으로 낸다.
 //
 // **이 어댑터의 존재 이유는 한 칸이다** — 주제 전환 시 회수 강제 주입. MCP 에는 서버가
 // 대화 중간에 텍스트를 밀어넣는 채널이 없어서, 그 한 칸만 호스트 훅으로 채울 수 있다
@@ -6,7 +6,7 @@
 //
 // 세 가지 규율이 있다.
 //
-//  1. **무슨 일이 있어도 exit 0.** 훅이 실패해서 대화가 막히면, 사용자는 casebook 을
+//  1. **무슨 일이 있어도 exit 0.** 훅이 실패해서 대화가 막히면, 사용자는 priorcase 을
 //     지우지 고치지 않는다. 진단은 stderr 로만 낸다.
 //  2. **stdout 은 에이전트 컨텍스트다.** user-prompt-submit·session-start 의 stdout 은
 //     그대로 주입되므로 경고가 한 줄도 섞이면 안 된다. MCP 의 stdio 와 같은 규율이다.
@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-// Event 는 casebook 이 다루는 훅 이벤트다.
+// Event 는 priorcase 가 다루는 훅 이벤트다.
 type Event string
 
 const (
@@ -32,7 +32,7 @@ const (
 	EventSessionEnd       Event = "session-end"
 )
 
-// Events 는 cb init 이 배선하는 이벤트 전부다. 순서가 settings.json 에 그대로 간다.
+// Events 는 prior init 이 배선하는 이벤트 전부다. 순서가 settings.json 에 그대로 간다.
 var Events = []Event{EventSessionStart, EventUserPromptSubmit, EventStop, EventPreCompact, EventSessionEnd}
 
 // claudeCodeName 은 Claude Code 설정에서 쓰는 이벤트 이름이다.

@@ -69,4 +69,4 @@ jobs:
             npm publish "$d" --access public --provenance
           done
           # 런처는 마지막이다. 이게 올라가는 순간 사용자가 설치를 시작한다.
-          npm publish dist/npm/casebook --access public --provenance
+          npm publish dist/npm/priorcase --access public --provenance

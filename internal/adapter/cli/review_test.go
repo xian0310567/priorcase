@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // fixtureStem 은 픽스처 볼트에 있는 결정 노트 하나의 stem 이다. review 대상.
 const fixtureStem = "alpha-결정-저장엔진-2026-08-01"
 
-// TestReviewCmdUpdatesOutcomeAndRetro 는 `cb review <stem> --outcome --retro`
+// TestReviewCmdUpdatesOutcomeAndRetro 는 `prior review <stem> --outcome --retro`
 // 가 노트를 실제로 갱신하고, 출력에 "갱신됨:" 이 나오는지 확인한다.
 func TestReviewCmdUpdatesOutcomeAndRetro(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
@@ -27,7 +27,7 @@ func TestReviewCmdUpdatesOutcomeAndRetro(t *testing.T) {
 	})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb review 실행 실패: %v", err)
+		t.Fatalf("prior review 실행 실패: %v", err)
 	}
 
 	got := buf.String()
@@ -65,11 +65,11 @@ func TestReviewCmdRejectsMissingStem(t *testing.T) {
 	})
 
 	if err := root.Execute(); err == nil {
-		t.Fatal("없는 stem 인데도 cb review 가 성공했다")
+		t.Fatal("없는 stem 인데도 prior review 가 성공했다")
 	}
 }
 
-// TestReviewCmdRevealsSkippedNotes 는 `cb review` 도 색인이 불완전해졌다는 사실을
+// TestReviewCmdRevealsSkippedNotes 는 `prior review` 도 색인이 불완전해졌다는 사실을
 // 알리는지 본다 — review 역시 갱신 뒤 내부적으로 색인을 다시 쓴다.
 func TestReviewCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
@@ -82,7 +82,7 @@ func TestReviewCmdRevealsSkippedNotes(t *testing.T) {
 	root.SetArgs([]string{"review", "--config", cfgPath, fixtureStem, "--outcome", "good"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("깨진 노트 한 건 때문에 cb review 가 죽으면 안 된다: %v", err)
+		t.Fatalf("깨진 노트 한 건 때문에 prior review 가 죽으면 안 된다: %v", err)
 	}
 	if !strings.Contains(buf.String(), "갱신됨:") {
 		t.Errorf("갱신이 안 됐다:\n%s", buf.String())

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/health"
+	"github.com/xian0310567/priorcase/internal/core/health"
 )
 
 // report 는 손으로만 확인하고 있었다. 세 가지가 걸려 있다 —

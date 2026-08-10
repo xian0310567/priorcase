@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/core/promote"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/core/promote"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // PromoteOptions 는 승격 한 판에 필요한 것이다.
@@ -28,7 +27,7 @@ type PromoteOptions struct {
 	Budget time.Duration
 	// Err 는 사람에게 보이는 진행 보고다. nil 이면 버린다.
 	Err io.Writer
-	// Label 은 보고 줄 앞에 붙는 이름이다 ("cb hook session-end" 같은).
+	// Label 은 보고 줄 앞에 붙는 이름이다 ("prior hook session-end" 같은).
 	Label string
 }
 
@@ -47,10 +46,10 @@ const DefaultPromoteBudget = 90 * time.Second
 // 판별기가 없으면 아무것도 하지 않는다. 그때는 표시만 남고 에이전트가 판단한다 —
 // 그것이 판별기 없는 설치의 정상 동작이고 경고를 낼 일이 아니다.
 //
-// 재귀 차단: 판별기가 띄운 세션에도 훅이 붙는다. CASEBOOK_JUDGE 가 있으면 그
+// 재귀 차단: 판별기가 띄운 세션에도 훅이 붙는다. PRIORCASE_JUDGE 가 있으면 그
 // 세션이므로 즉시 끝낸다. 안 그러면 판별기가 판별기를 부른다.
 func Promote(ctx context.Context, o PromoteOptions) {
-	if os.Getenv("CASEBOOK_JUDGE") == "1" {
+	if os.Getenv("PRIORCASE_JUDGE") == "1" {
 		return
 	}
 	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
@@ -81,10 +80,7 @@ func Promote(ctx context.Context, o PromoteOptions) {
 				"설정에 [[domain]] 을 추가하거나 default_domain 을 적어라", p.ID()))
 			continue
 		}
-		day := p.When()
-		if i := strings.Index(day, "~"); i > 0 {
-			day = day[:i] // 여러 날에 걸쳤으면 첫날로
-		}
+		day := p.DecidedOn()
 
 		// **집어 간다.** 승격이 스캔 소유권 밖으로 나온 뒤로(D12) 훅과 데몬이 동시에
 		// 같은 구간을 집을 수 있다 — 판별기는 비결정적이라 같은 대화에 slug 가 다른

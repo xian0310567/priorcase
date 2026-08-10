@@ -4,9 +4,9 @@ import (
 	"context"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // server 는 도구 핸들러들이 공유하는 상태다. 핸들러마다 설정을 다시 읽지 않는다 —
@@ -25,13 +25,13 @@ type server struct {
 // 여기서 그걸 읽으려면 어댑터가 어댑터를 import 해야 한다. 문자열로 받으면 의존이
 // 한 방향으로 유지된다 (cli → mcp).
 //
-// stateDir 는 데몬(cb watch)이 미확인 구간을 쌓는 자리다. 비우면 pending 이 꺼진다.
+// stateDir 는 데몬(prior watch)이 미확인 구간을 쌓는 자리다. 비우면 pending 이 꺼진다.
 func New(c *config.Config, l *store.Layout, version, stateDir string) *sdk.Server {
 	s := &server{c: c, l: l, stateDir: stateDir}
 	instructions, _ := buildInstructions(l, s.readPending())
 
 	srv := sdk.NewServer(
-		&sdk.Implementation{Name: "casebook", Version: version},
+		&sdk.Implementation{Name: "priorcase", Version: version},
 		&sdk.ServerOptions{Instructions: instructions},
 	)
 	s.addTools(srv)

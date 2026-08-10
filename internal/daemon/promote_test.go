@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // stubJudge 는 정해진 답만 내놓는 판별기다.
@@ -54,7 +54,7 @@ func TestDaemonCanPromoteWithoutHook(t *testing.T) {
 
 	var out strings.Builder
 	Promote(context.Background(), PromoteOptions{
-		StateDir: sd, Config: c, Layout: l, Err: &out, Label: "cb watch"})
+		StateDir: sd, Config: c, Layout: l, Err: &out, Label: "prior watch"})
 
 	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*저장엔진*"))
 	if len(m) == 0 {
@@ -68,7 +68,7 @@ func TestDaemonCanPromoteWithoutHook(t *testing.T) {
 	if err != nil || len(proms) != 1 || !proms[0].Recorded {
 		t.Errorf("원장이 안 남았다: %+v %v", proms, err)
 	}
-	if !strings.Contains(out.String(), "cb watch:") {
+	if !strings.Contains(out.String(), "prior watch:") {
 		t.Errorf("진행 보고에 라벨이 없다:\n%s", out.String())
 	}
 }
@@ -105,7 +105,7 @@ func TestPromoteWithoutJudgeIsSilent(t *testing.T) {
 
 // 재귀 차단 — 판별기가 띄운 세션에서는 승격하지 않는다.
 func TestPromoteStopsInJudgeSession(t *testing.T) {
-	t.Setenv("CASEBOOK_JUDGE", "1")
+	t.Setenv("PRIORCASE_JUDGE", "1")
 	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"y","body":"z"}`)
 	Promote(context.Background(), PromoteOptions{StateDir: sd, Config: c, Layout: l})
 	if proms, _ := ReadPromotions(sd, time.Time{}); len(proms) != 0 {
@@ -126,7 +126,7 @@ func TestOwnFirstReordersWithoutLoss(t *testing.T) {
 	}
 }
 
-// ★★ `cb watch` 가 실제로 승격해야 한다. Promote 함수가 있는 것과 데몬이 그걸
+// ★★ `prior watch` 가 실제로 승격해야 한다. Promote 함수가 있는 것과 데몬이 그걸
 // 부르는 것은 다르다 — 함수만 테스트하면 호출부를 떼어내도 안 잡힌다.
 func TestWatchPromotesInSteadyState(t *testing.T) {
 	c := testutil.VaultConfig(t)

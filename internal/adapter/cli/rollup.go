@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/rollup"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/rollup"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
-// newRollupCmd 는 `cb rollup` 이다.
+// newRollupCmd 는 `prior rollup` 이다.
 //
 // **LLM 을 부르지 않는다.** 옛 rollup.sh 는 `claude -p` 로 요약문을 만들었는데, 그건
 // 데몬에서 걷어낸 것과 같은 의존이다 — 키 등록이 오픈소스 진입 장벽이고, 어차피 세션에
@@ -19,9 +19,9 @@ import (
 //
 // 그래서 세 걸음으로 나눈다. 기계적인 것은 우리가, 산문은 에이전트가 쓴다.
 //
-//	cb rollup                              어느 주가 남았나
-//	cb rollup <project> <week>             그 주의 로그를 읽는다
-//	cb rollup <project> <week> --body -    쓴 요약을 붙인다
+//	prior rollup                              어느 주가 남았나
+//	prior rollup <project> <week>             그 주의 로그를 읽는다
+//	prior rollup <project> <week> --body -    쓴 요약을 붙인다
 func newRollupCmd() *cobra.Command {
 	var bodyFile string
 
@@ -29,12 +29,12 @@ func newRollupCmd() *cobra.Command {
 		Use:   "rollup [project] [week]",
 		Short: "작업 로그를 주 단위로 묶는다 (요약문은 에이전트가 쓴다)",
 		Long: "작업 로그를 주 단위로 묶어 요약 파일에 붙인다. **원본은 손대지 않는다.**\n\n" +
-			"**요약문은 casebook 이 만들지 않는다.** 어느 주가 남았는지 찾고, 그 주의 " +
+			"**요약문은 priorcase 가 만들지 않는다.** 어느 주가 남았는지 찾고, 그 주의 " +
 			"로그를 뽑고, 중복 없이 붙이는 일만 한다. 무엇을 요약이라 부를지는 전체 맥락을 " +
-			"가진 에이전트가 정한다 — cb capture 와 같은 구조다.\n\n" +
-			"  cb rollup                              어느 주가 남았나\n" +
-			"  cb rollup casebook 2026-W31            그 주의 로그를 읽는다\n" +
-			"  cb rollup casebook 2026-W31 --body -   쓴 요약을 붙인다\n\n" +
+			"가진 에이전트가 정한다 — prior capture 와 같은 구조다.\n\n" +
+			"  prior rollup                              어느 주가 남았나\n" +
+			"  prior rollup priorcase 2026-W31            그 주의 로그를 읽는다\n" +
+			"  prior rollup priorcase 2026-W31 --body -   쓴 요약을 붙인다\n\n" +
 			"진행 중인 주는 건너뛴다 — 주가 끝나기 전에 요약하면 반쪽이 된다.",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,7 +48,7 @@ func newRollupCmd() *cobra.Command {
 				return listWeeks(out, l, time.Now())
 			}
 			if len(args) != 2 {
-				return fmt.Errorf("프로젝트와 주를 함께 줘라 (예: cb rollup casebook 2026-W31)")
+				return fmt.Errorf("프로젝트와 주를 함께 줘라 (예: prior rollup priorcase 2026-W31)")
 			}
 			prefix, week := args[0], args[1]
 
@@ -115,9 +115,9 @@ func listWeeks(out io.Writer, l *store.Layout, now time.Time) error {
 		return nil
 	}
 	fmt.Fprintf(out, "\n요약이 필요한 주 %d개. 한 주씩:\n", todo)
-	fmt.Fprintln(out, "  1. cb rollup <프로젝트> <주>            로그를 읽는다")
+	fmt.Fprintln(out, "  1. prior rollup <프로젝트> <주>            로그를 읽는다")
 	fmt.Fprintln(out, "  2. 읽고 요약문을 쓴다                   ← 여기는 에이전트가 한다")
-	fmt.Fprintln(out, "  3. cb rollup <프로젝트> <주> --body -   붙인다")
+	fmt.Fprintln(out, "  3. prior rollup <프로젝트> <주> --body -   붙인다")
 	return nil
 }
 

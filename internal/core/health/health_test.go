@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // find 는 이름으로 검사 하나를 꺼낸다.
@@ -112,8 +112,8 @@ func TestStaleIndexIsDetected(t *testing.T) {
 	if got.Level != Warn {
 		t.Errorf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
 	}
-	if got.Fix != "cb index" {
-		t.Errorf("Fix = %q, \"cb index\" 여야 한다", got.Fix)
+	if got.Fix != "prior index" {
+		t.Errorf("Fix = %q, \"prior index\" 여야 한다", got.Fix)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestMissingVaultIsFail(t *testing.T) {
 }
 
 // ★ **파싱과 검증은 다르다.** List() 는 frontmatter 가 10키인지만 보고, 접두어와
-// domain 첫 값이 같은지·status 가 허용값인지는 안 본다. `cb capture` 는 이걸 검증하지만
+// domain 첫 값이 같은지·status 가 허용값인지는 안 본다. `prior capture` 는 이걸 검증하지만
 // **손으로 쓰면 통째로 우회된다** — 여기가 그 그물이다.
 func TestSchemaViolationIsCaught(t *testing.T) {
 	c := testutil.VaultConfig(t)
@@ -176,7 +176,7 @@ func TestSchemaViolationIsCaught(t *testing.T) {
 	}
 }
 
-// 감사 결함 4 — 하이픈·대소문자만 다른 중복. cb capture 는 거부하지만 손으로 쓰면 우회된다.
+// 감사 결함 4 — 하이픈·대소문자만 다른 중복. prior capture 는 거부하지만 손으로 쓰면 우회된다.
 func TestSimilarSlugIsCaught(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	dup := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장-엔진-2026-08-01.md")

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // syncBuf 는 exec.Cmd 의 출력 고루틴과 테스트 고루틴이 함께 쓰는 버퍼다.
@@ -45,7 +45,7 @@ func waitOutput(buf *syncBuf, want string, d time.Duration) bool {
 	return false
 }
 
-// cb watch 는 장기 실행 프로세스다. **Ctrl-C 에 스스로 빠져나와야 한다.**
+// prior watch 는 장기 실행 프로세스다. **Ctrl-C 에 스스로 빠져나와야 한다.**
 //
 // root.Execute() (ExecuteContext 가 아닌) 를 쓰면 cmd.Context() 가
 // context.Background() 라서 데몬의 ctx.Done() 이 영원히 오지 않는다. 그러면 신호가

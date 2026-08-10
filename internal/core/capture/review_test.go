@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func TestReviewUpdatesOutcome(t *testing.T) {

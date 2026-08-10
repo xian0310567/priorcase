@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/health"
-	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/health"
+	"github.com/xian0310567/priorcase/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // DoctorOptions 는 진단에 필요한 것이다.
 type DoctorOptions struct {
 	SettingsPath string
 	StateDir     string
-	// Binary 는 훅에 배선돼 있어야 할 cb 경로다. 비면 지금 실행 중인 것.
+	// Binary 는 훅에 배선돼 있어야 할 prior 경로다. 비면 지금 실행 중인 것.
 	Binary string
 	// Config 는 자동 승격 설정을 보는 데 쓴다. nil 이면 그 검사를 건너뛴다.
 	Config *config.Config
@@ -33,13 +33,13 @@ type DoctorOptions struct {
 	// 제로값이 최악의 판정을 뜻하면 안 된다.
 	//
 	// 미확인 구간 수와 나란히 놓아야 회고를 판정할 수 있다 — 기록이 0인데 표시만
-	// 쌓이면 에이전트가 cb capture 를 안 부르고 있다는 뜻이다.
+	// 쌓이면 에이전트가 prior capture 를 안 부르고 있다는 뜻이다.
 	RecentDecisions *int
 }
 
 // Wiring 은 훅 배선과 데몬 상태를 검사해 core 검사 뒤에 붙인다.
 //
-// **이 검사들이 컷오버로 생긴 취약점을 덮는다.** 훅에는 cb 의 **절대 경로가 박혀** 있고,
+// **이 검사들이 컷오버로 생긴 취약점을 덮는다.** 훅에는 prior 의 **절대 경로가 박혀** 있고,
 // 훅은 규약상 언제나 exit 0 이다. 그래서 그 파일이 사라지거나 다른 버전으로 바뀌면
 // 아무 일도 안 하면서 정상으로 보인다 — 이 프로젝트가 죄목으로 드는 조용한 무동작을
 // 우리가 만든 것이다. 여기가 그걸 보는 유일한 자리다.
@@ -53,30 +53,30 @@ func Wiring(r *health.Report, o DoctorOptions) {
 	checkDaemon(r, o)
 }
 
-// checkPath 는 사용자가 `cb` 를 그냥 칠 수 있는지 본다.
+// checkPath 는 사용자가 `prior` 를 그냥 칠 수 있는지 본다.
 //
-// **이게 없으면 진단 자체가 무용지물이다.** cb doctor 가 내는 모든 → 는 `cb 무엇무엇`
+// **이게 없으면 진단 자체가 무용지물이다.** prior doctor 가 내는 모든 → 는 `prior 무엇무엇`
 // 을 치라는 것인데, PATH 에 없으면 사용자는 그중 하나도 실행할 수 없다. 훅은 절대
 // 경로로 배선되므로 **시스템은 멀쩡히 도는데 사람만 손을 못 대는** 상태가 된다.
 //
 // 실제로 그랬다 — 개발 내내 절대 경로로 불러서 이 구멍을 못 봤고, 사용자가
-// `cb doctor` 를 쳤을 때 "command not found" 로 처음 드러났다.
+// `prior doctor` 를 쳤을 때 "command not found" 로 처음 드러났다.
 func checkPath(r *health.Report) {
 	exe, err := os.Executable()
 	if err != nil {
 		return // 자기 경로를 모르면 비교할 것이 없다
 	}
-	found, lerr := exec.LookPath("cb")
+	found, lerr := exec.LookPath("prior")
 	if lerr != nil {
 		add(r, "PATH", health.Warn,
-			fmt.Sprintf("`cb` 를 PATH 에서 찾을 수 없다 (지금 것: %s) — "+
+			fmt.Sprintf("`prior` 를 PATH 에서 찾을 수 없다 (지금 것: %s) — "+
 				"훅은 절대 경로로 돌지만 사람이 명령을 칠 수 없다", exe),
-			"PATH 에 있는 디렉토리로 링크하라 (예: ln -s "+exe+" ~/.local/bin/cb)")
+			"PATH 에 있는 디렉토리로 링크하라 (예: ln -s "+exe+" ~/.local/bin/prior)")
 		return
 	}
 	if !sameFile(found, exe) {
 		add(r, "PATH", health.Warn,
-			fmt.Sprintf("PATH 의 cb(%s)가 지금 도는 것(%s)과 다르다", found, exe),
+			fmt.Sprintf("PATH 의 prior(%s)가 지금 도는 것(%s)과 다르다", found, exe),
 			"오래된 사본을 지우거나 링크를 다시 걸어라")
 		return
 	}
@@ -86,7 +86,7 @@ func checkPath(r *health.Report) {
 func checkHooks(r *health.Report, o DoctorOptions) {
 	raw, err := os.ReadFile(o.SettingsPath)
 	if os.IsNotExist(err) {
-		add(r, "훅 배선", health.Fail, o.SettingsPath+" 가 없다", "cb init --apply")
+		add(r, "훅 배선", health.Fail, o.SettingsPath+" 가 없다", "prior init --apply")
 		return
 	}
 	if err != nil {
@@ -126,7 +126,7 @@ func checkHooks(r *health.Report, o DoctorOptions) {
 		add(r, "훅 배선", health.Fail,
 			fmt.Sprintf("%d/%d 개만 배선됐다. 빠진 것: %v (남의 훅 %d개는 그대로)",
 				len(wired), len(Events), missing, others),
-			"cb init --apply")
+			"prior init --apply")
 		return
 	}
 	add(r, "훅 배선", health.OK,
@@ -161,7 +161,7 @@ func checkBinary(r *health.Report, o DoctorOptions, wired map[string]string) {
 		}
 		sort.Strings(list)
 		add(r, "훅 바이너리", health.Warn,
-			fmt.Sprintf("훅마다 다른 경로를 부른다 %v", list), "cb init --apply 로 통일하라")
+			fmt.Sprintf("훅마다 다른 경로를 부른다 %v", list), "prior init --apply 로 통일하라")
 		return
 	}
 	var got string
@@ -172,19 +172,19 @@ func checkBinary(r *health.Report, o DoctorOptions, wired map[string]string) {
 	if _, err := os.Stat(got); err != nil {
 		add(r, "훅 바이너리", health.Fail,
 			fmt.Sprintf("%s 를 실행할 수 없다 (%v) — 훅은 언제나 exit 0 이라 조용히 아무 일도 안 한다", got, err),
-			"cb init --apply 로 지금 경로에 다시 배선하라")
+			"prior init --apply 로 지금 경로에 다시 배선하라")
 		return
 	}
 	if want != "" && !sameFile(got, want) {
 		add(r, "훅 바이너리", health.Warn,
 			fmt.Sprintf("훅은 %s 를 부르는데 지금 도는 것은 %s 다 — 고친 것이 반영되지 않는다", got, want),
-			"cb init --apply")
+			"prior init --apply")
 		return
 	}
 	add(r, "훅 바이너리", health.OK, got, "")
 }
 
-// binaryFromCommand 는 `CASEBOOK_HOOK=1 "<경로>" hook <event>` 에서 경로를 꺼낸다.
+// binaryFromCommand 는 `PRIORCASE_HOOK=1 "<경로>" hook <event>` 에서 경로를 꺼낸다.
 func binaryFromCommand(cmd string) string {
 	i := strings.Index(cmd, `"`)
 	if i < 0 {
@@ -225,7 +225,7 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 	}
 	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
 	if j == nil {
-		detail := "판별기를 찾지 못했다 — 에이전트가 cb capture 를 부를 때만 기록된다"
+		detail := "판별기를 찾지 못했다 — 에이전트가 prior capture 를 부를 때만 기록된다"
 		if len(o.Config.Capture.Signals) == 0 {
 			// 판별기도 없고 시그널도 없으면 안전망이 통째로 죽는다.
 			add(r, "자동 기록", health.Fail,
@@ -252,7 +252,7 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 // pendingStale 은 이보다 오래된 미확인 구간을 "쌓이고 있다" 로 본다.
 //
 // 컷오버 회고의 판정 기준이 여기다 — pending 이 계속 쌓인다는 것은 에이전트가
-// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
+// prior capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
 const pendingStale = 7 * 24 * time.Hour
 
 func checkDaemon(r *health.Report, o DoctorOptions) {
@@ -272,7 +272,7 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 	running := daemon.IsRunning(o.StateDir)
 	mode := "훅이 턴 경계마다 훑는다 (데몬 없음)"
 	if running {
-		mode = "데몬(cb watch)이 돌고 있다"
+		mode = "데몬(prior watch)이 돌고 있다"
 	}
 
 	act := ""
@@ -295,7 +295,7 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 	silentFix := ""
 	if last := lastScan(o); !last.IsZero() && o.Now.Sub(last) > pendingStale {
 		silent = fmt.Sprintf(" — **%s부터 훑은 흔적이 없다**", humanAgo(o.Now, last))
-		silentFix = "훅이 아직 붙어 있는지 확인해라 (cb doctor 의 훅 배선 줄, 또는 cb init --apply)"
+		silentFix = "훅이 아직 붙어 있는지 확인해라 (prior doctor 의 훅 배선 줄, 또는 prior init --apply)"
 	}
 
 	if len(items) == 0 {
@@ -314,17 +314,17 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 	}
 	detail := fmt.Sprintf("%s%s · 미확인 구간 %d건%s", mode, act, len(items), silent)
 	lv := health.Warn
-	fix := "확인하고 실제 결정이면 cb capture 로 남겨라"
+	fix := "확인하고 실제 결정이면 prior capture 로 남겨라"
 	if silentFix != "" {
 		fix = silentFix
 	}
 
 	// **이 조합이 회고의 판정이다.** 표시는 쌓이는데 기록이 0이면 에이전트가
-	// cb capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
+	// prior capture 를 안 부르고 있다는 뜻이고, 그러면 이 설계가 실패한 것이다.
 	if o.RecentDecisions != nil && *o.RecentDecisions == 0 {
 		lv = health.Fail
 		detail += " — **기록이 0인데 표시만 쌓인다.** 결정을 내리고도 안 남기고 있다"
-		fix = "결정 시점에 cb capture 를 불러라. 미확인 구간부터 확인하라"
+		fix = "결정 시점에 prior capture 를 불러라. 미확인 구간부터 확인하라"
 	} else if stale > 0 {
 		detail += fmt.Sprintf(" (그중 %d건은 7일 넘게 방치)", stale)
 	}
@@ -344,7 +344,7 @@ func lastScan(o DoctorOptions) time.Time {
 //
 // 설정이 어떻게 돼 있는지가 아니라 무엇이 일어났는지를 말한다. 앞의 "최근 7일
 // 기록 N건" 은 볼트 전체를 세므로 컷오버 전 이관까지 합산되는데(1일차 회고에서
-// 62건 = 볼트 총량), 이 줄은 casebook 이 스스로 한 일만 센다.
+// 62건 = 볼트 총량), 이 줄은 priorcase 가 스스로 한 일만 센다.
 func activity(o DoctorOptions) string {
 	last := lastScan(o)
 	if last.IsZero() {

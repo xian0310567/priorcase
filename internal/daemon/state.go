@@ -8,7 +8,7 @@
 // ⚠️ 옛 D5("데몬은 LLM 을 부르지 않는다")는 2026-08-08 에 뒤집혔다 → D8.
 // 규칙으로는 결정을 판정할 수 없다는 것이 실측으로 확인됐고(한 세션 후보 160개),
 // 호스트 CLI 는 이미 인증돼 있어 추가 키가 0이다
-// ([[casebook-결정-자동기록-판별기복원-2026-08-08]]).
+// ([[priorcase-결정-자동기록-판별기복원-2026-08-08]]).
 package daemon
 
 import (
@@ -25,8 +25,8 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/core/xdgpath"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/xdgpath"
 )
 
 const stateFile = "state.json"
@@ -38,7 +38,7 @@ func DefaultDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(state, "casebook"), nil
+	return filepath.Join(state, "priorcase"), nil
 }
 
 // Checkpoint 는 transcript 파일 하나의 진행 지점이다.
@@ -53,7 +53,7 @@ type Checkpoint struct {
 	//
 	// 전진하지 않은 스캔도 기록한다. 이게 없으면 "안전망이 도는데 표시할 게 없다" 와
 	// "안전망이 한 번도 안 돌았다" 가 똑같이 보인다 — 컷오버 1일차 회고에서 실제로
-	// cb doctor 가 후자를 전자로 보고했다.
+	// prior doctor 가 후자를 전자로 보고했다.
 	//
 	// omitzero 다 — time.Time 은 구조체라 omitempty 가 안 먹어서, 흔적이 없는
 	// 체크포인트에 `"at": "0001-01-01T00:00:00Z"` 가 박힌다. 사람이 상태 파일을
@@ -128,6 +128,21 @@ func (p Pending) When() string {
 	return p.At.Format("2006-01-02")
 }
 
+// DecidedOn 은 이 구간의 결정에 적을 날짜다. **마지막 날이다.**
+//
+// When 이 주는 범위("08-08~08-10")를 그대로 쓸 수 없어서 하루를 골라야 하는데,
+// 첫날은 언제나 틀린 쪽이다. 결정은 대화가 흘러간 **끝**에서 내려진다 — 앞쪽은
+// 아직 논의 중인 구간이다.
+//
+// 실제로 그랬다. 2026-08-10 에 내린 개명 결정이 08-08 로 기록됐다. 그 세션이
+// 08-08 에 시작했기 때문이다. 세션이 길수록 더 벌어진다.
+func (p Pending) DecidedOn() string {
+	if n := len(p.Days); n > 0 {
+		return p.Days[n-1]
+	}
+	return p.At.Format("2006-01-02")
+}
+
 // key 는 중복 판정 기준이다. **구간의 시작점**으로 잡는다 — 체크포인트가 전진하지
 // 못한 구간은 매 스캔마다 같은 From 으로 다시 오는데, 그때 새 레코드를 쌓으면
 // pending 이 무한히 늘어난다. 안전망이 소음이 되면 에이전트가 무시하는 법을 배운다.
@@ -184,7 +199,7 @@ func (s *Store) mutate(fn func(*state)) error {
 	got, err := lk.TryLockContext(ctx, 20*time.Millisecond)
 	if err != nil || !got {
 		return fmt.Errorf("상태 파일 잠금을 잡을 수 없다 (%s): %v — "+
-			"다른 casebook 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
+			"다른 priorcase 프로세스가 멈춰 있는지 확인해라", filepath.Join(s.dir, stateLock), err)
 	}
 	defer func() { _ = lk.Unlock() }()
 

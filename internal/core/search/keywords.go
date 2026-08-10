@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // punct 는 토큰 분리자다. 하이픈·em/en dash 도 분리자로 친다.
@@ -20,7 +20,7 @@ var josa = regexp.MustCompile(`(을|를|이|가|은|는|에서|에게|부터|까
 //
 // 예전에는 바이트 기준이었다 — 옛 셸 구현의 `awk length()` 가 바이트를 세서
 // 동작을 보존하려던 것이다. 그 결과 한글 1글자(3바이트)가 통과했고, 실측으로
-// `cb recall "다"` 가 볼트 66건 중 45건을 반환했다. 조사 제거 뒤 남는 한 글자는
+// `prior recall "다"` 가 볼트 66건 중 45건을 반환했다. 조사 제거 뒤 남는 한 글자는
 // 검색어가 아니라 잡음이다.
 //
 // ASCII 1글자는 예전에도 탈락했으므로 이 변경으로 잃는 것은 한글 1음절뿐이다.

@@ -9,7 +9,7 @@ import (
 )
 
 // ★ **판정을 남기지 않으면 "봤는데 기록할 게 없었다" 와 "아예 안 돌았다" 가 같아진다.**
-// 컷오버 1일차에 cb doctor 가 정확히 그 둘을 구분하지 못했다.
+// 컷오버 1일차에 prior doctor 가 정확히 그 둘을 구분하지 못했다.
 func TestLedgerKeepsRejectionsNotJustRecords(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)

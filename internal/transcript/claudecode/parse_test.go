@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript"
 )
 
 // 실제 Claude Code JSONL 의 레코드 종류를 다 담은 픽스처. 값은 합성이지만 **형태는

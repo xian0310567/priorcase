@@ -1,4 +1,4 @@
-module github.com/xian0310567/casebook
+module github.com/xian0310567/priorcase
 
 go 1.25.0
 

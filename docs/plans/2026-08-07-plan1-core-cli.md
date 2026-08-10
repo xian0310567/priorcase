@@ -1,18 +1,18 @@
-# casebook Plan 1 — 코어 + CLI 구현 계획
+# priorcase Plan 1 — 코어 + CLI 구현 계획
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 볼트에 대고 `capture` / `recall` / `review` / `index` 가 동작하는 `cb` CLI 를 만든다.
+**Goal:** 볼트에 대고 `capture` / `recall` / `review` / `index` 가 동작하는 `prior` CLI 를 만든다.
 
 **Architecture:** 코어(`internal/core/*`)가 유일한 API 이고 CLI 어댑터가 그것만 부른다. 코어는 어댑터를 모른다. YAML 은 파싱에만 쓰고 frontmatter 방출은 10키를 리터럴 순서로 찍는 함수 하나로 통일한다 — 방출기 이원화를 코드로 불가능하게 만드는 것이 이 계획의 핵심 목표다.
 
 **Tech Stack:** Go · cobra(CLI) · pelletier/go-toml/v2(설정) · go.yaml.in/yaml/v3(파싱) · golang.org/x/text(NFC) · gofrs/flock(Plan 3 용, 여기선 go.mod 에만)
 
-**참조 스펙:** `docs/design/2026-08-07-casebook-cli-design.md`
+**참조 스펙:** `docs/design/2026-08-07-priorcase-cli-design.md`
 
 ## Global Constraints
 
-- 모듈 경로: `github.com/xian0310567/casebook`
+- 모듈 경로: `github.com/xian0310567/priorcase`
 - **`GOTOOLCHAIN=auto` 를 저장소에 고정한다.** 개발 머신은 Homebrew Go 1.23.3 + `GOTOOLCHAIN=local` 이라 맨몸 `go mod tidy` 가 실패한다(최신 `x/text` 가 go>=1.25 요구). Task 0 에서 처리한다.
 - 의존성 버전 고정: cobra v1.10.2 · go-toml/v2 v2.4.3 · go.yaml.in/yaml/v3 v3.0.5 · x/text v0.28.0 · flock v0.12.1 · fsnotify v1.10.1
 - **`gopkg.in/yaml.v3` 를 쓰지 않는다** — 2025-04 아카이브됨. `go.yaml.in/yaml/v3` 를 쓴다.
@@ -31,7 +31,7 @@
 | 파일 | 책임 |
 |---|---|
 | `go.mod`, `go.sum` | 모듈 정의, 의존성 핀 |
-| `cmd/cb/main.go` | 진입점. cobra 루트에 위임만 |
+| `cmd/prior/main.go` | 진입점. cobra 루트에 위임만 |
 | `internal/core/xdgpath/xdgpath.go` | `~/.config`, `~/.local/state` 해석 (XDG 문자 그대로) |
 | `internal/core/config/config.go` | TOML 로드, 검증, cwd→domain 해석, exclude 판정 |
 | `internal/core/store/frontmatter.go` | frontmatter 파싱 + **정본 방출(단일 함수)** |
@@ -54,7 +54,7 @@
 ## Task 0: 프로젝트 뼈대와 툴체인
 
 **Files:**
-- Create: `go.mod`, `cmd/cb/main.go`, `internal/adapter/cli/root.go`, `.github/workflows/ci.yml`, `Makefile`
+- Create: `go.mod`, `cmd/prior/main.go`, `internal/adapter/cli/root.go`, `.github/workflows/ci.yml`, `Makefile`
 
 **Interfaces:**
 - Produces: `cli.Execute() error` — 모든 서브커맨드가 붙을 cobra 루트
@@ -62,9 +62,9 @@
 - [ ] **Step 1: 툴체인 고정과 모듈 초기화**
 
 ```bash
-cd ~/project/casebook
+cd ~/project/priorcase
 go env -w GOTOOLCHAIN=auto
-go mod init github.com/xian0310567/casebook
+go mod init github.com/xian0310567/priorcase
 go get github.com/spf13/cobra@v1.10.2
 go get github.com/pelletier/go-toml/v2@v2.4.3
 go get go.yaml.in/yaml/v3@v3.0.5
@@ -93,26 +93,26 @@ var Version = "dev"
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "cb",
-		Short:         "casebook — 결정을 기록하고 회수한다",
+		Use:           "prior",
+		Short:         "priorcase — 결정을 기록하고 회수한다",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
 	}
-	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/casebook/config.toml)")
+	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/priorcase/config.toml)")
 	return root
 }
 
 // Execute 는 CLI 를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
 func Execute() error {
 	if err := newRootCmd().Execute(); err != nil {
-		return fmt.Errorf("cb: %w", err)
+		return fmt.Errorf("prior: %w", err)
 	}
 	return nil
 }
 ```
 
-`cmd/cb/main.go`:
+`cmd/prior/main.go`:
 
 ```go
 package main
@@ -121,7 +121,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xian0310567/casebook/internal/adapter/cli"
+	"github.com/xian0310567/priorcase/internal/adapter/cli"
 )
 
 func main() {
@@ -141,7 +141,7 @@ export GOTOOLCHAIN := auto
 
 .PHONY: build test lint
 build:
-	go build -trimpath -ldflags="-s -w" -o cb ./cmd/cb
+	go build -trimpath -ldflags="-s -w" -o prior ./cmd/prior
 test:
 	go test ./...
 lint:
@@ -171,10 +171,10 @@ jobs:
 - [ ] **Step 4: 빌드와 실행 확인**
 
 ```bash
-make build && ./cb --version
+make build && ./prior --version
 ```
 
-기대: `cb version dev`
+기대: `prior version dev`
 
 - [ ] **Step 5: 커밋**
 
@@ -196,7 +196,7 @@ Makefile 에서 auto 로 고정한다."
 **Interfaces:**
 - Produces: `xdgpath.ConfigHome() (string, error)`, `xdgpath.StateHome() (string, error)` — 각각 `~/.config`, `~/.local/state` 또는 환경변수 값
 
-`adrg/xdg` 와 `os.UserConfigDir()` 은 macOS 에서 `~/Library/Application Support` 를 반환한다. casebook 은 셸 훅 시절과 같은 자리를 요구하므로 직접 구현한다.
+`adrg/xdg` 와 `os.UserConfigDir()` 은 macOS 에서 `~/Library/Application Support` 를 반환한다. priorcase 는 셸 훅 시절과 같은 자리를 요구하므로 직접 구현한다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -290,7 +290,7 @@ git add internal/core/xdgpath
 git commit -m "feat: XDG 경로 해석
 
 os.UserConfigDir 은 macOS 에서 ~/Library/Application Support 를 반환한다.
-casebook 은 셸 훅 시절과 같은 ~/.config 를 요구하므로 직접 구현한다."
+priorcase 는 셸 훅 시절과 같은 ~/.config 를 요구하므로 직접 구현한다."
 ```
 
 ---
@@ -428,7 +428,7 @@ go test ./internal/core/config/
 `internal/core/config/config.go`:
 
 ```go
-// Package config 는 casebook 의 유일한 설정 정본이다.
+// Package config 는 priorcase 의 유일한 설정 정본이다.
 // 코드에 개인 설정 리터럴을 두지 않는다 — 볼트 경로·도메인 매핑·제외·키워드가 전부 여기서 온다.
 package config
 
@@ -439,7 +439,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xian0310567/casebook/internal/core/xdgpath"
+	"github.com/xian0310567/priorcase/internal/core/xdgpath"
 )
 
 type Naming struct {
@@ -475,11 +475,11 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "casebook", "config.toml"), nil
+	return filepath.Join(dir, "priorcase", "config.toml"), nil
 }
 
 // Load 는 설정을 읽는다. path 가 비면 DefaultPath 를 쓴다.
-// CASEBOOK_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
+// PRIORCASE_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
 func Load(path string) (*Config, error) {
 	if path == "" {
 		var err error
@@ -505,7 +505,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
 	}
 
-	if v := os.Getenv("CASEBOOK_VAULT"); v != "" {
+	if v := os.Getenv("PRIORCASE_VAULT"); v != "" {
 		c.Vault = v
 	}
 	c.expand()
@@ -903,7 +903,7 @@ func TestEmitIsIdempotent(t *testing.T) {
 
 func TestEmitKeyOrderAndFormat(t *testing.T) {
 	m := Meta{
-		Type: "decision", Date: "2026-08-07", Domain: []string{"casebook"},
+		Type: "decision", Date: "2026-08-07", Domain: []string{"priorcase"},
 		Summary: `따옴표 " 와 백슬래시 \ 가 든 요약`, Status: "active", Outcome: "pending",
 		Related: []string{"[[a]]", "[[b]]"}, Tags: []string{"decision", "go"},
 	}
@@ -1021,12 +1021,12 @@ func quote(s string) string {
 	n := yaml.Node{Kind: yaml.ScalarNode, Style: yaml.DoubleQuotedStyle, Value: s}
 	out, err := yaml.Marshal(&n)
 	if err != nil {
-		panic(fmt.Sprintf("casebook: YAML 스칼라 마샬 실패: %v", err))
+		panic(fmt.Sprintf("priorcase: YAML 스칼라 마샬 실패: %v", err))
 	}
 	q := strings.TrimRight(string(out), "\n")
 	if strings.ContainsAny(q, "\n") {
 		// emitter 가 긴 스칼라를 접으면 frontmatter 가 깨진다. 조용히 깨지느니 죽는다.
-		panic("casebook: YAML 스칼라가 여러 줄로 접혔다 — 방출기를 고쳐야 한다")
+		panic("priorcase: YAML 스칼라가 여러 줄로 접혔다 — 방출기를 고쳐야 한다")
 	}
 	return q
 }
@@ -1041,7 +1041,7 @@ func quoted(items []string) string {
 	return "[" + strings.Join(q, ", ") + "]"
 }
 
-// EmitFrontmatter 는 casebook 의 유일한 frontmatter 방출기다.
+// EmitFrontmatter 는 priorcase 의 유일한 frontmatter 방출기다.
 // 키 순서가 이 함수 본문의 리터럴이므로 방출기가 둘이 될 수 없다.
 func EmitFrontmatter(m Meta) []byte {
 	var b strings.Builder
@@ -1119,7 +1119,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
 func testLayout(t *testing.T) (*Layout, string) {
@@ -1230,7 +1230,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
 // decisionMarker 는 파일명이 결정 노트임을 나타내는 표식이다.
@@ -1452,7 +1452,7 @@ package schema
 
 import "testing"
 
-import "github.com/xian0310567/casebook/internal/core/store"
+import "github.com/xian0310567/priorcase/internal/core/store"
 
 func base() store.Meta {
 	return store.Meta{
@@ -1516,7 +1516,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 var (
@@ -1656,7 +1656,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/config"
 )
 
 // VaultConfig 는 testdata/vault 를 임시 디렉토리로 복사하고 그것을 가리키는 설정을 준다.
@@ -1707,7 +1707,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // fixtureLayout 은 공용 픽스처로 Layout 을 만든다.
@@ -1785,7 +1785,7 @@ testdata 는 실볼트 사본이 아니라 합성 픽스처다 — 실볼트에�
 
 ---
 
-## Task 7: 색인 생성 (`cb index`)
+## Task 7: 색인 생성 (`prior index`)
 
 **Files:**
 - Create: `internal/core/index/index.go`, `internal/core/index/index_test.go`, `internal/adapter/cli/index.go`
@@ -1857,7 +1857,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 const header = "| 날짜 | domain | summary | status | outcome | 링크 |\n" +
@@ -1883,7 +1883,7 @@ func Build(l *store.Layout) ([]byte, error) {
 
 	var b strings.Builder
 	b.WriteString("---\ntitle: 결정 색인\ntags: [index, decision]\n---\n\n")
-	b.WriteString("# 결정 색인\n\n> 자동 생성된다. 직접 편집하지 마라 — `cb index` 가 덮어쓴다.\n\n")
+	b.WriteString("# 결정 색인\n\n> 자동 생성된다. 직접 편집하지 마라 — `prior index` 가 덮어쓴다.\n\n")
 	b.WriteString(header)
 	for _, n := range notes {
 		domain := "-"
@@ -1922,8 +1922,8 @@ package index
 import (
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func fixtureLayout(t *testing.T) *store.Layout {
@@ -1943,7 +1943,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/index"
 )
 
 func newIndexCmd() *cobra.Command {
@@ -1989,7 +1989,7 @@ func layoutFrom(cmd *cobra.Command) (*store.Layout, error) {
 	root.AddCommand(newIndexCmd())
 ```
 
-import 에 `"github.com/xian0310567/casebook/internal/core/config"` 와 `"github.com/xian0310567/casebook/internal/core/store"` 를 넣는다.
+import 에 `"github.com/xian0310567/priorcase/internal/core/config"` 와 `"github.com/xian0310567/priorcase/internal/core/store"` 를 넣는다.
 
 - [ ] **Step 5: 통과 확인**
 
@@ -2003,7 +2003,7 @@ go test ./internal/core/index/ -v && make build
 
 ```bash
 git add internal/core/index internal/adapter/cli
-git commit -m "feat: 결정 색인 생성과 cb index
+git commit -m "feat: 결정 색인 생성과 prior index
 
 summary 안의 파이프를 이스케이프한다 — 안 하면 표의 열이 밀린다.
 정렬은 날짜 내림차순, 동일 날짜는 stem 오름차순으로 안정 정렬한다."
@@ -2121,7 +2121,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // punct 는 토큰 분리자다. 하이픈·em/en dash 도 분리자로 친다.
@@ -2178,7 +2178,7 @@ rune 으로 바꾸면 회수 결과가 달라진다. 동작 보존이 우선이�
 
 ---
 
-## Task 9: 회수 검색 (`cb recall`)
+## Task 9: 회수 검색 (`prior recall`)
 
 **Files:**
 - Create: `internal/core/search/search.go`, `internal/core/search/search_test.go`, `internal/adapter/cli/recall.go`
@@ -2192,7 +2192,7 @@ rune 으로 바꾸면 회수 결과가 달라진다. 동작 보존이 우선이�
   - `search.Recall(l *store.Layout, c *config.Config, prompt string, o Options) []Hit`
   - `search.RenderInject(l *store.Layout, hits []Hit) string`
 
-**★ 이 태스크에 열린 결정이 하나 있다.** 현행 셸은 cwd 도메인 폴더에 결정이 1건이라도 있으면 **절대 전체로 넓히지 않는다**. 주석은 "교차 프로젝트 회상이 존재 이유"라고 쓰여 있는데 코드는 반대다. 실측: `cwd=~/project/casebook` 에서 *"macOS 셸 한글 로케일 지뢰"* → `no-match`, 같은 프롬프트를 `cwd=/tmp` 로 주면 common 문서가 1위. 계획은 **`Options.CrossProject` 플래그로 양쪽을 다 테스트로 고정**하고, 기본값을 켜는 것을 권한다.
+**★ 이 태스크에 열린 결정이 하나 있다.** 현행 셸은 cwd 도메인 폴더에 결정이 1건이라도 있으면 **절대 전체로 넓히지 않는다**. 주석은 "교차 프로젝트 회상이 존재 이유"라고 쓰여 있는데 코드는 반대다. 실측: `cwd=~/project/priorcase` 에서 *"macOS 셸 한글 로케일 지뢰"* → `no-match`, 같은 프롬프트를 `cwd=/tmp` 로 주면 common 문서가 1위. 계획은 **`Options.CrossProject` 플래그로 양쪽을 다 테스트로 고정**하고, 기본값을 켜는 것을 권한다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -2304,9 +2304,9 @@ package search
 import (
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func fixtureLayoutConfig(t *testing.T) (*store.Layout, *config.Config) {
@@ -2336,8 +2336,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // 점수 가중치 — 현행 셸 sb_search 에서 이식했다.
@@ -2553,9 +2553,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func newRecallCmd() *cobra.Command {
@@ -2615,7 +2615,7 @@ go test ./internal/core/search/ -v && make build
 
 ```bash
 git add internal/core/search internal/core/store/paths.go internal/adapter/cli
-git commit -m "feat: 회수 검색과 cb recall
+git commit -m "feat: 회수 검색과 prior recall
 
 현행 셸의 점수 함수를 이식하되, 교차 프로젝트 회상을 Options.CrossProject
 플래그로 노출하고 기본값을 켠다. 셸은 cwd 도메인에 결정이 1건이라도 있으면
@@ -2625,7 +2625,7 @@ git commit -m "feat: 회수 검색과 cb recall
 
 ---
 
-## Task 10: 결정 기록 (`cb capture`)
+## Task 10: 결정 기록 (`prior capture`)
 
 **Files:**
 - Create: `internal/core/capture/capture.go`, `internal/core/capture/capture_test.go`, `internal/adapter/cli/capture.go`
@@ -2738,9 +2738,9 @@ package capture
 import (
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func fixtureLayoutConfig(t *testing.T) (*store.Layout, *config.Config) {
@@ -2774,11 +2774,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 type Request struct {
@@ -2865,9 +2865,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func newCaptureCmd() *cobra.Command {
@@ -2939,7 +2939,7 @@ go test ./internal/core/... -v && make build
 
 ```bash
 git add internal/core/capture internal/adapter/cli
-git commit -m "feat: 결정 기록과 cb capture
+git commit -m "feat: 결정 기록과 prior capture
 
 스키마 검증을 통과하지 않으면 볼트에 쓰지 않는다. 현행 셸은 LLM 경로에만
 검증이 있고 에이전트 수동 작성 경로에는 없어서 규약 위반이 새어 들어왔다.
@@ -2950,7 +2950,7 @@ git commit -m "feat: 결정 기록과 cb capture
 
 ---
 
-## Task 11: 결정 갱신 (`cb review`)
+## Task 11: 결정 갱신 (`prior review`)
 
 **Files:**
 - Create: `internal/core/capture/review.go`, `internal/core/capture/review_test.go`, `internal/adapter/cli/review.go`
@@ -2976,7 +2976,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func TestReviewUpdatesOutcome(t *testing.T) {
@@ -3094,9 +3094,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 type ReviewRequest struct {
@@ -3189,9 +3189,9 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func newReviewCmd() *cobra.Command {
@@ -3238,7 +3238,7 @@ go test ./... -race && make build
 
 ```bash
 git add internal/core/capture internal/adapter/cli
-git commit -m "feat: 결정 갱신과 cb review
+git commit -m "feat: 결정 갱신과 prior review
 
 supersedes 를 양방향으로 연결한다 — 새 노트의 supersedes 와 옛 노트의
 status: superseded + related 를 함께 쓴다. 한쪽만 쓰면 회수 시 옛 결정이
@@ -3267,16 +3267,16 @@ before:
     - go mod tidy
 
 builds:
-  - id: cb
-    main: ./cmd/cb
-    binary: cb
+  - id: prior
+    main: ./cmd/prior
+    binary: prior
     env:
       - CGO_ENABLED=0
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags:
-      - -s -w -X github.com/xian0310567/casebook/internal/adapter/cli.Version={{.Version}}
+      - -s -w -X github.com/xian0310567/priorcase/internal/adapter/cli.Version={{.Version}}
 
 archives:
   - formats: [tar.gz]
@@ -3329,22 +3329,22 @@ goreleaser build --snapshot --clean --single-target
 ls -la dist/
 ```
 
-기대: `goreleaser check` 가 `1 configuration file(s) validated`, `dist/` 에 `cb` 바이너리
+기대: `goreleaser check` 가 `1 configuration file(s) validated`, `dist/` 에 `prior` 바이너리
 
 - [ ] **Step 4: README 작성**
 
 `README.md` 에 다음을 넣는다 — 스펙 §9 의 **호스트별 보장 수준 표를 그대로 싣는다**. 과장하지 않는 것이 이 프로젝트의 원칙이다.
 
 ```markdown
-# casebook
+# priorcase
 
 에이전트가 내린 결정을 사람이 시키지 않아도 남기고, 다음 판단 시점에 알아서 꺼내 주는 층.
 
 ## 설치
 
-    brew install xian0310567/tap/casebook
+    brew install xian0310567/tap/priorcase
     # 또는
-    go install github.com/xian0310567/casebook/cmd/cb@latest
+    go install github.com/xian0310567/priorcase/cmd/prior@latest
 
 런타임 의존이 없는 단일 정적 바이너리다.
 
@@ -3352,7 +3352,7 @@ ls -la dist/
 
 | | Claude Code | MCP 전용 호스트 |
 |---|---|---|
-| 결정 순간 기록 | 에이전트 `cb capture` | 동일 |
+| 결정 순간 기록 | 에이전트 `prior capture` | 동일 |
 | 놓친 기록 줍기 | 데몬 | 동일 |
 | 세션 진입 컨텍스트 | 훅 (보장) | `initialize.instructions` (사실상 동등) |
 | 주제 전환 시 회수 | 훅 (강제) | 계약 + 편승 (유도) |

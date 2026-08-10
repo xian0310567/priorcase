@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // minPromptLen 은 이보다 짧은 프롬프트에서는 회수하지 않는다.
@@ -102,8 +102,8 @@ func (o Options) nudge() string {
 		b.WriteString("\n--- " + lang.T("그 구간", "the segment") + " ---\n" + ex + "\n---\n")
 	}
 	b.WriteString("\n" + lang.T(
-		"실제 결정이면 지금 `cb capture` 로 남겨라. 결정이 아니면 `cb pending --resolve` 로 지워라. 그대로 두면 매번 다시 뜬다.\n",
-		"If this is a real decision, record it now with `cb capture`. If not, clear it with `cb pending --resolve`. It will keep appearing until you do.\n"))
+		"실제 결정이면 지금 `prior capture` 로 남겨라. 결정이 아니면 `prior pending --resolve` 로 지워라. 그대로 두면 매번 다시 뜬다.\n",
+		"If this is a real decision, record it now with `prior capture`. If not, clear it with `prior pending --resolve`. It will keep appearing until you do.\n"))
 	return b.String()
 }
 

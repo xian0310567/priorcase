@@ -2,7 +2,7 @@ package hook
 
 import (
 	"encoding/json"
-	"github.com/xian0310567/casebook/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/core/judge"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +11,10 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
-// ★★ `cb watch` 를 켜는 것이 자동 기록을 끄는 행위가 되면 안 된다.
+// ★★ `prior watch` 를 켜는 것이 자동 기록을 끄는 행위가 되면 안 된다.
 //
 // 승격이 소유권 게이트 뒤에 있으면, 데몬이 락을 쥔 순간 훅은 promote 이전에
 // 반환한다. 그런데 데몬의 drain 은 판별기를 부르지 않고, 데몬은 세션이 끝난 것도
@@ -37,7 +37,7 @@ func TestPromoteRunsEvenWhenDaemonOwnsLock(t *testing.T) {
 		t.Fatalf("표시가 %d건 — 준비가 안 됐다", len(items))
 	}
 
-	// 이제 cb watch 가 돌고 있는 상태를 만든다.
+	// 이제 prior watch 가 돌고 있는 상태를 만든다.
 	lk := flock.New(filepath.Join(sd, "watch.lock"))
 	got, err := lk.TryLock()
 	if err != nil || !got {
@@ -51,7 +51,7 @@ func TestPromoteRunsEvenWhenDaemonOwnsLock(t *testing.T) {
 		t.Fatal(r.e)
 	}
 	if !strings.Contains(r.err, "자동 기록") {
-		t.Errorf("데몬이 락을 쥐었다고 승격을 건너뛰었다 — cb watch 가 자동 기록을 끈다:\n%s", r.err)
+		t.Errorf("데몬이 락을 쥐었다고 승격을 건너뛰었다 — prior watch 가 자동 기록을 끈다:\n%s", r.err)
 	}
 	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*저장엔진*"))
 	if len(m) == 0 {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // 지시 1: Do() 가 노트를 쓴 뒤 색인 갱신에 실패하면 노트만 남고 색인이

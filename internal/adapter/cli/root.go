@@ -7,25 +7,25 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // Version 은 릴리스 시 -ldflags 로 주입된다.
 var Version = "dev"
 
 // NewRootCmd 는 **cli 어댑터가 소유한** 서브커맨드만 붙인 루트를 만든다.
-// 다른 어댑터의 서브커맨드(cb mcp 등)는 조립 루트인 cmd/cb 가 붙인다 —
+// 다른 어댑터의 서브커맨드(prior mcp 등)는 조립 루트인 cmd/prior 가 붙인다 —
 // 어댑터끼리 서로를 import 하지 않기 위해서다 (§4.1, internal/arch 가 강제한다).
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "cb",
-		Short:         "casebook — 결정을 기록하고 회수한다",
+		Use:           "prior",
+		Short:         "priorcase — 결정을 기록하고 회수한다",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
 	}
-	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/casebook/config.toml)")
+	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/priorcase/config.toml)")
 	root.AddCommand(newIndexCmd())
 	root.AddCommand(newRecallCmd())
 	root.AddCommand(newCaptureCmd())
@@ -40,7 +40,7 @@ func NewRootCmd() *cobra.Command {
 // 필드로 감추므로 Config 도 필요한 명령(capture·recall)은 Layout 만 받아서는
 // 일을 못 한다. 그래서 예전에는 index·review 만 이 헬퍼를 쓰고 capture·recall
 // 은 config.Load 를 직접 불렀는데, 그러면 설정 경로 해석 규칙(플래그 →
-// CASEBOOK_CONFIG → XDG)이 두 자리에 생겨 한쪽만 고치는 사고가 난다.
+// PRIORCASE_CONFIG → XDG)이 두 자리에 생겨 한쪽만 고치는 사고가 난다.
 // 둘을 같이 돌려주면 갈래가 없어진다.
 func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
 	path, err := cmd.Flags().GetString("config")
@@ -56,7 +56,7 @@ func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
 
 // warnSkipped 는 읽지 못해 건너뛴 결정 노트를 알린다. 없으면 아무것도 안 낸다.
 //
-// **항상 stderr 로 낸다.** `cb recall --format inject` 의 stdout 은 훅이 그대로
+// **항상 stderr 로 낸다.** `prior recall --format inject` 의 stdout 은 훅이 그대로
 // 에이전트 컨텍스트에 밀어넣는 순수 데이터다 — 거기에 경고가 한 줄이라도 섞이면
 // "[과거 결정 참조]" 블록이 오염된다. 그래서 경고 경로를 명령마다 나누지 않고
 // 여기 하나로 모아, 오염될 수 있는 자리를 아예 없앤다. 사람은 터미널에서 보고,
@@ -81,13 +81,13 @@ func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
 
 // Run 은 조립이 끝난 루트를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
 //
-// **ctx 를 받는 이유는 cb watch 다.** ExecuteContext 가 아니라 Execute 를 쓰면
+// **ctx 를 받는 이유는 prior watch 다.** ExecuteContext 가 아니라 Execute 를 쓰면
 // cmd.Context() 가 context.Background() 라서 데몬의 ctx.Done() 이 영원히 오지 않고,
 // Ctrl-C 가 정리 없이 프로세스를 죽인다. 락은 커널이 놓아 주지만 진행 중인 스캔은
 // 중간에 끊긴다.
 func Run(ctx context.Context, root *cobra.Command) error {
 	if err := root.ExecuteContext(ctx); err != nil {
-		return fmt.Errorf("cb: %w", err)
+		return fmt.Errorf("prior: %w", err)
 	}
 	return nil
 }
@@ -100,7 +100,7 @@ func warnPreserved(w io.Writer, l *store.Layout, backup string) {
 	if backup == "" {
 		return
 	}
-	fmt.Fprintf(w, "경고: 색인 자리에 casebook 이 만들지 않은 파일이 있었다. "+
+	fmt.Fprintf(w, "경고: 색인 자리에 priorcase 가 만들지 않은 파일이 있었다. "+
 		"덮어쓰기 전에 옮겨 두었다:\n  → %s\n"+
 		"  색인 경로를 바꾸려면 설정의 [naming] index 를 고쳐라.\n", l.RelPath(backup))
 }

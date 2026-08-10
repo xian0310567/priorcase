@@ -9,10 +9,10 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // connect 는 픽스처 볼트를 얹은 서버에 in-memory 클라이언트를 붙인다.
@@ -80,7 +80,7 @@ func TestListToolsExposesAll(t *testing.T) {
 			t.Errorf("%s 에 설명이 없다 — 모델이 언제 부를지 판단할 근거가 없다", tool.Name)
 		}
 	}
-	for _, want := range []string{"casebook_recall", "casebook_capture", "casebook_review", "casebook_pending"} {
+	for _, want := range []string{"priorcase_recall", "priorcase_capture", "priorcase_review", "priorcase_pending"} {
 		if !got[want] {
 			t.Errorf("%s 가 목록에 없다 (있는 것: %v)", want, got)
 		}
@@ -95,14 +95,14 @@ func TestListToolsExposesAll(t *testing.T) {
 func TestInitializeCarriesInstructions(t *testing.T) {
 	cs, _, _ := connect(t)
 	got := cs.InitializeResult().Instructions
-	if !strings.Contains(got, "casebook_recall") {
+	if !strings.Contains(got, "priorcase_recall") {
 		t.Errorf("initialize 에 행동 계약이 없다:\n%s", got)
 	}
 }
 
 func TestRecallFindsDecision(t *testing.T) {
 	cs, _, _ := connect(t)
-	out := text(t, call(t, cs, "casebook_recall", map[string]any{"query": "저장 엔진"}))
+	out := text(t, call(t, cs, "priorcase_recall", map[string]any{"query": "저장 엔진"}))
 	if !strings.Contains(out, "저장 엔진을 임베디드 DB 로 고른다") {
 		t.Errorf("회수 결과에 해당 결정이 없다:\n%s", out)
 	}
@@ -110,7 +110,7 @@ func TestRecallFindsDecision(t *testing.T) {
 
 func TestRecallWithNoMatchSaysSo(t *testing.T) {
 	cs, _, _ := connect(t)
-	out := text(t, call(t, cs, "casebook_recall", map[string]any{"query": "zzzz존재하지않는주제zzzz"}))
+	out := text(t, call(t, cs, "priorcase_recall", map[string]any{"query": "zzzz존재하지않는주제zzzz"}))
 	if strings.TrimSpace(out) == "" {
 		t.Error("결과가 없을 때 빈 응답을 냈다 — 모델이 도구가 고장난 것으로 읽는다")
 	}
@@ -126,7 +126,7 @@ func TestRecallReportsSkippedInResponse(t *testing.T) {
 	}
 	cs := connectWith(t, c)
 
-	out := text(t, call(t, cs, "casebook_recall", map[string]any{"query": "저장 엔진"}))
+	out := text(t, call(t, cs, "priorcase_recall", map[string]any{"query": "저장 엔진"}))
 	if !strings.Contains(out, "깨짐") {
 		t.Errorf("건너뛴 노트가 응답에 없다 — 에이전트가 알 방법이 없다:\n%s", out)
 	}
@@ -136,7 +136,7 @@ func TestCaptureWritesNoteAndPiggybacks(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	cs := connectWith(t, c)
 
-	out := text(t, call(t, cs, "casebook_capture", map[string]any{
+	out := text(t, call(t, cs, "priorcase_capture", map[string]any{
 		"domain":  "alpha",
 		"slug":    "캐시계층",
 		"summary": "저장 엔진 앞에 캐시 계층을 둔다",
@@ -157,7 +157,7 @@ func TestCaptureWritesNoteAndPiggybacks(t *testing.T) {
 // 스키마 검증을 통과 못 하면 거부한다 (스펙 §7.1). 설정에 없는 도메인이 그 예다.
 func TestCaptureRejectsUnknownDomain(t *testing.T) {
 	cs, _, _ := connect(t)
-	r := call(t, cs, "casebook_capture", map[string]any{
+	r := call(t, cs, "priorcase_capture", map[string]any{
 		"domain": "존재하지않는도메인", "slug": "x", "summary": "y", "date": "2026-08-07",
 	})
 	if !r.IsError {
@@ -169,7 +169,7 @@ func TestReviewUpdatesOutcome(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	cs := connectWith(t, c)
 
-	out := text(t, call(t, cs, "casebook_review", map[string]any{
+	out := text(t, call(t, cs, "priorcase_review", map[string]any{
 		"stem":          "alpha-결정-저장엔진-2026-08-01",
 		"outcome":       "good",
 		"retrospective": "1년 써 보니 옳았다.",
@@ -191,7 +191,7 @@ func TestReviewUpdatesOutcome(t *testing.T) {
 	}
 }
 
-// ── casebook_pending ────────────────────────────────────────────────────
+// ── priorcase_pending ────────────────────────────────────────────────────
 
 // pending 을 심고 목록·해소가 실제로 도는지. 데몬과 MCP 는 다른 프로세스이고
 // 상태 파일 하나로만 만난다 — 그 접점이 도는지가 이 테스트의 요지다.
@@ -217,7 +217,7 @@ func TestPendingToolListsAndResolves(t *testing.T) {
 	p := seedPending(t, stateDir)
 	cs := connectWithState(t, c, stateDir)
 
-	out := text(t, call(t, cs, "casebook_pending", map[string]any{}))
+	out := text(t, call(t, cs, "priorcase_pending", map[string]any{}))
 	if !strings.Contains(out, p.ID()) {
 		t.Fatalf("목록에 id 가 없다 — 지울 방법이 없다:\n%s", out)
 	}
@@ -225,7 +225,7 @@ func TestPendingToolListsAndResolves(t *testing.T) {
 		t.Errorf("도메인이 없다:\n%s", out)
 	}
 
-	if r := call(t, cs, "casebook_pending", map[string]any{"resolve": p.ID()}); r.IsError {
+	if r := call(t, cs, "priorcase_pending", map[string]any{"resolve": p.ID()}); r.IsError {
 		t.Fatalf("해소 실패: %s", text(t, r))
 	}
 	left, err := daemon.ReadPending(stateDir)
@@ -240,7 +240,7 @@ func TestPendingToolListsAndResolves(t *testing.T) {
 // 없을 때 빈 응답을 내면 모델이 도구가 고장난 것으로 읽는다.
 func TestPendingToolSaysWhenEmpty(t *testing.T) {
 	cs := connectWithState(t, testutil.VaultConfig(t), t.TempDir())
-	out := text(t, call(t, cs, "casebook_pending", map[string]any{}))
+	out := text(t, call(t, cs, "priorcase_pending", map[string]any{}))
 	if strings.TrimSpace(out) == "" {
 		t.Error("빈 응답을 냈다")
 	}

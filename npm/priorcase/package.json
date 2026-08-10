@@ -1,5 +1,5 @@
 {
-  "name": "casebook",
+  "name": "priorcase",
   "version": "0.0.0",
   "description": "Record your agent's decisions and surface them at the next judgment point",
   "keywords": [
@@ -12,7 +12,7 @@
   ],
   "license": "SEE LICENSE IN LICENSE",
   "bin": {
-    "cb": "bin/cb.js"
+    "prior": "bin/prior.js"
   },
   "files": [
     "bin/",
@@ -24,9 +24,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "casebook-darwin-arm64": "0.0.0",
-    "casebook-darwin-x64": "0.0.0",
-    "casebook-linux-arm64": "0.0.0",
-    "casebook-linux-x64": "0.0.0"
+    "priorcase-darwin-arm64": "0.0.0",
+    "priorcase-darwin-x64": "0.0.0",
+    "priorcase-linux-arm64": "0.0.0",
+    "priorcase-linux-x64": "0.0.0"
   }
 }

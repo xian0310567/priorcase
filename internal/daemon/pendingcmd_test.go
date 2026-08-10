@@ -35,7 +35,7 @@ func seed(t *testing.T, dir string) Pending {
 	return p
 }
 
-// 훅 주입이 "cb pending 으로 지워라" 라고 안내한다. 그 명령이 실제로 있고,
+// 훅 주입이 "prior pending 으로 지워라" 라고 안내한다. 그 명령이 실제로 있고,
 // **id 를 보여 줘야** 지울 수 있다.
 func TestPendingListsIDAndExcerpt(t *testing.T) {
 	dir := t.TempDir()
@@ -44,7 +44,7 @@ func TestPendingListsIDAndExcerpt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{p.ID(), "alpha", "2026-08-08", "SQLite", "cb capture", "--resolve"} {
+	for _, want := range []string{p.ID(), "alpha", "2026-08-08", "SQLite", "prior capture", "--resolve"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("목록에 %q 가 없다:\n%s", want, got)
 		}

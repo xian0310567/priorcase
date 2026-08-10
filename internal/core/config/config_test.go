@@ -135,20 +135,20 @@ func TestIsExcluded(t *testing.T) {
 	}
 }
 
-// TestLoadVaultEnvOverride 는 CASEBOOK_VAULT 가 설정 파일의 vault 를
+// TestLoadVaultEnvOverride 는 PRIORCASE_VAULT 가 설정 파일의 vault 를
 // 덮어쓰는지 확인한다 (테스트 볼트 격리용 오버라이드).
 func TestLoadVaultEnvOverride(t *testing.T) {
-	t.Setenv("CASEBOOK_VAULT", "/override")
+	t.Setenv("PRIORCASE_VAULT", "/override")
 	c, err := Load(write(t, sample))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Vault != "/override" {
-		t.Errorf("Vault = %q, want CASEBOOK_VAULT 오버라이드 값 %q", c.Vault, "/override")
+		t.Errorf("Vault = %q, want PRIORCASE_VAULT 오버라이드 값 %q", c.Vault, "/override")
 	}
 }
 
-// TestLoadUsesConfigEnv 는 --config 플래그 없이도 CASEBOOK_CONFIG 가 설정
+// TestLoadUsesConfigEnv 는 --config 플래그 없이도 PRIORCASE_CONFIG 가 설정
 // 경로를 정하는지 확인한다. 플래그를 붙일 수 없는 훅·데몬 어댑터가 이 통로만
 // 쓴다 — 여기가 막히면 그쪽은 XDG 기본 경로 하나에 묶인다.
 func TestLoadUsesConfigEnv(t *testing.T) {
@@ -156,7 +156,7 @@ func TestLoadUsesConfigEnv(t *testing.T) {
 	t.Setenv(PathEnv, p)
 	c, err := Load("")
 	if err != nil {
-		t.Fatalf("CASEBOOK_CONFIG 를 무시했다: %v", err)
+		t.Fatalf("PRIORCASE_CONFIG 를 무시했다: %v", err)
 	}
 	if c.Vault != "/tmp/vault" {
 		t.Errorf("Vault = %q, want %q", c.Vault, "/tmp/vault")
@@ -188,7 +188,7 @@ func TestResolvePathFallsBackToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "casebook", "config.toml")
+	want := filepath.Join(dir, "priorcase", "config.toml")
 	if got != want {
 		t.Errorf("ResolvePath(\"\") = %q, want %q", got, want)
 	}
@@ -209,7 +209,7 @@ func TestResolvePathPriority(t *testing.T) {
 		t.Errorf("환경변수만 있을 때 = %q, want %q", got, envPath)
 	}
 	t.Setenv(PathEnv, "")
-	if got, _ := ResolvePath(""); got != filepath.Join(dir, "casebook", "config.toml") {
+	if got, _ := ResolvePath(""); got != filepath.Join(dir, "priorcase", "config.toml") {
 		t.Errorf("둘 다 없을 때 = %q, want XDG 기본 경로", got)
 	}
 }

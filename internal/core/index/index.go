@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xian0310567/casebook/internal/core/i18n"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/i18n"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // header 는 색인 표의 머리줄이다. 색인은 사람만 보는 진단 출력이 아니라 볼트에
@@ -68,8 +68,8 @@ func Build(l *store.Layout) ([]byte, Result, error) {
 	title := lang.T("결정 색인", "Decision index")
 	fmt.Fprintf(&b, "---\ntitle: %s\ntags: [index, decision]\n---\n\n", title)
 	fmt.Fprintf(&b, "# %s\n\n> %s\n\n", title, lang.T(
-		"자동 생성된다. 직접 편집하지 마라 — `cb index` 가 덮어쓴다.",
-		"Generated automatically. Do not edit — `cb index` overwrites this."))
+		"자동 생성된다. 직접 편집하지 마라 — `prior index` 가 덮어쓴다.",
+		"Generated automatically. Do not edit — `prior index` overwrites this."))
 
 	// 요약 줄. **`아쉬운 결과` 가 이 줄의 존재 이유다** — 뒤집혔거나 나쁘게 끝난 결정이
 	// 몇 건인지가 한눈에 보여야 한다. 표를 끝까지 읽어야 알 수 있으면 아무도 안 본다.
@@ -124,7 +124,7 @@ func Write(l *store.Layout) (Result, error) {
 	// (188바이트의 손글씨 문서 → 색인으로 교체, 백업 없음).
 	//
 	// 지우지 않고, 막지도 않는다. 막으면 capture 가 통째로 실패한다(색인 갱신이
-	// capture.Do 끝에 붙어 있다). `cb init` 이 남의 settings.json 을 다룰 때와 같은
+	// capture.Do 끝에 붙어 있다). `prior init` 이 남의 settings.json 을 다룰 때와 같은
 	// 방식으로 — 백업하고 진행하고 알린다.
 	saved, err := preserveForeign(p, l.Lang())
 	if err != nil {
@@ -163,7 +163,7 @@ func preserveForeign(path string, lang i18n.Lang) (string, error) {
 	}
 
 	// 이름이 겹치면 덧붙여 고른다. 백업을 덮어쓰면 대피의 의미가 없다.
-	base := path + ".casebook-replaced"
+	base := path + ".priorcase-replaced"
 	bak := base
 	for i := 1; ; i++ {
 		if _, err := os.Stat(bak); os.IsNotExist(err) {

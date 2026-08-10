@@ -3,8 +3,8 @@ package index
 import (
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func fixtureLayout(t *testing.T) *store.Layout {

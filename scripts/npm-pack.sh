@@ -20,22 +20,22 @@ mkdir -p "$OUT"
 
 for t in "${TARGETS[@]}"; do
   read -r goos goarch npmarch <<<"$t"
-  tarball="$ROOT/dist/casebook_${goos}_${goarch}.tar.gz"
+  tarball="$ROOT/dist/priorcase_${goos}_${goarch}.tar.gz"
   [ -f "$tarball" ] || { echo "없다: $tarball — goreleaser 를 먼저 돌려라" >&2; exit 1; }
 
   pkgdir="$OUT/${goos}-${npmarch}"
   mkdir -p "$pkgdir/bin"
-  tar xzf "$tarball" -C "$pkgdir/bin" cb
-  chmod +x "$pkgdir/bin/cb"
+  tar xzf "$tarball" -C "$pkgdir/bin" prior
+  chmod +x "$pkgdir/bin/prior"
   cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.md" "$pkgdir/"
 
   # os·cpu 를 적어 두면 npm 이 **다른 플랫폼에는 아예 안 받는다.** 이게 없으면
   # 사용자가 4개를 전부 받아 디스크를 4배 쓴다.
   cat > "$pkgdir/package.json" <<JSON
 {
-  "name": "casebook-${goos}-${npmarch}",
+  "name": "priorcase-${goos}-${npmarch}",
   "version": "${VERSION}",
-  "description": "casebook binary for ${goos}-${npmarch}",
+  "description": "priorcase binary for ${goos}-${npmarch}",
   "license": "SEE LICENSE IN LICENSE",
   "os": ["${goos}"],
   "cpu": ["${npmarch}"],
@@ -46,11 +46,11 @@ done
 
 # 런처. optionalDependencies 의 버전을 이번 판으로 고정한다 — ^ 나 ~ 를 쓰면
 # 런처와 바이너리의 판이 갈릴 수 있고, 그건 진단이 가장 어려운 종류다.
-launcher="$OUT/casebook"
+launcher="$OUT/priorcase"
 mkdir -p "$launcher"
-cp -R "$ROOT/npm/casebook/bin" "$launcher/"
+cp -R "$ROOT/npm/priorcase/bin" "$launcher/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.md" "$ROOT/README.md" "$launcher/"
-python3 - "$ROOT/npm/casebook/package.json" "$launcher/package.json" "$VERSION" <<'PY'
+python3 - "$ROOT/npm/priorcase/package.json" "$launcher/package.json" "$VERSION" <<'PY'
 import json, sys
 src, dst, ver = sys.argv[1], sys.argv[2], sys.argv[3]
 p = json.load(open(src))

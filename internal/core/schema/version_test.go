@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func meta(schemaN int, status, outcome string) store.Meta {
@@ -80,7 +80,7 @@ func TestCannotModifyFutureNote(t *testing.T) {
 	if err == nil {
 		t.Fatal("더 새 판의 노트를 고쳤다 — 조용히 망가뜨릴 수 있다")
 	}
-	if !strings.Contains(err.Error(), "cb 를 올려라") {
+	if !strings.Contains(err.Error(), "prior 를 올려라") {
 		t.Errorf("왜 멈추는지 안 알려준다: %v", err)
 	}
 

@@ -17,7 +17,7 @@ import (
 	"testing"
 )
 
-const mod = "github.com/xian0310567/casebook"
+const mod = "github.com/xian0310567/priorcase"
 
 // deps 는 pkg 가 (이행적으로) 의존하는 이 모듈 안의 패키지를 준다.
 func deps(t *testing.T, pkg string) []string {

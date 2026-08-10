@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
-// TestRecallCmdInject 는 `cb recall --format inject <query>` 가 매칭을 찾으면
+// TestRecallCmdInject 는 `prior recall --format inject <query>` 가 매칭을 찾으면
 // [과거 결정 참조] 헤더로 시작하는 출력을 내는지 확인한다.
 func TestRecallCmdInject(t *testing.T) {
 	cfgPath, _ := testutil.VaultConfigFile(t)
@@ -21,7 +21,7 @@ func TestRecallCmdInject(t *testing.T) {
 	root.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "저장", "엔진을", "무엇으로", "골랐지"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb recall 실행 실패: %v", err)
+		t.Fatalf("prior recall 실행 실패: %v", err)
 	}
 
 	got := buf.String()
@@ -33,9 +33,9 @@ func TestRecallCmdInject(t *testing.T) {
 	}
 }
 
-// TestRecallCmdReportsUnreadableVault 는 결정 폴더를 못 읽을 때 `cb recall` 이
+// TestRecallCmdReportsUnreadableVault 는 결정 폴더를 못 읽을 때 `prior recall` 이
 // 조용히 rc=0 으로 끝나지 않고 에러를 내는지 확인한다. 같은 l.List() 를 부르는
-// `cb index` 는 이미 에러로 죽는다 — 두 명령의 에러 정책이 같아야 한다.
+// `prior index` 는 이미 에러로 죽는다 — 두 명령의 에러 정책이 같아야 한다.
 func TestRecallCmdReportsUnreadableVault(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root 는 디렉토리 퍼미션을 무시하므로 이 테스트가 성립하지 않는다")
@@ -55,7 +55,7 @@ func TestRecallCmdReportsUnreadableVault(t *testing.T) {
 
 	err := root.Execute()
 	if err == nil {
-		t.Fatalf("읽을 수 없는 볼트인데 cb recall 이 성공했다 (출력=%q)", buf.String())
+		t.Fatalf("읽을 수 없는 볼트인데 prior recall 이 성공했다 (출력=%q)", buf.String())
 	}
 	if !strings.Contains(err.Error(), "결정 폴더를 읽을 수 없다") {
 		t.Errorf("에러가 원인을 알려주지 않는다: %v", err)
@@ -72,7 +72,7 @@ func TestRecallCmdNoMatch(t *testing.T) {
 	root.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "완전히", "무관한", "주제", "짜장면"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb recall 실행 실패: %v", err)
+		t.Fatalf("prior recall 실행 실패: %v", err)
 	}
 
 	if got := buf.String(); got != "" {
@@ -99,7 +99,7 @@ func TestRecallCmdInjectStaysCleanWhenNotesSkipped(t *testing.T) {
 	root.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "저장", "엔진을", "무엇으로", "골랐지"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb recall 실행 실패: %v", err)
+		t.Fatalf("prior recall 실행 실패: %v", err)
 	}
 
 	out := buf.String()
@@ -139,7 +139,7 @@ func TestRecallCmdHumanRevealsSkippedNotes(t *testing.T) {
 	root.SetArgs([]string{"recall", "--config", cfgPath, "저장", "엔진을", "무엇으로", "골랐지"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb recall 실행 실패: %v", err)
+		t.Fatalf("prior recall 실행 실패: %v", err)
 	}
 	if buf.Len() == 0 {
 		t.Error("정상 노트 회수까지 멈췄다")

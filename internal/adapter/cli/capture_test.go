@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
-// TestCaptureCmdWritesNoteAndShowsRelated 는 `cb capture` 가 결정 노트를 실제로
+// TestCaptureCmdWritesNoteAndShowsRelated 는 `prior capture` 가 결정 노트를 실제로
 // 만들고, 출력에 "기록됨:" 과 편승된 관련 과거 결정이 나오는지 확인한다.
 // 편승이 실제로 이어지는지 보려면 회수될 과거 결정이 볼트에 있어야 하는데,
 // 픽스처 볼트의 alpha-결정-저장엔진-2026-08-01 이 그 역할을 한다.
@@ -27,7 +27,7 @@ func TestCaptureCmdWritesNoteAndShowsRelated(t *testing.T) {
 	})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("cb capture 실행 실패: %v", err)
+		t.Fatalf("prior capture 실행 실패: %v", err)
 	}
 
 	got := buf.String()
@@ -70,15 +70,15 @@ func TestCaptureCmdRequiresFlags(t *testing.T) {
 			root.SetArgs(args)
 
 			if err := root.Execute(); err == nil {
-				t.Fatalf("%s 인데도 cb capture 가 성공했다", tc.name)
+				t.Fatalf("%s 인데도 prior capture 가 성공했다", tc.name)
 			}
 		})
 	}
 }
 
-// TestCaptureCmdRevealsSkippedNotes 는 `cb capture` 도 색인이 불완전해졌다는
+// TestCaptureCmdRevealsSkippedNotes 는 `prior capture` 도 색인이 불완전해졌다는
 // 사실을 알리는지 본다. capture 는 노트를 쓴 뒤 내부적으로 색인을 갱신하므로,
-// 여기서 침묵하면 사용자가 `cb index` 를 따로 돌리기 전까지는 6건이 빠진 색인을
+// 여기서 침묵하면 사용자가 `prior index` 를 따로 돌리기 전까지는 6건이 빠진 색인을
 // 완전한 것으로 믿게 된다. 기록 자체는 성공해야 한다 — 남의 노트가 깨졌다고
 // 내 기록이 실패하면 안 된다.
 func TestCaptureCmdRevealsSkippedNotes(t *testing.T) {
@@ -96,7 +96,7 @@ func TestCaptureCmdRevealsSkippedNotes(t *testing.T) {
 	})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("깨진 노트 한 건 때문에 cb capture 가 죽으면 안 된다: %v", err)
+		t.Fatalf("깨진 노트 한 건 때문에 prior capture 가 죽으면 안 된다: %v", err)
 	}
 	if !strings.Contains(buf.String(), "기록됨:") {
 		t.Errorf("기록이 안 됐다:\n%s", buf.String())

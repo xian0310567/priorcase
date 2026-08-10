@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/xian0310567/casebook/internal/core/capture"
-	"github.com/xian0310567/casebook/internal/core/search"
-	"github.com/xian0310567/casebook/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // 도구 출력은 전부 텍스트다. 구조화 출력(Out 타입)을 쓰지 않는 이유: 이 도구들의
@@ -24,7 +24,7 @@ func (s *server) addTools(srv *sdk.Server) {
 	lang := s.l.Lang()
 
 	sdk.AddTool(srv, &sdk.Tool{
-		Name: "casebook_recall",
+		Name: "priorcase_recall",
 		Description: lang.T(
 			"이 워크스페이스의 과거 결정을 찾는다. "+
 				"새 작업이나 주제로 넘어갈 때 먼저 부른다 — 이미 뒤집힌 결정을 다시 제안하지 않기 위해서다.",
@@ -34,7 +34,7 @@ func (s *server) addTools(srv *sdk.Server) {
 	}, s.recall)
 
 	sdk.AddTool(srv, &sdk.Tool{
-		Name: "casebook_capture",
+		Name: "priorcase_capture",
 		Description: lang.T(
 			"결정을 기록한다. 되돌리기 어려운 선택(아키텍처·스키마·외부 서비스·가격), "+
 				"대안을 검토해 하나를 고른 경우, 실측으로 통념이 깨진 경우가 대상이다. "+
@@ -46,7 +46,7 @@ func (s *server) addTools(srv *sdk.Server) {
 	}, s.capture)
 
 	sdk.AddTool(srv, &sdk.Tool{
-		Name: "casebook_review",
+		Name: "priorcase_review",
 		Description: lang.T(
 			"기존 결정의 결과(outcome)·상태·회고를 갱신하거나, 그 결정을 뒤집는다. "+
 				"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.",
@@ -56,14 +56,14 @@ func (s *server) addTools(srv *sdk.Server) {
 	}, s.review)
 
 	sdk.AddTool(srv, &sdk.Tool{
-		Name: "casebook_pending",
+		Name: "priorcase_pending",
 		Description: lang.T(
-			"데몬(cb watch)이 표시한 미확인 구간을 본다. 이전 세션에서 결정을 내리고도 "+
-				"기록하지 않고 지나간 자리다. 확인 후 실제 결정이면 casebook_capture 로 남기고, "+
+			"데몬(prior watch)이 표시한 미확인 구간을 본다. 이전 세션에서 결정을 내리고도 "+
+				"기록하지 않고 지나간 자리다. 확인 후 실제 결정이면 priorcase_capture 로 남기고, "+
 				"아니면 resolve 로 지운다 — 쌓아 두면 다음 세션에도 그대로 뜬다.",
 			"List unreviewed conversation segments flagged by the safety net. These are places where a "+
 				"decision was likely made in an earlier session but never recorded. If it was a real "+
-				"decision, record it with casebook_capture; otherwise clear it with resolve — "+
+				"decision, record it with priorcase_capture; otherwise clear it with resolve — "+
 				"left alone it reappears every session."),
 		InputSchema: pendingSchema(lang),
 	}, s.pending)
@@ -264,7 +264,7 @@ func (s *server) pending(ctx context.Context, req *sdk.CallToolRequest, a pendin
 			p.ID(), p.When(), domain, p.Turns,
 			strings.Join(p.Signals, "·"), p.Path, p.From, p.To)
 	}
-	b.WriteString("\n각 구간의 대화를 확인하고, 실제 결정이면 casebook_capture 로 남긴 뒤 " +
-		"casebook_pending(resolve: <id>) 로 지운다.\n")
+	b.WriteString("\n각 구간의 대화를 확인하고, 실제 결정이면 priorcase_capture 로 남긴 뒤 " +
+		"priorcase_pending(resolve: <id>) 로 지운다.\n")
 	return textResult(b.String()), nil, nil
 }

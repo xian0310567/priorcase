@@ -4,15 +4,15 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/index"
 )
 
-// newIndexCmd 는 `cb index` 다.
+// newIndexCmd 는 `prior index` 다.
 //
 // 건너뛴 노트가 있어도 종료 코드는 0 이다. 근거:
 //
-//   - 건너뜀의 원인(구 스키마 frontmatter 등)은 cb 로 고칠 수 있는 것이 아니라
-//     사람이 볼트를 손봐야 하는 것이다. 훅이나 크론에서 도는 `cb index` 가 그동안
+//   - 건너뜀의 원인(구 스키마 frontmatter 등)은 prior 로 고칠 수 있는 것이 아니라
+//     사람이 볼트를 손봐야 하는 것이다. 훅이나 크론에서 도는 `prior index` 가 그동안
 //     계속 rc≠0 이면, 고칠 때까지 매번 실패하는 명령이 되어 오히려 무시하는 법을
 //     학습시킨다.
 //   - capture·review 가 내부적으로 index.Write 를 부른다. 거기서 건너뜀을

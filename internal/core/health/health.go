@@ -1,4 +1,4 @@
-// Package health 는 "지금 casebook 이 제대로 돌고 있는가" 를 검사한다.
+// Package health 는 "지금 priorcase 가 제대로 돌고 있는가" 를 검사한다.
 //
 // **이 패키지의 존재 이유는 조용한 무동작이다.** 이 시스템의 부품은 전부 실패해도
 // 대화를 막지 않도록 설계됐다 — 훅은 무슨 일이 있어도 exit 0 이고, 회수는 못 찾으면
@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/index"
-	"github.com/xian0310567/casebook/internal/core/schema"
-	"github.com/xian0310567/casebook/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/index"
+	"github.com/xian0310567/priorcase/internal/core/schema"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 // Level 은 검사 결과의 심각도다.
@@ -103,7 +103,7 @@ func RecentDecisions(l *store.Layout, now time.Time, days int) int {
 	return n
 }
 
-// checkSchema 는 **`cb capture` 가 거부했을 노트를 찾는다.**
+// checkSchema 는 **`prior capture` 가 거부했을 노트를 찾는다.**
 //
 // 파싱과 검증은 다르다. List() 는 frontmatter 가 10키인지만 보고, 접두어와 domain
 // 첫 값이 같은지·status/outcome 이 허용값인지·날짜 형식이 맞는지는 안 본다.
@@ -132,20 +132,20 @@ func checkSchema(r *Report, l *store.Layout, notes []store.Note) {
 		lv, fix := OK, ""
 		if future > 0 {
 			// 경고다. 지금 바이너리로는 그 노트를 갱신할 수 없으니 사람이 알아야 한다.
-			lv, fix = Warn, "cb 를 올려라 — 팀원 중 누가 먼저 올렸다"
+			lv, fix = Warn, "prior 를 올려라 — 팀원 중 누가 먼저 올렸다"
 		}
 		r.add("스키마", lv, fmt.Sprintf("%d건 전부 통과%s", len(notes)-future, note), fix)
 		return
 	}
 	sort.Strings(bad)
 	r.add("스키마", Fail, strings.Join(bad, " · ")+note,
-		"cb capture 를 거치면 애초에 거부된다. 손으로 고치거나 다시 만들어라")
+		"prior capture 를 거치면 애초에 거부된다. 손으로 고치거나 다시 만들어라")
 }
 
 // checkSimilarSlugs 는 하이픈·공백·밑줄·대소문자만 다른 결정을 찾는다.
 //
 // 감사 결함 4 다 — 옛 구현의 유일한 방어가 "완전히 동일한 파일명이면 스킵" 이라
-// slug 가 한 글자만 달라도 중복 노트가 생겼다. `cb capture` 는 이걸 거부하지만
+// slug 가 한 글자만 달라도 중복 노트가 생겼다. `prior capture` 는 이걸 거부하지만
 // **손으로 쓰면 우회된다.**
 func checkSimilarSlugs(r *Report, notes []store.Note) {
 	groups := map[string][]string{}
@@ -165,7 +165,7 @@ func checkSimilarSlugs(r *Report, notes []store.Note) {
 	}
 	sort.Strings(dups)
 	r.add("유사 slug", Warn, strings.Join(dups, " · "),
-		"둘 중 하나를 지우거나 cb review --supersedes 로 엮어라")
+		"둘 중 하나를 지우거나 prior review --supersedes 로 엮어라")
 }
 
 // slugKey 는 유사 비교용 정규화 키다. **capture.slugKey 와 같은 규칙이어야 한다** —
@@ -268,7 +268,7 @@ func checkUndeclared(r *Report, l *store.Layout) {
 	}
 	r.add("미선언 도메인", Fail,
 		fmt.Sprintf("%v — 이 폴더의 결정은 색인·회수에서 통째로 빠진다", rel),
-		"설정에 [[domain]] 블록을 추가하고 cb index 를 다시 돌려라")
+		"설정에 [[domain]] 블록을 추가하고 prior index 를 다시 돌려라")
 }
 
 func checkNotes(r *Report, l *store.Layout) []store.Note {
@@ -284,7 +284,7 @@ func checkNotes(r *Report, l *store.Layout) []store.Note {
 		}
 		r.add("결정 노트", Fail,
 			fmt.Sprintf("%d건 중 %d건을 읽지 못했다 %v", len(notes)+len(skipped), len(skipped), rel),
-			"frontmatter 를 정본 10키로 고쳐라. cb index 가 이유를 알려준다")
+			"frontmatter 를 정본 10키로 고쳐라. prior index 가 이유를 알려준다")
 		return notes
 	}
 	r.add("결정 노트", OK, fmt.Sprintf("%d건 전부 읽힌다", len(notes)), "")
@@ -304,7 +304,7 @@ func checkIndex(r *Report, l *store.Layout, notes []store.Note) {
 	}
 	got, err := os.ReadFile(l.IndexPath())
 	if os.IsNotExist(err) {
-		r.add("색인", Fail, l.RelPath(l.IndexPath())+" 가 없다", "cb index")
+		r.add("색인", Fail, l.RelPath(l.IndexPath())+" 가 없다", "prior index")
 		return
 	}
 	if err != nil {
@@ -312,7 +312,7 @@ func checkIndex(r *Report, l *store.Layout, notes []store.Note) {
 		return
 	}
 	if !bytes.Equal(want, got) {
-		r.add("색인", Warn, "볼트와 어긋난다 — 노트를 손으로 고쳤거나 색인을 안 돌렸다", "cb index")
+		r.add("색인", Warn, "볼트와 어긋난다 — 노트를 손으로 고쳤거나 색인을 안 돌렸다", "prior index")
 		return
 	}
 	r.add("색인", OK, fmt.Sprintf("%d건과 일치한다", len(notes)), "")

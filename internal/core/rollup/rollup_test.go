@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // now 는 테스트 기준 시각. 2026-08-08 은 2026-W32 다.

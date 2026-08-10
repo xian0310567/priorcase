@@ -86,7 +86,7 @@ func TestFindUsesExplicitPath(t *testing.T) {
 // ★ **명시 경로가 잘못돼도 조용히 꺼진다.**
 //
 // 검증하지 않으면 오타 하나로 매 세션 끝에 "판별기 실행 실패" 가 뜬다. 훅은 대화
-// 흐름에 있어서 반복 경고를 낼 자리가 아니다 — "설정했는데 안 된다" 는 cb doctor 가 알린다.
+// 흐름에 있어서 반복 경고를 낼 자리가 아니다 — "설정했는데 안 된다" 는 prior doctor 가 알린다.
 func TestFindRejectsBrokenExplicitPath(t *testing.T) {
 	if j := Find(filepath.Join(t.TempDir(), "없는것"), ""); j != nil {
 		t.Errorf("없는 경로를 받아들였다: %+v", j)
@@ -101,7 +101,7 @@ func TestFindRejectsBrokenExplicitPath(t *testing.T) {
 	}
 }
 
-// 설정했는지와 쓸 수 있는지를 나눠 알려 준다 — cb doctor 가 둘을 구별해 말해야 한다.
+// 설정했는지와 쓸 수 있는지를 나눠 알려 준다 — prior doctor 가 둘을 구별해 말해야 한다.
 func TestConfiguredDistinguishesSetFromUsable(t *testing.T) {
 	if set, _ := Configured(""); set {
 		t.Error("안 적었는데 적었다고 한다")
@@ -230,5 +230,31 @@ func TestPromptExplainsToolActivity(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("지시문에 %q 가 없다", want)
 		}
+	}
+}
+
+// 지시문에서 **날조 금지가 사라지면** 판별기가 근거 절을 그럴듯하게 채운다.
+//
+// 실제로 그랬다. 2026-08-10 에 ③ 이 만든 첫 노트가 "canonlog 는 판례집의 라틴어
+// 표현" 이라고 적었는데, 대화 어디에도 없는 말이었다. 지시문이 record 여부와 회수
+// 구조는 길게 다루면서 "발췌에 있는 것만 써라" 를 빠뜨린 탓이다.
+//
+// **이게 이 제품에서 가장 나쁜 실패다.** 노트가 없으면 사람이 찾아보지만, 틀린
+// 노트는 아무도 의심하지 않는다 — 권위 있는 형식으로 남기 때문이다.
+func TestPromptForbidsFabrication(t *testing.T) {
+	got := prompt(Request{Excerpt: "x", Domain: "alpha", Date: "2026-08-09"})
+	for _, want := range []string{
+		"지어내지 마라",          // 총칙
+		"근거 절이 위험하다",       // 어느 절이 특히 위험한지
+		"근거가 대화에 남지 않았다", // 비어 있을 때 쓸 말을 준다
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("지시문에 %q 가 없다 — 판별기가 근거를 지어낸다", want)
+		}
+	}
+	// 출력 형식의 body 설명 자체에도 제약이 붙어 있어야 한다. 위 산문만 남고
+	// 여기가 "절 셋" 으로 되돌아가면, 형식 예시가 산문을 이긴다.
+	if !strings.Contains(got, `"body": "발췌의 언어로. 절 셋: 결정 / 근거 / 고려한 대안. 발췌에 있는 것만"`) {
+		t.Error("출력 형식의 body 설명에 발췌 제약이 없다")
 	}
 }

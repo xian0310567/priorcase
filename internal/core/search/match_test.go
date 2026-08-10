@@ -14,7 +14,7 @@ func TestMatchRuleDependsOnScript(t *testing.T) {
 	}{
 		// ASCII — 낱말 경계를 요구한다
 		{"ASCII 낱말 일치", "use postgres for jsonb", "postgres", true},
-		{"ASCII 낱말 안쪽은 아니다", "casebook hooks and tokens", "ok", false},
+		{"ASCII 낱말 안쪽은 아니다", "priorcase hooks and tokens", "ok", false},
 		{"ASCII 접미가 붙으면 아니다", "we used it because", "use", false},
 		{"하이픈은 경계다", "alpha-use-postgres-2026", "postgres", true},
 		{"언더스코어도 경계다", "source_session", "session", true},
@@ -32,7 +32,7 @@ func TestMatchRuleDependsOnScript(t *testing.T) {
 		{"숫자 뒤에 붙은 한글", "v2스키마", "스키마", true},
 
 		// 섞인 것 — CJK 가 하나라도 있으면 부분 매칭
-		{"한영 혼합", "casebook-결정-국제화범위", "국제화", true},
+		{"한영 혼합", "priorcase-결정-국제화범위", "국제화", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := matches(tc.text, tc.keyword); got != tc.want {

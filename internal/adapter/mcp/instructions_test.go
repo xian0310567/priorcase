@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/daemon"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // instructions 는 **모델이 읽는 글**이라 lang 을 따라가야 한다. 두 언어를 다
@@ -29,8 +29,8 @@ var instructionLangs = []struct {
 // 것은 "요약이 실려 있는가" 가 아니라 "언제 무엇을 불러야 하는지가 적혀 있는가" 다.
 func TestBuildInstructionsCarriesContract(t *testing.T) {
 	want := map[string][]string{
-		"ko": {"casebook_recall", "casebook_capture", "4건"},
-		"en": {"casebook_recall", "casebook_capture", "4 decisions"},
+		"ko": {"priorcase_recall", "priorcase_capture", "4건"},
+		"en": {"priorcase_recall", "priorcase_capture", "4 decisions"},
 	}
 	for _, tc := range instructionLangs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,10 +63,10 @@ func TestBuildInstructionsOnEmptyVault(t *testing.T) {
 			}
 			got, _ := buildInstructions(store.NewLayout(c), pendingView{})
 
-			if !strings.Contains(got, "casebook_capture") {
+			if !strings.Contains(got, "priorcase_capture") {
 				t.Errorf("빈 볼트에서 기록 계약이 빠졌다:\n%s", got)
 			}
-			if strings.Contains(got, "casebook_recall") {
+			if strings.Contains(got, "priorcase_recall") {
 				t.Errorf("결정이 0건인데 회수를 요구한다 — 부를 것이 없다:\n%s", got)
 			}
 		})
@@ -103,8 +103,8 @@ func TestBuildInstructionsReportsSkipped(t *testing.T) {
 // 같이 있어야 에이전트가 행동할 수 있다.
 func TestInstructionsListPending(t *testing.T) {
 	want := map[string][]string{
-		"ko": {"2건", "alpha", "beta", "casebook_capture", "casebook_pending"},
-		"en": {"flagged 2 unreviewed segments", "alpha", "beta", "casebook_capture", "casebook_pending"},
+		"ko": {"2건", "alpha", "beta", "priorcase_capture", "priorcase_pending"},
+		"en": {"flagged 2 unreviewed segments", "alpha", "beta", "priorcase_capture", "priorcase_pending"},
 	}
 	for _, tc := range instructionLangs {
 		t.Run(tc.name, func(t *testing.T) {

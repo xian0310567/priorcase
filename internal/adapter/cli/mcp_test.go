@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/xian0310567/casebook/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 // buildCB 는 실제 바이너리를 만든다. 패키지 안에서 서버를 조립하는 테스트와 달리
@@ -17,16 +17,16 @@ import (
 // 설정 로딩, stdio 전송이 전부 실물이어야 의미가 있다.
 func buildCB(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "cb")
-	cmd := exec.Command("go", "build", "-o", bin, "github.com/xian0310567/casebook/cmd/cb")
+	bin := filepath.Join(t.TempDir(), "prior")
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/xian0310567/priorcase/cmd/prior")
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=auto")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("cb 빌드 실패: %v\n%s", err, out)
+		t.Fatalf("prior 빌드 실패: %v\n%s", err, out)
 	}
 	return bin
 }
 
-// stdio 전송은 **개행 구분 JSON** 이다. cb mcp 가 도는 동안 stdout 에 프로토콜이
+// stdio 전송은 **개행 구분 JSON** 이다. prior mcp 가 도는 동안 stdout 에 프로토콜이
 // 아닌 것이 한 줄이라도 섞이면 프레이밍이 깨져 이 핸드셰이크가 실패한다.
 //
 // 깨진 노트가 있는 볼트를 일부러 쓴다. 건너뜀 경고는 CLI 에서 stderr 로 나가는
@@ -53,12 +53,12 @@ func TestMCPServerSpeaksCleanStdio(t *testing.T) {
 	}
 	defer func() { _ = cs.Close() }()
 
-	if ins := cs.InitializeResult().Instructions; !strings.Contains(ins, "casebook_recall") {
+	if ins := cs.InitializeResult().Instructions; !strings.Contains(ins, "priorcase_recall") {
 		t.Errorf("실 바이너리의 instructions 에 행동 계약이 없다:\n%s", ins)
 	}
 
 	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
-		Name: "casebook_recall", Arguments: map[string]any{"query": "저장 엔진"},
+		Name: "priorcase_recall", Arguments: map[string]any{"query": "저장 엔진"},
 	})
 	if err != nil {
 		t.Fatalf("도구 호출 실패: %v\nstderr:\n%s", err, stderr.String())

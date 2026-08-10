@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/store"
-	"github.com/xian0310567/casebook/internal/transcript"
-	"github.com/xian0310567/casebook/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
 )
 
 // ScanResult 는 파일 하나를 한 번 훑은 결과다.

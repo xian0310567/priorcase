@@ -5,13 +5,13 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xian0310567/casebook/internal/core/config"
-	"github.com/xian0310567/casebook/internal/core/judge"
-	"github.com/xian0310567/casebook/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/judge"
+	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
 )
 
-// NewCommand 는 `cb watch` 를 만든다. mcp.NewCommand 와 같은 이유로 cli 가 아니라
-// 여기 있다 — 어댑터가 이 패키지를 import 하면 §4.1 이 깨진다. 조립은 cmd/cb 가 한다.
+// NewCommand 는 `prior watch` 를 만든다. mcp.NewCommand 와 같은 이유로 cli 가 아니라
+// 여기 있다 — 어댑터가 이 패키지를 import 하면 §4.1 이 깨진다. 조립은 cmd/prior 가 한다.
 func NewCommand() *cobra.Command {
 	var backfill bool
 	var stateDir, root string
@@ -58,9 +58,9 @@ func NewCommand() *cobra.Command {
 					switch e.Kind {
 					case "error":
 						if e.Err != nil {
-							fmt.Fprintf(errW, "cb watch: %s: %v\n", e.Path, e.Err)
+							fmt.Fprintf(errW, "prior watch: %s: %v\n", e.Path, e.Err)
 						} else {
-							fmt.Fprintf(errW, "cb watch: %s\n", e.Note)
+							fmt.Fprintf(errW, "prior watch: %s\n", e.Note)
 						}
 					case "scan":
 						r := e.Result
@@ -79,7 +79,7 @@ func NewCommand() *cobra.Command {
 						}
 						fmt.Fprintln(out, msg)
 					default:
-						fmt.Fprintf(out, "cb watch: %s\n", e.Note)
+						fmt.Fprintf(out, "prior watch: %s\n", e.Note)
 					}
 				},
 			})
@@ -91,7 +91,7 @@ func NewCommand() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&backfill, "backfill", false, "기동 전 기록도 처음부터 훑는다")
-	f.StringVar(&stateDir, "state-dir", "", "상태 파일 위치 (기본: $XDG_STATE_HOME/casebook)")
+	f.StringVar(&stateDir, "state-dir", "", "상태 파일 위치 (기본: $XDG_STATE_HOME/priorcase)")
 	f.StringVar(&root, "transcript-root", "", "transcript 루트 (기본: ~/.claude/projects)")
 	return cmd
 }
