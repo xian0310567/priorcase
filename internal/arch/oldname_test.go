@@ -30,9 +30,11 @@ func TestOldNameDoesNotReturn(t *testing.T) {
 	// 옛 이름을 적어도 되는 파일. **경로가 정확히 같아야 한다** — 접두어 일치로
 	// 하면 디렉토리 하나가 통째로 뚫린다.
 	allowOldName := map[string]string{
-		"internal/arch/oldname_test.go": "이 검사 자신",
-		"internal/arch/npm_test.go":     "옛 이름의 조직이 막혔던 사실을 적는다",
-		"npm/priorcase/bin/prior.js":    "옛 이름의 조직이 막혔던 사실을 적는다",
+		"internal/arch/oldname_test.go":      "이 검사 자신",
+		"internal/arch/npm_test.go":          "옛 이름의 조직이 막혔던 사실을 적는다",
+		"npm/priorcase/bin/prior.js":         "옛 이름의 조직이 막혔던 사실을 적는다",
+		"internal/adapter/hook/init.go":      "개명 전 훅 표시와 백업 이름을 알아본다",
+		"internal/adapter/hook/init_test.go": "개명 전 훅·백업을 재현한다",
 	}
 
 	// `cb` 는 흔한 두 글자라 낱말 경계로만 잡는다. 그래도 base64 조각 안에서는

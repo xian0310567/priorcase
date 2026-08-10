@@ -20,6 +20,18 @@ import (
 // 멱등성(두 번 돌려도 중복 등록 안 됨)과 `--revert` 가 전부 이 표시에 기댄다.
 const hookMarker = "PRIORCASE_HOOK=1"
 
+// legacyHookMarker 는 개명(2026-08-10, casebook → priorcase) 전에 심어 둔 훅의 표시다.
+//
+// **이것 없이는 훅이 두 벌이 된다.** 걷어내기는 표시로만 남의 훅과 우리 것을
+// 가르는데, 표시가 바뀌었으니 옛 훅은 "남의 것" 으로 보여 그대로 남는다. 그 위에
+// 새 훅 5개가 얹히면 매 이벤트가 두 번씩 발동한다 — 훑기가 두 번 돌고, 판별기가
+// 같은 구간에 두 번 불리고, 같은 대화에 결정 노트가 둘 생긴다. ClaimPending 이
+// 마지막을 막지만 앞의 둘은 그대로 낭비다.
+//
+// 그리고 이 고장은 **조용하다.** 훅은 stdout 이 대화에 안 들어가고, 두 번 도는
+// 것과 한 번 도는 것이 겉으로 같아 보인다.
+const legacyHookMarker = "CASEBOOK_HOOK=1"
+
 // Plan 은 prior init 이 무엇을 할지 미리 계산한 것이다. --dry-run 이 이걸 보여 준다.
 //
 // 계획을 먼저 만들고 나중에 적용하는 구조로 둔 이유: 이 명령은 사용자의 다른 시스템
@@ -131,6 +143,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 			keptHooks := g.Hooks[:0]
 			for _, h := range g.Hooks {
 				drop := strings.Contains(h.Command, hookMarker) ||
+					strings.Contains(h.Command, legacyHookMarker) ||
 					(o.RemoveMatching != "" && strings.Contains(h.Command, o.RemoveMatching))
 				if drop {
 					p.Remove = append(p.Remove, event+": "+summarize(h.Command))
@@ -197,22 +210,29 @@ func ReadSettings(path string) []byte {
 func LatestBackup(settingsPath string) (string, error) {
 	dir := filepath.Dir(settingsPath)
 	base := filepath.Base(settingsPath) + ".priorcase-backup-"
+	// 개명(2026-08-10) 전에 뜬 백업은 이 이름이다. 안 찾으면 --revert 가 "백업이
+	// 없다" 고 하는데, 정작 되돌려야 할 그 백업이 바로 옆에 있다.
+	legacyBase := filepath.Base(settingsPath) + ".casebook-backup-"
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
 	}
 	var found []string
 	for _, e := range ents {
-		if strings.HasPrefix(e.Name(), base) {
+		if strings.HasPrefix(e.Name(), base) || strings.HasPrefix(e.Name(), legacyBase) {
 			found = append(found, e.Name())
 		}
 	}
 	if len(found) == 0 {
-		return "", fmt.Errorf("백업이 없다 (%s*)", filepath.Join(dir, base))
+		return "", fmt.Errorf("백업이 없다 (%s* · %s*)",
+			filepath.Join(dir, base), filepath.Join(dir, legacyBase))
 	}
-	sort.Strings(found) // 이름이 타임스탬프라 사전순 = 시간순
+	// 이름 안의 타임스탬프로 정렬한다. 접두어로 정렬하면 casebook- 백업이 전부
+	// priorcase- 백업보다 앞에 와서, 개명 직전의 가장 최근 백업이 맨 뒤로 밀린다.
+	sort.Slice(found, func(i, j int) bool { return backupStamp(found[i]) < backupStamp(found[j]) })
 
-	// **priorcase 훅이 들어 있지 않은 가장 최근 백업**을 고른다.
+	// **우리 훅이 들어 있지 않은 가장 최근 백업**을 고른다. 옛 표시도 같이 본다 —
+	// 개명 전 훅이 든 백업으로 되돌리면 이제는 없는 `cb` 를 가리키는 훅이 살아난다.
 	//
 	// 무조건 마지막을 고르면, 우리 훅이 이미 든 백업이 섞여 있을 때 되돌려도 훅이
 	// 남는다. BuildPlan 이 이제 그런 백업을 만들지 않지만, **옛 판으로 이미 만들어진
@@ -223,12 +243,12 @@ func LatestBackup(settingsPath string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if !bytes.Contains(b, []byte(hookMarker)) {
+		if !bytes.Contains(b, []byte(hookMarker)) && !bytes.Contains(b, []byte(legacyHookMarker)) {
 			return full, nil
 		}
 	}
-	return "", fmt.Errorf("되돌릴 백업이 없다 — 있는 백업 %d개가 전부 priorcase 훅을 이미 담고 있다 (%s*)",
-		len(found), filepath.Join(dir, base))
+	return "", fmt.Errorf("되돌릴 백업이 없다 — 있는 백업 %d개가 전부 우리 훅을 이미 담고 있다 (%s* · %s*)",
+		len(found), filepath.Join(dir, base), filepath.Join(dir, legacyBase))
 }
 
 // Revert 는 가장 최근 백업으로 되돌린다. **바이트 그대로 복원한다** — 우리가 다시
@@ -301,4 +321,16 @@ func hookTimeout(ev Event) int {
 		return int(promoteHookTimeout / time.Second)
 	}
 	return 0
+}
+
+// backupStamp 는 백업 파일 이름 끝의 타임스탬프를 뽑는다.
+//
+// 접두어가 두 종류(priorcase-·casebook-)라 이름 전체로 정렬하면 c < p 때문에
+// **개명 직전의 가장 최근 백업이 목록 맨 앞으로 밀린다** — 그게 되돌려야 할
+// 바로 그 파일인데.
+func backupStamp(name string) string {
+	if i := strings.LastIndex(name, "-backup-"); i >= 0 {
+		return name[i+len("-backup-"):]
+	}
+	return name
 }
