@@ -122,7 +122,7 @@ type captureArgs struct {
 	Date       string   `json:"date,omitempty"`
 	SessionID  string   `json:"session_id,omitempty"`
 	// Author 는 이 결정을 내린 사람이다. 비면 설정·git 신원에서 정한다.
-	Author     string   `json:"author,omitempty"`
+	Author string `json:"author,omitempty"`
 }
 
 func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captureArgs) (*sdk.CallToolResult, noOutput, error) {
