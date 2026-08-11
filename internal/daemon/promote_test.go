@@ -200,3 +200,124 @@ func TestWatchPromotesInSteadyState(t *testing.T) {
 		t.Error("원장이 안 남았다")
 	}
 }
+
+// slowJudge 는 답하기 전에 오래 자는 판별기다. 호출 **도중** 취소를 재현한다.
+func slowJudge(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "judge")
+	sh := "#!/bin/sh\ncat >/dev/null\nsleep 5\ncat <<'J'\n" + body + "\nJ\n"
+	if err := os.WriteFile(p, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// addPendings 는 구간을 n 개 심는다. 하나만 있으면 "무더기" 가 재현되지 않는다.
+func addPendings(t *testing.T, sd string, n int) int {
+	t.Helper()
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= n; i++ {
+		if err := s.AddPending(Pending{
+			Path: "/t.jsonl", From: int64(i * 1000), Domain: "alpha", SessionID: "S1",
+			Days: []string{"2026-08-09"}, Excerpt: "결정했다", At: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReadPending(sd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(got)
+}
+
+// ★★ **이미 취소된 채로 들어오면 한 건도 건드리지 않는다.**
+//
+// 루프 첫머리의 ctx 검사가 이걸 한다. 없으면 첫 구간을 붙잡아 실패로 기록한다 —
+// 그리고 실패 **전에** ClaimPending 이 도장을 찍으므로, 아무 일도 안 한 구간이
+// claimTTL(5분) 동안 건너뛰어진다. 미확인 구간이 안 줄어드는 이유가 그것이었다.
+func TestAlreadyCancelledTouchesNothing(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"아니다"}`)
+	n := addPendings(t, sd, 5)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var errBuf strings.Builder
+	Promote(ctx, PromoteOptions{StateDir: sd, Config: c, Layout: l,
+		Budget: time.Minute, Err: &errBuf})
+
+	recs, err := ReadPromotions(sd, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Errorf("원장에 %d건이 남았다 — 이미 취소됐으면 한 건도 건드리면 안 된다", len(recs))
+		for _, r := range recs {
+			t.Logf("  %s err=%q", r.ID, r.Err)
+		}
+	}
+	if got := errBuf.String(); !strings.Contains(got, "중단") {
+		t.Errorf("보고가 중단을 말하지 않는다: %q", got)
+	}
+	after, err := ReadPending(sd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != n {
+		t.Errorf("구간이 %d → %d 로 줄었다 — 취소는 '결정이 아니다' 가 아니다", n, len(after))
+	}
+
+	// ★ **도장도 찍히면 안 된다.** 원장이 비어 있어도 ClaimPending 이 돌았으면
+	// 그 구간은 claimTTL(5분) 동안 건너뛰어진다 — 아무 일도 안 했는데.
+	// 이게 미확인 구간이 영원히 안 줄어들던 진짜 원인이다. 원장만 보면 안 보인다.
+	for _, p := range after {
+		if !p.ClaimedAt.IsZero() {
+			t.Errorf("%s 에 도장이 찍혔다 (%s) — 이미 취소됐는데 집어 갔다. "+
+				"그 구간은 5분간 아무도 못 본다", p.ID(), p.ClaimedAt.Format(time.RFC3339))
+		}
+	}
+}
+
+// ★★ **호출 도중에 취소되면 그건 판별기 실패가 아니다.**
+//
+// 그렇게 남기면 원장이 거짓말을 한다. 실측에서 이 구별이 없어 원장 62건 중 52건이
+// "판별기 실행 실패" 로 보였고, 판별기가 고장 났다고 오진했다 — 실제로는 9.3초에
+// 멀쩡히 답하고 있었다(상한 45초). 원장의 존재 이유가 바로 이 구별이다.
+//
+// 그리고 남은 구간으로 넘어가면 안 된다. 이미 취소됐으니 전부 같은 에러를 낸다.
+func TestCancelDuringJudgeIsNotRecordedAsFailure(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"아니다"}`)
+	c.Capture.JudgePath = slowJudge(t, `{"record":false,"reason":"아니다"}`)
+	addPendings(t, sd, 5)
+
+	// 루프 첫 검사는 통과시키고, 판별기가 자는 동안 취소한다.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+
+	var errBuf strings.Builder
+	Promote(ctx, PromoteOptions{StateDir: sd, Config: c, Layout: l,
+		Budget: time.Minute, Err: &errBuf})
+
+	recs, err := ReadPromotions(sd, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.Err != "" {
+			t.Errorf("취소를 판별기 실패로 남겼다 (%s): %q — 판별기는 멀쩡했다", r.ID, r.Err)
+		}
+	}
+	if len(recs) > 1 {
+		t.Errorf("원장에 %d건이 남았다 — 취소 뒤 남은 구간까지 태웠다", len(recs))
+	}
+	if got := errBuf.String(); !strings.Contains(got, "중단") {
+		t.Errorf("보고가 중단을 말하지 않는다: %q", got)
+	}
+}

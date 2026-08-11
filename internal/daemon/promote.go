@@ -80,6 +80,21 @@ func Promote(ctx context.Context, o PromoteOptions) {
 	deadline := time.Now().Add(budget)
 
 	for _, p := range items {
+		// **취소를 예산보다 먼저 본다.** 예산은 우리가 정한 것이고 취소는 호스트가
+		// 하는 것이라, 취소가 예산보다 먼저 올 수 있다 — 훅은 SessionEnd 에서
+		// 120초 상한 아래 도는데 그전에 죽을 수 있고, 데몬은 종료 신호를 받는다.
+		//
+		// 이걸 안 보면 남은 구간이 **전부 즉시 실패로 기록된다.** 판별기 호출이
+		// 취소된 컨텍스트에서 곧장 에러를 내기 때문이다. 실측으로 그 상태였다 —
+		// 원장 62건 중 52건이 이 인공물이었고, 같은 초에 20건·17건씩 뭉쳐 있었다.
+		//
+		// 그리고 그냥 소음이 아니다. 실패 **전에** ClaimPending 이 이미 도장을
+		// 찍으므로, 아무 일도 안 한 구간이 claimTTL(5분) 동안 건너뛰어진다.
+		// 미확인 구간이 안 줄어드는 이유가 이것이었다.
+		if err := ctx.Err(); err != nil {
+			o.report("중단됐다 — 남은 구간은 다음 기회에 넘긴다")
+			return
+		}
 		if time.Now().After(deadline) {
 			o.report("시간이 다 돼 나머지는 다음 기회에 넘긴다")
 			return
@@ -103,6 +118,16 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt,
 			Session: p.SessionID, Author: author,
 		})
+
+		// **중단은 실패가 아니다.** 호출 도중에 취소되면 판별기는 컨텍스트 에러를
+		// 내는데, 그걸 "판별기 실패" 로 남기면 원장이 거짓말을 한다 — 판별기는
+		// 멀쩡했고 우리가 시간을 못 준 것뿐이다. 실측에서 이 구별이 없어 원장 62건
+		// 중 52건이 "판별기 실행 실패" 로 보였고, 그것 때문에 판별기가 고장 났다고
+		// 오진했다. 원장의 존재 이유가 바로 이 구별이다.
+		if r.Err != nil && ctx.Err() != nil {
+			o.report("중단됐다 — 남은 구간은 다음 기회에 넘긴다")
+			return
+		}
 
 		// **세 갈래 전부 원장에 남긴다.** 진행 보고는 사람이 그 순간 보지 않으면
 		// 사라지고, 표시는 곧 해소돼 지워진다. 원장이 없으면 "판별기가 보고 기록할
