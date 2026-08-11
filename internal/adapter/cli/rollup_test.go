@@ -41,7 +41,7 @@ func TestListWeeksShowsEachReason(t *testing.T) {
 		"2026-W31", "내용 부족",
 		"2026-W32", "진행 중인 주",
 		"prior rollup <프로젝트> <주>", // 다음에 무엇을 하라는지
-		"에이전트가 한다",             // 요약문은 priorcase 가 안 만든다
+		"에이전트가 한다",                // 요약문은 priorcase 가 안 만든다
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("목록에 %q 가 없다:\n%s", want, got)
