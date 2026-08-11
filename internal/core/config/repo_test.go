@@ -215,3 +215,78 @@ func TestUnknownRepoFallsBackToDefault(t *testing.T) {
 		t.Errorf("DomainForCwd = %q, 폴백 common 이어야 한다", got)
 	}
 }
+
+// gitRepoWithUser 는 [user] 절까지 있는 가짜 저장소를 만든다.
+func gitRepoWithUser(t *testing.T, url, name, email string) string {
+	t.Helper()
+	root := t.TempDir()
+	g := filepath.Join(root, ".git")
+	if err := os.MkdirAll(g, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[remote \"origin\"]\n\turl = " + url + "\n"
+	if name != "" || email != "" {
+		body += "[user]\n"
+		if name != "" {
+			body += "\tname = " + name + "\n"
+		}
+		if email != "" {
+			body += "\temail = " + email + "\n"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(g, "config"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// ★ **저장소 설정이 전역보다 앞선다.** git 이 그렇게 하고, 회사 저장소에서만
+// 회사 메일을 쓰는 사람이 흔하다. 뒤집으면 그 사람의 결정에 개인 메일이 박힌다.
+func TestGitUserPrefersRepoOverGlobal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[user]\n\tname = 개인\n\temail = me@home\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := gitRepoWithUser(t, "git@github.com:o/r.git", "회사", "me@work")
+	if got := GitUser(repo); got != "회사 <me@work>" {
+		t.Errorf("GitUser = %q, 저장소 설정이 이겨야 한다", got)
+	}
+
+	// 저장소에 [user] 가 없으면 전역으로 떨어진다.
+	plain := gitRepo(t, "git@github.com:o/r2.git")
+	if got := GitUser(plain); got != "개인 <me@home>" {
+		t.Errorf("GitUser = %q, 전역으로 떨어져야 한다", got)
+	}
+
+	// 둘 다 없으면 빈 문자열 — 그때는 author 를 안 쓴다. 추측해서 채우지 않는다.
+	t.Setenv("HOME", t.TempDir())
+	if got := GitUser(t.TempDir()); got != "" {
+		t.Errorf("GitUser = %q, 신원이 없으면 비어야 한다", got)
+	}
+}
+
+// ★ 설정에 적은 이름이 git 신원보다 앞선다 — git 신원은 자동으로 잡히는
+// 편의값이고, 사람이 굳이 적었다면 그쪽이 의도다.
+func TestAuthorForPrefersConfigOverGit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	repo := gitRepoWithUser(t, "git@github.com:o/r.git", "깃이름", "g@x")
+
+	c := &Config{Author: "설정이름"}
+	if got := c.AuthorFor(repo); got != "설정이름" {
+		t.Errorf("AuthorFor = %q, 설정이 이겨야 한다", got)
+	}
+	c = &Config{}
+	if got := c.AuthorFor(repo); got != "깃이름 <g@x>" {
+		t.Errorf("AuthorFor = %q, 설정이 비면 git 신원이어야 한다", got)
+	}
+	// 공백만 적은 것은 안 적은 것이다.
+	c = &Config{Author: "   "}
+	if got := c.AuthorFor(repo); got != "깃이름 <g@x>" {
+		t.Errorf("AuthorFor = %q, 공백은 안 적은 것으로 봐야 한다", got)
+	}
+}

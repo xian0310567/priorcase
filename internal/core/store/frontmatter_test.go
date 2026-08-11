@@ -244,3 +244,55 @@ func TestEmitNoteBodyBoundaries(t *testing.T) {
 		}
 	})
 }
+
+// ★★ **author 가 비면 줄 자체가 없어야 한다.**
+//
+// 이 키는 순수 증분이다. 비었는데도 `author: ""` 를 쓰면 **기존 노트 전부가**
+// 다음 저장 때 한 줄씩 늘어난다 — 볼트가 git 이면 그날 diff 가 전 노트로 번지고,
+// 정작 무엇이 바뀌었는지 사람이 못 본다. 팀에서는 그게 리뷰를 통째로 막는다.
+func TestAuthorIsOmittedWhenEmpty(t *testing.T) {
+	m := Meta{
+		Type: "decision", Date: "2026-08-11", Domain: []string{"alpha"},
+		Summary: "요약", Status: "active", Outcome: "pending",
+	}
+	got := string(EmitFrontmatter(m))
+	if strings.Contains(got, "author") {
+		t.Errorf("author 가 비었는데 줄이 나왔다 — 기존 노트가 전부 한 줄씩 늘어난다:\n%s", got)
+	}
+
+	m.Author = "김철수 <kim@example.com>"
+	got = string(EmitFrontmatter(m))
+	if !strings.Contains(got, `author: "김철수 <kim@example.com>"`) {
+		t.Errorf("author 가 안 나왔다:\n%s", got)
+	}
+	// date 바로 뒤여야 한다 — 누가·언제가 붙어 있어야 사람이 읽는다.
+	if i, j := strings.Index(got, "date:"), strings.Index(got, "author:"); !(i < j && j < strings.Index(got, "domain:")) {
+		t.Errorf("author 위치가 date 와 domain 사이가 아니다:\n%s", got)
+	}
+}
+
+// ★ **왕복해도 author 가 살아 있어야 한다.** 여기가 깨지면 review·supersede 처럼
+// 노트를 다시 쓰는 명령이 남의 author 를 조용히 지운다.
+func TestAuthorSurvivesRoundTrip(t *testing.T) {
+	src := "---\ntype: decision\ndate: 2026-08-11\nauthor: \"김철수\"\ndomain: [alpha]\n" +
+		"summary: \"요약\"\nstatus: active\noutcome: pending\nsupersedes: \"\"\n" +
+		"related: []\ntags: [decision]\nsource_session: \"\"\n---\n\n본문\n"
+	m, body, err := ParseFrontmatter([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Author != "김철수" {
+		t.Fatalf("Author = %q", m.Author)
+	}
+	// Extra 로 새면 10키 뒤에 다시 붙어 순서가 흔들린다.
+	if _, ok := m.Extra["author"]; ok {
+		t.Error("author 가 Extra 로 샜다 — 정식 키인데 잉여 키로 취급됐다")
+	}
+	again, _, err := ParseFrontmatter(append(EmitFrontmatter(m), append([]byte("\n"), body...)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Author != "김철수" {
+		t.Errorf("왕복 후 Author = %q", again.Author)
+	}
+}

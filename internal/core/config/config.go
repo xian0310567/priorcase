@@ -72,7 +72,13 @@ type Config struct {
 	//
 	// **결정 노트의 본문 언어는 여기가 정하지 않는다.** 판별기가 대화의 언어를
 	// 따라간다 — 한 볼트에 여러 언어의 대화가 섞일 수 있기 때문이다.
-	Lang    string   `toml:"lang"`
+	Lang string `toml:"lang"`
+	// Author 는 결정 노트에 박을 사람 이름이다. 비면 git 신원을 쓴다.
+	//
+	// 명시 키를 두는 이유: git 을 안 쓰는 볼트가 있고, git 신원과 팀에서 부르는
+	// 이름이 다른 경우도 있다. 둘 다 없으면 author 는 안 쓰인다 — 혼자 쓰는
+	// 볼트에서 그건 아무 손해가 아니다.
+	Author  string   `toml:"author"`
 	Naming  Naming   `toml:"naming"`
 	Capture Capture  `toml:"capture"`
 	Domain  []Domain `toml:"domain"`
@@ -372,4 +378,15 @@ func (c *Config) FolderFor(prefix string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// AuthorFor 는 dir 에서 결정 노트에 박을 사람 이름을 정한다. 없으면 빈 문자열.
+//
+// 순서는 **설정 → git 신원**이다. 설정을 먼저 보는 이유: git 신원은 자동으로
+// 잡히는 편의값이고, 사람이 굳이 적었다면 그쪽이 의도다.
+func (c *Config) AuthorFor(dir string) string {
+	if a := strings.TrimSpace(c.Author); a != "" {
+		return a
+	}
+	return GitUser(dir)
 }

@@ -9,10 +9,22 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-// Meta 는 결정 노트의 frontmatter 10키다. 순서는 EmitFrontmatter 가 정한다.
+// Meta 는 결정 노트의 frontmatter 다. 순서는 EmitFrontmatter 가 정한다.
 type Meta struct {
-	Type          string   `yaml:"type"`
-	Date          string   `yaml:"date"`
+	Type string `yaml:"type"`
+	Date string `yaml:"date"`
+
+	// Author 는 이 결정을 내린 사람이다. **팀에서는 이게 절반이다** — "왜 이렇게
+	// 했지" 의 다음 질문이 언제나 "누가 정했지" 이고, 그 사람에게 물어보는 것이
+	// 노트를 다시 읽는 것보다 빠를 때가 많다.
+	//
+	// **비어 있으면 방출하지 않는다.** 혼자 쓰는 볼트에서는 자명해서 소음이고,
+	// 무엇보다 기존 노트를 다시 저장할 때 바이트가 안 바뀌어야 한다.
+	//
+	// 스키마 판을 올리지 않는다. 이 패키지의 규칙대로 순수 증분 키는 옛 바이너리가
+	// Extra 로 보존하므로 데이터를 잃지 않는다 (schema.Current 주석 참고).
+	Author string `yaml:"author,omitempty"`
+
 	Domain        []string `yaml:"domain"`
 	Summary       string   `yaml:"summary"`
 	Status        string   `yaml:"status"`
@@ -118,6 +130,10 @@ func EmitFrontmatter(m Meta) []byte {
 	b.WriteString("---\n")
 	b.WriteString("type: " + m.Type + "\n")
 	b.WriteString("date: " + m.Date + "\n")
+	// 비었으면 줄 자체를 안 쓴다 — 기존 노트를 다시 저장해도 바이트가 안 바뀐다.
+	if strings.TrimSpace(m.Author) != "" {
+		b.WriteString("author: " + quote(m.Author) + "\n")
+	}
 	b.WriteString("domain: " + bare(m.Domain) + "\n")
 	b.WriteString("summary: " + quote(m.Summary) + "\n")
 	b.WriteString("status: " + m.Status + "\n")

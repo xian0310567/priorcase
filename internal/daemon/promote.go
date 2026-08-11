@@ -25,6 +25,11 @@ type PromoteOptions struct {
 	First string
 	// Budget 은 이번 판에 쓸 수 있는 총 시간이다. 0 이면 DefaultPromoteBudget.
 	Budget time.Duration
+	// Author 는 승격된 노트에 박을 사람이다. 비면 설정·git 신원에서 정한다.
+	//
+	// 훅은 자기 세션의 cwd 를 알고, 데몬은 모른다. 그래서 호출부가 정해 넘긴다 —
+	// 여기서 짐작하면 훅과 데몬이 같은 구간에 다른 답을 쓴다.
+	Author string
 	// Err 는 사람에게 보이는 진행 보고다. nil 이면 버린다.
 	Err io.Writer
 	// Label 은 보고 줄 앞에 붙는 이름이다 ("prior hook session-end" 같은).
@@ -66,6 +71,12 @@ func Promote(ctx context.Context, o PromoteOptions) {
 	if budget <= 0 {
 		budget = DefaultPromoteBudget
 	}
+	// 한 번만 정한다 — 구간마다 다시 구하면 파일을 그만큼 더 읽는다.
+	author := o.Author
+	if author == "" {
+		author = o.Config.AuthorFor("")
+	}
+
 	deadline := time.Now().Add(budget)
 
 	for _, p := range items {
@@ -89,7 +100,8 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			continue
 		}
 		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
-			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt, Session: p.SessionID,
+			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt,
+			Session: p.SessionID, Author: author,
 		})
 
 		// **세 갈래 전부 원장에 남긴다.** 진행 보고는 사람이 그 순간 보지 않으면

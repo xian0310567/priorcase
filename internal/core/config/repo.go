@@ -138,3 +138,83 @@ func NormalizeRemote(url string) string {
 	}
 	return strings.ToLower(u)
 }
+
+// GitUser 는 dir 에서 통하는 git 신원을 `이름 <메일>` 로 준다. 없으면 빈 문자열.
+//
+// **기본값이 없으면 author 는 안 쓰인다.** 매번 `--author` 를 붙이라고 하면 아무도
+// 안 붙이고, 그러면 팀에서 "누가 정했나" 가 영원히 비어 있다. git 을 쓰는 사람은
+// 이미 신원을 적어 뒀으므로 그걸 쓴다.
+//
+// git 은 저장소 설정 → 전역 설정 순으로 본다. 여기도 같은 순서다 — 회사 저장소에서만
+// 회사 메일을 쓰는 사람이 흔하고, 그 사람의 결정에 개인 메일이 박히면 안 된다.
+func GitUser(dir string) string {
+	name, email := "", ""
+	take := func(path string) {
+		f, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		n, e := userSection(f)
+		if name == "" {
+			name = n
+		}
+		if email == "" {
+			email = e
+		}
+	}
+	if g := findGitDir(dir); g != "" {
+		take(filepath.Join(g, "config"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		take(filepath.Join(home, ".gitconfig"))
+		take(filepath.Join(home, ".config", "git", "config"))
+	}
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		take(filepath.Join(x, "git", "config"))
+	}
+
+	switch {
+	case name != "" && email != "":
+		return name + " <" + email + ">"
+	case name != "":
+		return name
+	case email != "":
+		return email
+	}
+	return ""
+}
+
+// userSection 은 git config 의 [user] 절에서 name·email 을 뽑는다.
+func userSection(r interface{ Read([]byte) (int, error) }) (name, email string) {
+	sc := bufio.NewScanner(r)
+	in := false
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if i := strings.IndexAny(line, "#;"); i == 0 {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			in = strings.HasPrefix(line, "[user")
+			continue
+		}
+		if !in {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "name":
+			if name == "" {
+				name = strings.Trim(strings.TrimSpace(v), `"`)
+			}
+		case "email":
+			if email == "" {
+				email = strings.Trim(strings.TrimSpace(v), `"`)
+			}
+		}
+	}
+	return name, email
+}
