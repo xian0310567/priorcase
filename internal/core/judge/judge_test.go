@@ -244,8 +244,8 @@ func TestPromptExplainsToolActivity(t *testing.T) {
 func TestPromptForbidsFabrication(t *testing.T) {
 	got := prompt(Request{Excerpt: "x", Domain: "alpha", Date: "2026-08-09"})
 	for _, want := range []string{
-		"지어내지 마라",          // 총칙
-		"근거 절이 위험하다",       // 어느 절이 특히 위험한지
+		"지어내지 마라",        // 총칙
+		"근거 절이 위험하다",     // 어느 절이 특히 위험한지
 		"근거가 대화에 남지 않았다", // 비어 있을 때 쓸 말을 준다
 	} {
 		if !strings.Contains(got, want) {

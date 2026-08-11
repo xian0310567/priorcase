@@ -108,6 +108,7 @@ func (o Options) promote(ctx context.Context) {
 		Config:   o.Config,
 		Layout:   o.Layout,
 		First:    o.Input.TranscriptPath,
+		Author:   o.Config.AuthorFor(o.Input.Cwd),
 		Budget:   promoteBudget,
 		Err:      o.Err,
 		Label:    "prior hook " + string(o.Event),

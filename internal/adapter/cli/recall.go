@@ -47,6 +47,13 @@ func newRecallCmd() *cobra.Command {
 			}
 			for _, h := range hits {
 				fmt.Fprintf(out, "%3d  %s\n     %s\n", h.Score, h.Note.Stem, h.Note.Meta.Summary)
+				// **저자는 사람이 물을 때만 보여 준다.** 주입(②)은 매 프롬프트마다 도는
+				// 자리라 토큰을 쓰고, 에이전트에게 "누가" 는 덜 중요하다. 사람에게는
+				// 반대다 — "왜 이렇게 했지" 다음 질문이 "누가 정했지" 이고, 그 사람에게
+				// 묻는 것이 노트를 다시 읽는 것보다 빠를 때가 많다.
+				if a := h.Note.Meta.Author; a != "" {
+					fmt.Fprintf(out, "     — %s\n", a)
+				}
 			}
 			return nil
 		},

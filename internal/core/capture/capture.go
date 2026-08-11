@@ -23,9 +23,15 @@ type Request struct {
 	Date          string // 비면 오늘
 	Supersedes    string
 	SourceSession string
-	Tags          []string
-	Related       []string
-	Body          []byte
+	// Author 는 이 결정을 내린 사람이다. 비면 호출부가 설정·git 에서 정해 넣는다.
+	//
+	// **여기서 자동으로 채우지 않는다.** capture 는 core 이고, "지금 어느 디렉토리에서
+	// 도는가" 는 어댑터가 아는 것이다 — core 가 cwd 를 짐작하면 훅·MCP·CLI 가 서로
+	// 다른 답을 얻는다.
+	Author  string
+	Tags    []string
+	Related []string
+	Body    []byte
 }
 
 type Result struct {
@@ -61,7 +67,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	stem := strings.TrimSuffix(filepath.Base(path), ".md")
 
 	m := store.Meta{
-		Type: "decision", Date: r.Date, Domain: []string{r.Domain},
+		Type: "decision", Date: r.Date, Author: r.Author, Domain: []string{r.Domain},
 		Summary: r.Summary, Status: "active", Outcome: "pending",
 		Related: r.Related,
 		Tags:    ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,

@@ -208,3 +208,156 @@ func TestRecentDecisionsCounts(t *testing.T) {
 		t.Errorf("RecentDecisions = %d, 0이어야 한다 (전부 오래됐다)", got)
 	}
 }
+
+// ★ **이 경고는 볼트가 공유될 때만 나와야 한다.**
+//
+// paths 만 쓰는 것은 혼자 쓰는 볼트에서 아무 문제가 아니다. 그런데도 매번 경고하면
+// 그건 소음이고, 이 프로젝트는 소음을 죄목으로 삼는다 — 사람이 무시하는 법을 배우면
+// 정작 진짜 경고도 같이 묻힌다.
+//
+// 반대로 **공유되는데 침묵하면** 새 팀원의 기록이 조용히 폴백 도메인으로 샌다.
+// 그래서 두 방향을 다 검사한다.
+func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
+	pathOnly := func(vault string) *config.Config {
+		return &config.Config{
+			Vault: vault, DefaultDomain: "common",
+			Domain: []config.Domain{
+				// **폴백에도 paths 를 준다.** 없으면 "폴백은 지적하지 않는다" 는
+				// 분기를 테스트가 아예 안 타서, 그 규칙이 사라져도 통과한다.
+				{Prefix: "common", Folder: "common", Paths: []string{"/home/me/misc"}},
+				{Prefix: "alpha", Folder: "alpha", Paths: []string{"/home/me/alpha"}},
+			},
+		}
+	}
+	find := func(r *Report) *Check {
+		for i := range r.Checks {
+			if r.Checks[i].Name == "팀 이식성" {
+				return &r.Checks[i]
+			}
+		}
+		return nil
+	}
+
+	// 혼자 쓰는 볼트 — 조용해야 한다.
+	solo := t.TempDir()
+	r := &Report{}
+	checkTeamPortability(r, pathOnly(solo))
+	if c := find(r); c != nil {
+		t.Errorf("혼자 쓰는 볼트에 경고를 냈다 (소음): %s", c.Detail)
+	}
+
+	// git 아래 있는 볼트 — 공유되고 있다는 신호다. 말해야 한다.
+	shared := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shared, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r = &Report{}
+	checkTeamPortability(r, pathOnly(shared))
+	c := find(r)
+	if c == nil {
+		t.Fatal("공유되는 볼트인데 침묵했다 — 새 팀원의 기록이 조용히 폴백으로 샌다")
+	}
+	if c.Level != Warn {
+		t.Errorf("Level = %v, Warn 이어야 한다 (동작은 하므로 Fail 이 아니다)", c.Level)
+	}
+	if !strings.Contains(c.Detail, "alpha") {
+		t.Errorf("어느 도메인이 문제인지 안 알려 준다: %s", c.Detail)
+	}
+	if strings.Contains(c.Detail, "common") {
+		t.Errorf("폴백 도메인까지 지적했다 — 그건 원래 경로가 없어도 되는 자리다: %s", c.Detail)
+	}
+	if c.Fix == "" {
+		t.Error("고칠 방법을 안 준다")
+	}
+
+	// repos 를 채우면 조용해진다 — 경고가 실제로 해소돼야 한다.
+	withRepos := pathOnly(shared)
+	withRepos.Domain[1].Repos = []string{"org/alpha"}
+	r = &Report{}
+	checkTeamPortability(r, withRepos)
+	if c := find(r); c == nil || c.Level != OK {
+		t.Errorf("repos 를 채웠는데 해소되지 않았다: %+v", c)
+	}
+}
+
+// ★★ **파생물이 git 에 들어 있으면 팀이 매번 충돌한다.**
+//
+// 색인은 결정 노트에서 다시 만들 수 있는데 `prior capture` 가 매번 통째로 다시 쓴다.
+// 두 사람이 각자 하나씩 기록하면 각자 옳은 표를 만들 뿐인데 git 은 충돌로 본다.
+// 실측으로 재현했다 — 결정 노트는 깨끗이 병합되고 색인만 충돌한다.
+//
+// 그 충돌을 손으로 잘못 풀면 **남의 결정이 색인에서 사라지고, 회수가 그걸 못 본다.**
+//
+// 반대로 git 이 아닌 볼트에서 이 경고가 뜨면 그건 소음이다 — 혼자 쓰는 사람에게
+// 색인이 디스크에 있는 것은 아무 문제가 아니다.
+func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
+	find := func(r *Report) *Check {
+		for i := range r.Checks {
+			if r.Checks[i].Name == "색인/git" {
+				return &r.Checks[i]
+			}
+		}
+		return nil
+	}
+	setup := func(t *testing.T, git bool, ignore string) (*config.Config, *store.Layout) {
+		t.Helper()
+		c := testutil.VaultConfig(t)
+		if git {
+			if err := os.MkdirAll(filepath.Join(c.Vault, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ignore != "" {
+			if err := os.WriteFile(filepath.Join(c.Vault, ".gitignore"), []byte(ignore), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return c, store.NewLayout(c)
+	}
+
+	// git 이 아니면 조용해야 한다.
+	c, l := setup(t, false, "")
+	r := &Report{}
+	checkIndexInGit(r, c, l)
+	if ck := find(r); ck != nil {
+		t.Errorf("git 이 아닌 볼트에 경고를 냈다 (소음): %s", ck.Detail)
+	}
+
+	// git 인데 무시 목록에 없으면 경고 + 고치는 법.
+	c, l = setup(t, true, "")
+	r = &Report{}
+	checkIndexInGit(r, c, l)
+	ck := find(r)
+	if ck == nil || ck.Level != Warn {
+		t.Fatalf("공유되는 볼트에서 색인이 추적 중인데 경고가 없다: %+v", ck)
+	}
+	rel := l.RelPath(l.IndexPath())
+	if !strings.Contains(ck.Fix, ".gitignore") || !strings.Contains(ck.Fix, rel) {
+		t.Errorf("고치는 법에 실제 경로가 없다: %q", ck.Fix)
+	}
+
+	// 무시 목록에 있으면 해소된다. 앞의 `/` 도 같은 뜻으로 봐야 한다.
+	for _, line := range []string{rel, "/" + rel, "# 주석\n" + rel + "\n"} {
+		c, l = setup(t, true, line)
+		r = &Report{}
+		checkIndexInGit(r, c, l)
+		if ck := find(r); ck == nil || ck.Level != OK {
+			t.Errorf("무시 목록 %q 인데 해소되지 않았다: %+v", line, ck)
+		}
+	}
+
+	// .git/info/exclude 도 무시 목록이다.
+	c, l = setup(t, true, "")
+	if err := os.MkdirAll(filepath.Join(c.Vault, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.Vault, ".git", "info", "exclude"),
+		[]byte(rel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = &Report{}
+	checkIndexInGit(r, c, l)
+	if ck := find(r); ck == nil || ck.Level != OK {
+		t.Errorf(".git/info/exclude 를 안 본다: %+v", ck)
+	}
+}

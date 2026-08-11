@@ -121,10 +121,18 @@ type captureArgs struct {
 	Supersedes string   `json:"supersedes,omitempty"`
 	Date       string   `json:"date,omitempty"`
 	SessionID  string   `json:"session_id,omitempty"`
+	// Author 는 이 결정을 내린 사람이다. 비면 설정·git 신원에서 정한다.
+	Author string `json:"author,omitempty"`
 }
 
 func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captureArgs) (*sdk.CallToolResult, noOutput, error) {
+	author := a.Author
+	if author == "" {
+		wd, _ := os.Getwd()
+		author = s.c.AuthorFor(wd)
+	}
 	res, err := capture.Do(s.l, s.c, capture.Request{
+		Author:        author,
 		Domain:        a.Domain,
 		Slug:          a.Slug,
 		Summary:       a.Summary,

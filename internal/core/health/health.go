@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +82,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
 	checkIndex(r, l, notes)
+	checkIndexInGit(r, c, l)
 	return r
 }
 
@@ -230,6 +232,8 @@ func checkDomainFolders(r *Report, c *config.Config, l *store.Layout) {
 			fmt.Sprintf("%d개 · 폴백 %s", len(c.Domain), c.DefaultDomain), "")
 	}
 
+	checkTeamPortability(r, c)
+
 	dirs := l.DecisionDirs()
 	var missing []string
 	for _, d := range dirs {
@@ -322,6 +326,114 @@ func hasPrefix(c *config.Config, prefix string) bool {
 	for _, d := range c.Domain {
 		if d.Prefix == prefix {
 			return true
+		}
+	}
+	return false
+}
+
+// checkTeamPortability 는 이 설정이 **다른 사람 기계에서도 통하는지** 본다.
+//
+// `paths` 는 절대 경로다. 볼트를 팀과 공유하면 팀원의 체크아웃 자리가 다르므로
+// 그 사람에게는 **하나도 안 걸린다.** 그러면 기록이 폴백 도메인으로 새거나 아예
+// 막히는데, **겉으로는 조용하다** — 훅은 돌고 안전망은 표시까지 하고 승격에서 멎는다.
+// 새 팀원이 정확히 그 상태로 시작한다.
+//
+// **볼트가 git 저장소일 때만 말한다.** 혼자 쓰는 볼트에서는 paths 만으로 충분하고,
+// 그 사람에게 이 경고는 고칠 이유가 없는 소음이다. 이 프로젝트는 소음을 죄목으로
+// 삼는다 — 안전망이 소음이 되면 사람은 무시하는 법을 배운다. 볼트가 git 아래 있다는
+// 것은 **실제로 공유되고 있다는 신호**이고, 그때만 이 경고가 행동을 부른다.
+func checkTeamPortability(r *Report, c *config.Config) {
+	if config.RepoFor(c.Vault) == "" && !isGitDir(c.Vault) {
+		return
+	}
+	var pathOnly []string
+	withRepo := 0
+	for _, d := range c.Domain {
+		switch {
+		case len(d.Repos) > 0:
+			withRepo++
+		case len(d.Paths) > 0:
+			// 폴백 도메인은 원래 경로가 없어도 되는 자리라 세지 않는다.
+			if d.Prefix != c.DefaultDomain {
+				pathOnly = append(pathOnly, d.Prefix)
+			}
+		}
+	}
+	if len(pathOnly) == 0 {
+		if withRepo > 0 {
+			r.add("팀 이식성", OK,
+				fmt.Sprintf("%d개 도메인이 repos 로 잡힌다 — 팀원이 어디에 체크아웃해도 같다", withRepo), "")
+		}
+		return
+	}
+	sort.Strings(pathOnly)
+	r.add("팀 이식성", Warn,
+		fmt.Sprintf("%d개 도메인이 paths 로만 잡힌다 %v — 볼트를 팀과 공유하면 그 사람들에게는 안 걸린다",
+			len(pathOnly), pathOnly),
+		`각 [[domain]] 에 repos = ["owner/repo"] 를 더해라 (paths 는 그대로 둬도 된다)`)
+}
+
+// isGitDir 는 볼트 자체가 git 저장소인지 본다 (remote 가 없어도 된다).
+//
+// config.RepoFor 는 origin 이 있어야 값을 준다. 팀이 아직 remote 를 안 걸었거나
+// 사내 호스트를 다른 이름으로 걸어 뒀을 수 있어서, "git 아래 있다" 는 사실만
+// 따로 본다. 위로 거슬러 올라가지 않는다 — 볼트가 남의 저장소 **안에** 우연히
+// 들어 있는 경우까지 공유로 볼 수는 없다.
+func isGitDir(dir string) bool {
+	_, err := os.Stat(dir + string(os.PathSeparator) + ".git")
+	return err == nil
+}
+
+// checkIndexInGit 은 **파생물이 버전 관리에 들어가 있는지** 본다.
+//
+// 색인은 결정 노트에서 언제든 다시 만들 수 있다. 그런데 `prior capture` 가 매번
+// 통째로 다시 쓰므로, 볼트를 git 으로 공유하면 **두 사람이 각자 하나씩 기록할
+// 때마다 충돌한다.** 실측으로 재현했다 — 결정 노트는 파일이 달라 깨끗이 병합되고
+// 색인만 충돌한다.
+//
+// 그 충돌은 고약하다. 내용이 겹치는 것이 아니라 각자 옳은 표를 만든 것뿐인데,
+// 사람은 그걸 손으로 풀어야 하고 잘못 풀면 남의 결정이 색인에서 사라진다 —
+// 그러면 회수가 그 결정을 못 본다.
+//
+// **볼트가 git 이고 색인이 무시 목록에 없을 때만 말한다.** 혼자 쓰거나 git 이
+// 아니면 아무 문제가 아니다.
+func checkIndexInGit(r *Report, c *config.Config, l *store.Layout) {
+	if !isGitDir(c.Vault) {
+		return
+	}
+	rel := l.RelPath(l.IndexPath())
+	if gitIgnores(c.Vault, rel) {
+		r.add("색인/git", OK, rel+" 은 무시 목록에 있다 — 병합 충돌이 없다", "")
+		return
+	}
+	r.add("색인/git", Warn,
+		rel+" 이 git 에 들어 있다 — 두 사람이 각자 기록할 때마다 충돌한다",
+		"색인은 노트에서 다시 만들 수 있는 파생물이다. 볼트에서:\n"+
+			"       echo '"+rel+"' >> .gitignore && git rm --cached '"+rel+"'")
+}
+
+// gitIgnores 는 볼트의 무시 목록에 rel 이 있는지 본다.
+//
+// `.gitignore` 와 `.git/info/exclude` 만 본다. 전역 무시 파일(core.excludesFile)이나
+// 상위 디렉토리의 규칙은 안 본다 — 그 경우 오탐(있는데 없다고 말함)이 나지만,
+// 반대(없는데 있다고 말함)보다 낫다. 없는데 있다고 하면 충돌을 그대로 두게 된다.
+func gitIgnores(vault, rel string) bool {
+	for _, p := range []string{
+		filepath.Join(vault, ".gitignore"),
+		filepath.Join(vault, ".git", "info", "exclude"),
+	} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.TrimPrefix(line, "/") == rel {
+				return true
+			}
 		}
 	}
 	return false

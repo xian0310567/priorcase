@@ -30,6 +30,12 @@ func newCaptureCmd() *cobra.Command {
 					return err
 				}
 			}
+			// **여기서 채운다.** capture 는 core 라 "지금 어느 디렉토리인가" 를
+			// 몰라야 하고, 그건 어댑터가 아는 것이다.
+			if r.Author == "" {
+				wd, _ := os.Getwd()
+				r.Author = c.AuthorFor(wd)
+			}
 			res, err := capture.Do(l, c, r)
 			if err != nil {
 				return err
@@ -62,6 +68,7 @@ func newCaptureCmd() *cobra.Command {
 	f.StringVar(&r.Date, "date", "", "YYYY-MM-DD (기본: 오늘)")
 	f.StringVar(&r.Supersedes, "supersedes", "", "뒤집는 결정의 stem")
 	f.StringVar(&r.SourceSession, "session", "", "출처 세션 ID")
+	f.StringVar(&r.Author, "author", "", "이 결정을 내린 사람 (기본: 설정의 author 또는 git 신원)")
 	f.StringSliceVar(&r.Tags, "tag", nil, "태그 (반복 가능)")
 	f.StringSliceVar(&r.Related, "related", nil, "관련 결정 위키링크 (반복 가능)")
 	f.StringVar(&bodyFile, "body", "", "본문 파일 경로. - 이면 표준입력")

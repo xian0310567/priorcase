@@ -34,6 +34,14 @@ type Segment struct {
 	Date    string
 	Excerpt string
 	Session string
+	// Author 는 이 구간의 대화를 한 사람이다.
+	//
+	// **판별기가 노트를 쓰지만 결정을 내린 것은 사람이다.** 여기가 비면 ③ 이 만든
+	// 노트만 author 가 없어서, 팀이 "누가 정했나" 를 물을 때 하필 자동 기록된 것들이
+	// 통째로 답을 못 한다 — 그게 전체의 절반일 수 있다.
+	//
+	// core 는 cwd 를 모르므로 어댑터가 채워 넣는다 (§4.1).
+	Author string
 }
 
 // One 은 구간 하나를 승격한다.
@@ -65,6 +73,7 @@ func One(ctx context.Context, j judge.Judge, l *store.Layout, c *config.Config, 
 	}
 
 	res, err := capture.Do(l, c, capture.Request{
+		Author:        s.Author,
 		Domain:        s.Domain,
 		Slug:          v.Slug,
 		Summary:       v.Summary,

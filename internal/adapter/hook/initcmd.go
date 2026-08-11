@@ -176,6 +176,9 @@ default_domain = "common"
 decision_file = "{domain}-결정-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-작업-로그.md"
+# 색인은 결정 노트에서 다시 만들 수 있는 파생물이다. 볼트를 git 으로 공유하면
+# 이 파일을 .gitignore 에 넣어라 — 안 그러면 두 사람이 각자 기록할 때마다 충돌한다.
+# prior doctor 가 그 상태를 알려 준다.
 index         = "_meta/00-결정-색인.md"
 rollup        = "98-{project}-작업-로그-요약.md"
 
@@ -196,10 +199,15 @@ judge_model = "claude-haiku-4-5"
 prefix = "common"
 folder = "common"
 
-# 프로젝트마다 한 블록을 더한다. paths 안에서 작업하면 그 도메인으로 기록된다.
+# 프로젝트마다 한 블록을 더한다.
+#
+# repos 를 적으면 **팀원이 어디에 체크아웃하든** 같은 도메인으로 잡힌다 —
+# 팀에서 쓸 때는 이쪽이 낫다. paths 는 절대 경로라 사람마다 다르다.
+# 둘 다 적으면 paths 가 먼저다 (모노레포의 하위 프로젝트를 가르기 위해서다).
 # [[domain]]
 # prefix = "myapp"
 # folder = "myapp"
+# repos  = ["myorg/myapp"]
 # paths  = ["%s/project/myapp"]
 `, vault, home)
 }
@@ -226,6 +234,9 @@ default_domain = "common"
 decision_file = "{domain}-decision-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-worklog.md"
+# The index is derived from the decision notes. If you share the vault over git,
+# add this file to .gitignore — otherwise every pair of concurrent captures
+# conflicts. prior doctor tells you when that happens.
 index         = "_meta/00-decision-index.md"
 rollup        = "98-{project}-worklog-rollup.md"
 
@@ -248,10 +259,15 @@ judge_model = "claude-haiku-4-5"
 prefix = "common"
 folder = "common"
 
-# Add one block per project. Work under paths and it records to that domain.
+# Add one block per project.
+#
+# Set repos and the domain resolves the same **wherever a teammate checks out** —
+# prefer it on a team. paths are absolute and differ per machine.
+# With both, paths win (so a monorepo's sub-projects stay apart).
 # [[domain]]
 # prefix = "myapp"
 # folder = "myapp"
+# repos  = ["myorg/myapp"]
 # paths  = ["%s/project/myapp"]
 `, vault, home)
 }
