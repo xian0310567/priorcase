@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +82,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
 	checkIndex(r, l, notes)
+	checkIndexInGit(r, c, l)
 	return r
 }
 
@@ -380,4 +382,59 @@ func checkTeamPortability(r *Report, c *config.Config) {
 func isGitDir(dir string) bool {
 	_, err := os.Stat(dir + string(os.PathSeparator) + ".git")
 	return err == nil
+}
+
+// checkIndexInGit 은 **파생물이 버전 관리에 들어가 있는지** 본다.
+//
+// 색인은 결정 노트에서 언제든 다시 만들 수 있다. 그런데 `prior capture` 가 매번
+// 통째로 다시 쓰므로, 볼트를 git 으로 공유하면 **두 사람이 각자 하나씩 기록할
+// 때마다 충돌한다.** 실측으로 재현했다 — 결정 노트는 파일이 달라 깨끗이 병합되고
+// 색인만 충돌한다.
+//
+// 그 충돌은 고약하다. 내용이 겹치는 것이 아니라 각자 옳은 표를 만든 것뿐인데,
+// 사람은 그걸 손으로 풀어야 하고 잘못 풀면 남의 결정이 색인에서 사라진다 —
+// 그러면 회수가 그 결정을 못 본다.
+//
+// **볼트가 git 이고 색인이 무시 목록에 없을 때만 말한다.** 혼자 쓰거나 git 이
+// 아니면 아무 문제가 아니다.
+func checkIndexInGit(r *Report, c *config.Config, l *store.Layout) {
+	if !isGitDir(c.Vault) {
+		return
+	}
+	rel := l.RelPath(l.IndexPath())
+	if gitIgnores(c.Vault, rel) {
+		r.add("색인/git", OK, rel+" 은 무시 목록에 있다 — 병합 충돌이 없다", "")
+		return
+	}
+	r.add("색인/git", Warn,
+		rel+" 이 git 에 들어 있다 — 두 사람이 각자 기록할 때마다 충돌한다",
+		"색인은 노트에서 다시 만들 수 있는 파생물이다. 볼트에서:\n"+
+			"       echo '"+rel+"' >> .gitignore && git rm --cached '"+rel+"'")
+}
+
+// gitIgnores 는 볼트의 무시 목록에 rel 이 있는지 본다.
+//
+// `.gitignore` 와 `.git/info/exclude` 만 본다. 전역 무시 파일(core.excludesFile)이나
+// 상위 디렉토리의 규칙은 안 본다 — 그 경우 오탐(있는데 없다고 말함)이 나지만,
+// 반대(없는데 있다고 말함)보다 낫다. 없는데 있다고 하면 충돌을 그대로 두게 된다.
+func gitIgnores(vault, rel string) bool {
+	for _, p := range []string{
+		filepath.Join(vault, ".gitignore"),
+		filepath.Join(vault, ".git", "info", "exclude"),
+	} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.TrimPrefix(line, "/") == rel {
+				return true
+			}
+		}
+	}
+	return false
 }

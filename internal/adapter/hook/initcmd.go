@@ -176,6 +176,9 @@ default_domain = "common"
 decision_file = "{domain}-결정-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-작업-로그.md"
+# 색인은 결정 노트에서 다시 만들 수 있는 파생물이다. 볼트를 git 으로 공유하면
+# 이 파일을 .gitignore 에 넣어라 — 안 그러면 두 사람이 각자 기록할 때마다 충돌한다.
+# prior doctor 가 그 상태를 알려 준다.
 index         = "_meta/00-결정-색인.md"
 rollup        = "98-{project}-작업-로그-요약.md"
 
@@ -231,6 +234,9 @@ default_domain = "common"
 decision_file = "{domain}-decision-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 worklog       = "99-{project}-worklog.md"
+# The index is derived from the decision notes. If you share the vault over git,
+# add this file to .gitignore — otherwise every pair of concurrent captures
+# conflicts. prior doctor tells you when that happens.
 index         = "_meta/00-decision-index.md"
 rollup        = "98-{project}-worklog-rollup.md"
 
