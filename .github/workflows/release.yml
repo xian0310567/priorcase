@@ -78,7 +78,20 @@ jobs:
         run: ./scripts/npm-pack.sh "${GITHUB_REF_NAME}"
 
       # 토큰 환경변수를 주지 않는다 — npm 이 OIDC 로 스스로 인증한다.
-      # `--provenance` 도 붙이지 않는다: 트러스티드 퍼블리싱이면 기본으로 붙는다.
+      #
+      # **`--provenance` 를 붙이지 마라. 이 저장소에서는 원리적으로 안 된다.**
+      #
+      # npm 문서는 "트러스티드 퍼블리싱이면 provenance 가 기본으로 붙는다" 고 하는데,
+      # 실제 조건은 `npm/lib/utils/oidc.js` 에 있다:
+      #
+      #     if (ciInfo.GITHUB_ACTIONS && payload.repository_visibility === 'public')
+      #
+      # **레포가 public 일 때만 켠다.** 우리는 소스를 공개하지 않기로 했으므로
+      # 해당되지 않는다. 2026-08-10 v0.1.2 게시에서 실측했다 — attestations: null.
+      #
+      # 그리고 그게 옳다. provenance 는 "이 공개 소스의 이 커밋에서 빌드됐다" 는
+      # 증명인데, 아무도 소스를 볼 수 없으면 검증할 수 없는 주장이다. 플래그로
+      # 강제하는 것은 확인할 수 없는 보증을 붙이는 일이다.
       - name: npm 게시
         run: |
           set -euo pipefail
