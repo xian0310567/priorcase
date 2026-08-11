@@ -45,6 +45,12 @@ type Domain struct {
 	Prefix string   `toml:"prefix"`
 	Folder string   `toml:"folder"`
 	Paths  []string `toml:"paths"`
+	// Repos 는 이 도메인에 해당하는 git 저장소다 (`owner/repo`, 호스트 없이).
+	//
+	// **paths 만으로는 팀에서 못 쓴다.** 같은 저장소를 사람마다 다른 자리에
+	// 체크아웃하므로, 새 팀원이 설정을 손으로 고쳐야 도메인이 잡힌다.
+	// `owner/repo` 는 누구 기계에서든 같다.
+	Repos []string `toml:"repos"`
 }
 
 type Config struct {
@@ -262,6 +268,16 @@ func under(parent, child string) bool {
 
 // DomainForCwd 는 cwd 에 해당하는 도메인 접두어를 준다. 없으면 빈 문자열.
 // 제외 경로가 우선한다 — 제외이면서 동시에 도메인일 수 없다.
+//
+// 판정 순서는 **경로 → 저장소 → 폴백**이다.
+//
+// 경로를 먼저 보는 이유가 둘이다. 하나, 이미 경로로 설정한 사람의 동작이 그대로
+// 유지된다 — 저장소를 먼저 보면 조용히 달라진다. 둘, **모노레포**에서는 경로만이
+// 하위 프로젝트를 가른다 (한 저장소 안의 `apps/a`·`apps/b`). 저장소를 먼저 보면
+// 그 구분이 통째로 사라진다.
+//
+// 저장소는 그 다음이다. 새 팀원은 경로가 하나도 안 맞으므로 여기서 잡힌다 —
+// 설정을 손대지 않아도 된다. 그것이 이 순서로 얻는 것이다.
 func (c *Config) DomainForCwd(cwd string) string {
 	if c.IsExcluded(cwd) {
 		return ""
@@ -273,9 +289,42 @@ func (c *Config) DomainForCwd(cwd string) string {
 			}
 		}
 	}
+	// 경로가 안 맞으면 저장소로 본다. 파일을 읽으므로 경로 판정이 실패한 뒤에만 한다.
+	if repo := RepoFor(cwd); repo != "" {
+		if p := c.DomainForRepo(repo); p != "" {
+			return p
+		}
+	}
 	// 어디에도 안 걸리면 폴백이다. 없으면 빈 문자열 — 그건 기록이 막힌다는 뜻이고
 	// prior doctor 가 그 상태를 알린다.
 	return c.DefaultDomain
+}
+
+// DomainForRepo 는 `owner/repo` 에 해당하는 도메인 접두어를 준다. 없으면 빈 문자열.
+//
+// 설정에 적힌 값도 정규화해서 비교한다 — 사람이 전체 URL 을 붙여 넣거나
+// 대소문자를 섞어 적어도 걸리게 한다. 설정 오타로 조용히 안 걸리는 것이
+// 이 기능에서 가장 알아채기 어려운 실패다.
+func (c *Config) DomainForRepo(repo string) string {
+	want := NormalizeRemote(repo)
+	if want == "" {
+		want = strings.ToLower(strings.TrimSpace(repo))
+	}
+	if want == "" {
+		return ""
+	}
+	for _, d := range c.Domain {
+		for _, r := range d.Repos {
+			got := NormalizeRemote(r)
+			if got == "" {
+				got = strings.ToLower(strings.TrimSpace(r))
+			}
+			if got != "" && got == want {
+				return d.Prefix
+			}
+		}
+	}
+	return ""
 }
 
 func (c *Config) IsExcluded(cwd string) bool {

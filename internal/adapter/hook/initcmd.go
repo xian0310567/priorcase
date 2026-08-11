@@ -196,10 +196,15 @@ judge_model = "claude-haiku-4-5"
 prefix = "common"
 folder = "common"
 
-# 프로젝트마다 한 블록을 더한다. paths 안에서 작업하면 그 도메인으로 기록된다.
+# 프로젝트마다 한 블록을 더한다.
+#
+# repos 를 적으면 **팀원이 어디에 체크아웃하든** 같은 도메인으로 잡힌다 —
+# 팀에서 쓸 때는 이쪽이 낫다. paths 는 절대 경로라 사람마다 다르다.
+# 둘 다 적으면 paths 가 먼저다 (모노레포의 하위 프로젝트를 가르기 위해서다).
 # [[domain]]
 # prefix = "myapp"
 # folder = "myapp"
+# repos  = ["myorg/myapp"]
 # paths  = ["%s/project/myapp"]
 `, vault, home)
 }
@@ -248,10 +253,15 @@ judge_model = "claude-haiku-4-5"
 prefix = "common"
 folder = "common"
 
-# Add one block per project. Work under paths and it records to that domain.
+# Add one block per project.
+#
+# Set repos and the domain resolves the same **wherever a teammate checks out** —
+# prefer it on a team. paths are absolute and differ per machine.
+# With both, paths win (so a monorepo's sub-projects stay apart).
 # [[domain]]
 # prefix = "myapp"
 # folder = "myapp"
+# repos  = ["myorg/myapp"]
 # paths  = ["%s/project/myapp"]
 `, vault, home)
 }

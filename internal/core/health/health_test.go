@@ -208,3 +208,74 @@ func TestRecentDecisionsCounts(t *testing.T) {
 		t.Errorf("RecentDecisions = %d, 0이어야 한다 (전부 오래됐다)", got)
 	}
 }
+
+// ★ **이 경고는 볼트가 공유될 때만 나와야 한다.**
+//
+// paths 만 쓰는 것은 혼자 쓰는 볼트에서 아무 문제가 아니다. 그런데도 매번 경고하면
+// 그건 소음이고, 이 프로젝트는 소음을 죄목으로 삼는다 — 사람이 무시하는 법을 배우면
+// 정작 진짜 경고도 같이 묻힌다.
+//
+// 반대로 **공유되는데 침묵하면** 새 팀원의 기록이 조용히 폴백 도메인으로 샌다.
+// 그래서 두 방향을 다 검사한다.
+func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
+	pathOnly := func(vault string) *config.Config {
+		return &config.Config{
+			Vault: vault, DefaultDomain: "common",
+			Domain: []config.Domain{
+				// **폴백에도 paths 를 준다.** 없으면 "폴백은 지적하지 않는다" 는
+				// 분기를 테스트가 아예 안 타서, 그 규칙이 사라져도 통과한다.
+				{Prefix: "common", Folder: "common", Paths: []string{"/home/me/misc"}},
+				{Prefix: "alpha", Folder: "alpha", Paths: []string{"/home/me/alpha"}},
+			},
+		}
+	}
+	find := func(r *Report) *Check {
+		for i := range r.Checks {
+			if r.Checks[i].Name == "팀 이식성" {
+				return &r.Checks[i]
+			}
+		}
+		return nil
+	}
+
+	// 혼자 쓰는 볼트 — 조용해야 한다.
+	solo := t.TempDir()
+	r := &Report{}
+	checkTeamPortability(r, pathOnly(solo))
+	if c := find(r); c != nil {
+		t.Errorf("혼자 쓰는 볼트에 경고를 냈다 (소음): %s", c.Detail)
+	}
+
+	// git 아래 있는 볼트 — 공유되고 있다는 신호다. 말해야 한다.
+	shared := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shared, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r = &Report{}
+	checkTeamPortability(r, pathOnly(shared))
+	c := find(r)
+	if c == nil {
+		t.Fatal("공유되는 볼트인데 침묵했다 — 새 팀원의 기록이 조용히 폴백으로 샌다")
+	}
+	if c.Level != Warn {
+		t.Errorf("Level = %v, Warn 이어야 한다 (동작은 하므로 Fail 이 아니다)", c.Level)
+	}
+	if !strings.Contains(c.Detail, "alpha") {
+		t.Errorf("어느 도메인이 문제인지 안 알려 준다: %s", c.Detail)
+	}
+	if strings.Contains(c.Detail, "common") {
+		t.Errorf("폴백 도메인까지 지적했다 — 그건 원래 경로가 없어도 되는 자리다: %s", c.Detail)
+	}
+	if c.Fix == "" {
+		t.Error("고칠 방법을 안 준다")
+	}
+
+	// repos 를 채우면 조용해진다 — 경고가 실제로 해소돼야 한다.
+	withRepos := pathOnly(shared)
+	withRepos.Domain[1].Repos = []string{"org/alpha"}
+	r = &Report{}
+	checkTeamPortability(r, withRepos)
+	if c := find(r); c == nil || c.Level != OK {
+		t.Errorf("repos 를 채웠는데 해소되지 않았다: %+v", c)
+	}
+}
