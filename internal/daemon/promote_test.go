@@ -248,7 +248,7 @@ func TestAlreadyCancelledTouchesNothing(t *testing.T) {
 
 	var errBuf strings.Builder
 	Promote(ctx, PromoteOptions{StateDir: sd, Config: c, Layout: l,
-		Budget: time.Minute, Err: &errBuf})
+		Budget: 5 * time.Minute, Err: &errBuf})
 
 	recs, err := ReadPromotions(sd, time.Time{})
 	if err != nil {
@@ -303,7 +303,7 @@ func TestCancelDuringJudgeIsNotRecordedAsFailure(t *testing.T) {
 
 	var errBuf strings.Builder
 	Promote(ctx, PromoteOptions{StateDir: sd, Config: c, Layout: l,
-		Budget: time.Minute, Err: &errBuf})
+		Budget: 5 * time.Minute, Err: &errBuf})
 
 	recs, err := ReadPromotions(sd, time.Time{})
 	if err != nil {
@@ -341,7 +341,7 @@ func TestPromoteOnlyTouchesOneSegment(t *testing.T) {
 	var seen []Promotion
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: target,
-		Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+		Budget: 5 * time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
 	})
 
 	if len(seen) != 1 {
@@ -374,7 +374,7 @@ func TestPromoteUnknownIDReportsInsteadOfSilence(t *testing.T) {
 	var seen []Promotion
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: "/없는/구간@999",
-		Budget: time.Minute, Err: &errBuf,
+		Budget: 5 * time.Minute, Err: &errBuf,
 		OnResult: func(p Promotion) { seen = append(seen, p) },
 	})
 
@@ -417,7 +417,7 @@ func TestPromoteOnResultCarriesAllBranches(t *testing.T) {
 			var seen []Promotion
 			Promote(context.Background(), PromoteOptions{
 				StateDir: sd, Config: cfg, Layout: l,
-				Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+				Budget: 5 * time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
 			})
 			if len(seen) == 0 {
 				t.Fatal("OnResult 가 안 불렸다")
@@ -462,7 +462,7 @@ func TestPromoteSkipsUnknownDomainBeforeCallingJudge(t *testing.T) {
 	var seen []Promotion
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@777",
-		Budget: time.Minute, Err: &errBuf,
+		Budget: 5 * time.Minute, Err: &errBuf,
 		OnResult: func(p Promotion) { seen = append(seen, p) },
 	})
 
@@ -525,7 +525,7 @@ func TestPromotionCarriesExcerptWhenSegmentDisappears(t *testing.T) {
 			var seen []Promotion
 			Promote(context.Background(), PromoteOptions{
 				StateDir: sd, Config: cfg, Layout: l,
-				Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+				Budget: 5 * time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
 			})
 			if len(seen) == 0 {
 				t.Fatal("OnResult 가 안 불렸다")
@@ -569,7 +569,7 @@ func TestPromotionExcerptIsTrimmed(t *testing.T) {
 	var seen []Promotion
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@424242",
-		Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+		Budget: 5 * time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
 	})
 	if len(seen) != 1 {
 		t.Fatalf("결과가 %d건", len(seen))
@@ -613,7 +613,7 @@ func TestPromoteReportsClaimContentionWhenTargeted(t *testing.T) {
 	var seen []Promotion
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: id,
-		Budget: time.Minute, Err: &errBuf,
+		Budget: 5 * time.Minute, Err: &errBuf,
 		OnResult: func(p Promotion) { seen = append(seen, p) },
 	})
 
@@ -630,9 +630,176 @@ func TestPromoteReportsClaimContentionWhenTargeted(t *testing.T) {
 	var quiet strings.Builder
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l,
-		Budget: time.Minute, Err: &quiet,
+		Budget: 5 * time.Minute, Err: &quiet,
 	})
 	if strings.Contains(quiet.String(), "이미 처리 중") {
 		t.Errorf("전체를 도는데 선점을 보고했다 (소음): %q", quiet.String())
 	}
+}
+
+// ★★ **실패한 구간이 영원히 돌면 안 된다.**
+//
+// 실패해도 구간은 남는다 — 그건 옳다. 판별기는 비결정적이라 다음엔 될 수 있고,
+// 지워 버리면 거기 있었을지 모를 결정이 조용히 사라진다. 그런데 **횟수를 안 세면
+// 영원히 반복된다.** 실측에서 구간 하나가 상한을 6번 연속으로 넘겼고, 매번 세션
+// 끝에서 사람을 그 시간만큼 붙잡았다. 예산이 있으므로 그 낭비는 다른 구간의
+// 기회를 먹는다.
+func TestPromoteGivesUpAfterRepeatedJudgeFailures(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
+
+	// 부를 때마다 흔적을 하나씩 쌓고 실패하는 판별기.
+	countDir := t.TempDir()
+	jp := filepath.Join(t.TempDir(), "judge")
+	sh := "#!/bin/sh\ncat >/dev/null\nmktemp " + countDir + "/c.XXXXXX >/dev/null\nexit 1\n"
+	if err := os.WriteFile(jp, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.Capture.JudgePath = jp
+
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(Pending{
+		Path: "/t.jsonl", From: 42, Domain: "alpha", SessionID: "S1",
+		Days: []string{"2026-08-09"}, Excerpt: "결정했다", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := func() int {
+		e, _ := os.ReadDir(countDir)
+		return len(e)
+	}
+	// 판별기를 여유 있게 여러 판 돌린다. 포기가 없으면 매 판 부른다.
+	var last string
+	for i := 0; i < MaxJudgeFails+3; i++ {
+		var errBuf strings.Builder
+		Promote(context.Background(), PromoteOptions{
+			StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@42",
+			Budget: 5 * time.Minute, Err: &errBuf,
+		})
+		last = errBuf.String()
+	}
+
+	if got := calls(); got != MaxJudgeFails {
+		t.Errorf("판별기를 %d번 불렀다 — %d번에서 그만뒀어야 한다", got, MaxJudgeFails)
+	}
+
+	// **구간은 남아 있어야 한다.** 자동으로 처리 못 한 것이지 결정이 없는 것이 아니다.
+	after, _ := ReadPending(sd)
+	var p *Pending
+	for i := range after {
+		if after[i].ID() == "/t.jsonl@42" {
+			p = &after[i]
+		}
+	}
+	if p == nil {
+		t.Fatal("구간이 사라졌다 — 포기는 해소가 아니다. 사람이 봐야 한다")
+	}
+	if !p.GaveUp() {
+		t.Errorf("포기 표시가 안 됐다 (fails=%d)", p.Fails)
+	}
+	// 지목해서 불렀는데 조용하면 호출자는 "그런 구간이 없다" 로 오해한다.
+	if !strings.Contains(last, "그만뒀다") {
+		t.Errorf("왜 아무 일도 안 났는지 안 알려 준다: %q", last)
+	}
+}
+
+// ★ **실패는 선점 도장을 남기면 안 된다.**
+//
+// 실패 뒤에 도장이 남아 있으면 바로 뒤에 도는 승격이 그 구간을 "처리 중" 으로 보고
+// claimTTL(5분) 동안 건너뛴다 — 실패를 선점으로 오해하는 것이다. 실측에서 판별기가
+// 죽은 뒤 재시도하니 5분간 "구간이 없다" 고 나왔다.
+func TestPromoteFailureClearsClaim(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
+	jp := filepath.Join(t.TempDir(), "judge")
+	if err := os.WriteFile(jp, []byte("#!/bin/sh\ncat >/dev/null\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.Capture.JudgePath = jp
+
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(Pending{
+		Path: "/t.jsonl", From: 9, Domain: "alpha", SessionID: "S1",
+		Days: []string{"2026-08-09"}, Excerpt: "결정했다", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var errBuf strings.Builder
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@9",
+		Budget: 5 * time.Minute, Err: &errBuf,
+	})
+
+	after, _ := ReadPending(sd)
+	for _, p := range after {
+		if p.ID() != "/t.jsonl@9" {
+			continue
+		}
+		if p.Fails != 1 {
+			t.Errorf("실패를 %d번으로 셌다, 1이어야 한다", p.Fails)
+		}
+		if !p.ClaimedAt.IsZero() {
+			t.Error("실패했는데 도장이 남았다 — 다음 시도가 5분간 이 구간을 건너뛴다")
+		}
+		return
+	}
+	t.Fatal("구간이 사라졌다")
+}
+
+// ★ **예산 마감 직전에 새 구간을 시작하면 안 된다.**
+//
+// "마감 전이면 시작" 으로 두면 마감 직전에 집어 든 구간이 판별기 상한만큼 예산을
+// 넘겨서 돈다. 그러면 훅 상한을 넘겨 호스트가 훅을 통째로 죽이고, 원장도 못 쓴 채
+// 선점 도장만 남는다. 상한을 75초로 올리면서 이 틈이 커졌다.
+func TestPromoteDoesNotStartWhatItCannotFinish(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
+	mark := filepath.Join(t.TempDir(), "called")
+	jp := filepath.Join(t.TempDir(), "judge")
+	sh := "#!/bin/sh\ncat >/dev/null\ntouch " + mark + "\necho '{\"record\":false,\"reason\":\"x\"}'\n"
+	if err := os.WriteFile(jp, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.Capture.JudgePath = jp
+
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(Pending{
+		Path: "/t.jsonl", From: 5, Domain: "alpha", SessionID: "S1",
+		Days: []string{"2026-08-09"}, Excerpt: "결정했다", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 판별기 상한보다 짧은 예산 — 시작하면 끝낼 수 없다.
+	var errBuf strings.Builder
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@5",
+		Budget: time.Second, Err: &errBuf,
+	})
+
+	if _, err := os.Stat(mark); err == nil {
+		t.Error("판별기를 불렀다 — 끝낼 시간이 없으면 시작하지 말아야 한다")
+	}
+	// 아무 일도 안 했으므로 도장도 실패 횟수도 남으면 안 된다.
+	after, _ := ReadPending(sd)
+	for _, p := range after {
+		if p.ID() != "/t.jsonl@5" {
+			continue
+		}
+		if p.Fails != 0 {
+			t.Errorf("시작도 안 했는데 실패를 %d번 셌다", p.Fails)
+		}
+		if !p.ClaimedAt.IsZero() {
+			t.Error("시작도 안 했는데 도장이 찍혔다")
+		}
+		return
+	}
+	t.Fatal("구간이 사라졌다")
 }

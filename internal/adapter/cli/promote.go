@@ -8,15 +8,22 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xian0310567/priorcase/internal/core/judge"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
 // promoteBudget 은 한 건짜리 승격에 쓸 시간이다.
 //
-// 훅의 예산(90초)보다 짧다. 훅은 큐 전체를 도는데 여기는 한 건이고, 무엇보다
-// **사람이 화면 앞에서 기다린다** — 앱의 [결정이다] 버튼이 이걸 부른다.
-// 판별기 한 건이 실측 10초 안팎이고 상한이 45초이므로 그것을 담을 만큼만 준다.
-const promoteBudget = 60 * time.Second
+// **판별기 상한(judge.DefaultTimeout)보다 커야 한다.** 작으면 승격이 "다 돌 시간이
+// 안 남았다" 며 아무것도 시작하지 않는다 — 명령이 매번 조용히 실패한다.
+//
+// 60초로 두고 있었다. 판별기 상한이 45초였을 때 나온 값인데, 상한을 75초로 올리면서
+// (2026-08-12) 그대로 뒀다면 `prior promote` 가 통째로 멎었을 것이다. 컴파일은
+// 멀쩡히 통과한다 — 그래서 아래 TestPromoteBudgetFitsJudge 가 이 관계를 지킨다.
+//
+// 여유는 마무리(원장 쓰기·표시 해소) 몫이다. 사람이 화면 앞에서 기다리는 명령이라
+// (앱의 [결정이다] 버튼) 더 늘리지는 않는다.
+const promoteBudget = judge.DefaultTimeout + 15*time.Second
 
 // PromoteResult 는 `prior promote --json` 의 출력이다. 앱과의 계약이다.
 type PromoteResult struct {

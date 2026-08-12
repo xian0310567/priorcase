@@ -124,8 +124,16 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			o.report("중단됐다 — 남은 구간은 다음 기회에 넘긴다")
 			return
 		}
-		if time.Now().After(deadline) {
-			o.report("시간이 다 돼 나머지는 다음 기회에 넘긴다")
+		// **끝낼 수 없는 것은 시작하지 않는다.**
+		//
+		// "마감 전이면 시작" 으로 두면 마감 직전에 집어 든 구간이 판별기 상한만큼
+		// 예산을 넘겨서 돈다. 그러면 훅 상한(120초)을 넘길 수 있고, 그때는 호스트가
+		// 훅을 통째로 죽인다 — 원장도 못 쓰고 선점 도장만 남아서 그 구간이
+		// claimTTL(5분) 동안 건너뛰어진다. 상한을 75초로 올리면서 이 틈이 커졌다.
+		//
+		// 그래서 판별기가 다 돌 시간이 남아 있을 때만 시작한다.
+		if time.Now().Add(judge.DefaultTimeout).After(deadline) {
+			o.report("판별기가 다 돌 시간이 안 남아 나머지는 다음 기회에 넘긴다")
 			return
 		}
 		if p.Domain == "" {
@@ -147,6 +155,22 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			o.report(fmt.Sprintf("설정에 없는 도메인이라 건너뛴다 (%s): %q — "+
 				"이름을 바꿨다면 prior pending --resolve 로 지우거나 설정에 추가하라",
 				p.ID(), p.Domain))
+			continue
+		}
+		// **몇 번이고 실패한 구간은 더 안 넘긴다.**
+		//
+		// 판별기는 비결정적이라 재시도에 값이 있다. 그런데 값이 무한하지는 않다 —
+		// 실측에서 구간 하나가 상한을 6번 연속으로 넘겼고, 매번 세션 끝에서 사람을
+		// 그 시간만큼 붙잡았다. 예산이 있으므로 그 낭비는 **다른 구간의 기회를 먹는다.**
+		//
+		// 지우지는 않는다. 확인 큐에 남아 사람에게 간다 — 자동으로 처리하지 못한
+		// 것이지 거기 결정이 없는 것이 아니다.
+		if p.GaveUp() {
+			if o.Only != "" {
+				// 지목해서 불렀으면 왜 아무 일도 안 났는지 말해 줘야 한다.
+				o.report(fmt.Sprintf("판별기가 %d번 연속 실패한 구간이라 자동 처리를 그만뒀다 (%s) — "+
+					"확인 큐에서 사람이 보라", p.Fails, p.ID()))
+			}
 			continue
 		}
 		day := p.DecidedOn()
@@ -213,8 +237,20 @@ func Promote(ctx context.Context, o PromoteOptions) {
 
 		switch {
 		case r.Err != nil:
-			o.report(fmt.Sprintf("승격 실패 (%s): %v", p.ID(), r.Err))
-			// 실패한 구간은 지우지 않는다 — 다음 기회에 다시 시도한다.
+			// 실패한 구간은 지우지 않는다 — 다음 기회에 다시 시도한다. 다만
+			// **몇 번 실패했는지는 새긴다.** 안 새기면 영원히 재시도한다.
+			n, ferr := FailPending(o.StateDir, p.ID())
+			if ferr != nil {
+				o.report(fmt.Sprintf("실패 횟수를 새기지 못했다: %v", ferr))
+			}
+			switch {
+			case n >= MaxJudgeFails:
+				o.report(fmt.Sprintf("승격 실패 (%s): %v — %d번째다. "+
+					"자동 처리를 그만두고 확인 큐에 남긴다", p.ID(), r.Err, n))
+			default:
+				o.report(fmt.Sprintf("승격 실패 (%s): %v (%d/%d)",
+					p.ID(), r.Err, n, MaxJudgeFails))
+			}
 		case r.Recorded:
 			o.report("자동 기록 " + o.Layout.RelPath(r.Path))
 			// **방금 만든 노트를 그 자리에서 소모시킨다.** 안 그러면 다음 스캔이 이

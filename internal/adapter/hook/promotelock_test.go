@@ -186,10 +186,32 @@ func TestTimeoutOrderingIsSafe(t *testing.T) {
 		t.Errorf("승격 예산(%v) ≥ 훅 상한(%v) — 예산을 쓰기 전에 호스트가 훅을 죽인다",
 			promoteBudget, promoteHookTimeout)
 	}
-	// 예산 안에 판별기가 최소 두 번은 들어가야 한다. 한 번뿐이면 미확인 구간이
-	// 둘 이상일 때 영원히 하나씩만 처리된다.
-	if promoteBudget < 2*judge.DefaultTimeout {
-		t.Errorf("예산(%v)에 판별기(%v)가 두 번 안 들어간다", promoteBudget, judge.DefaultTimeout)
+	// 예산 안에 판별기가 **적어도 한 번은 온전히** 들어가야 한다.
+	//
+	// 여기 "두 번" 을 요구했었다 (2026-08-12 에 내렸다). 판별기 상한을 45초에서
+	// 75초로 올리면서 예산(90초)은 그대로 두기로 했기 때문이다 — 세션 끝에서 사람을
+	// 붙잡는 시간을 늘리지 않는 쪽을 골랐다. 그 대가로 한 판에 한 건씩 처리된다.
+	//
+	// **그러면 큐가 안 줄지 않나?** 줄어든다. 실패가 무한히 반복되던 것을
+	// daemon.MaxJudgeFails 로 끊었기 때문이다. 옛 규칙이 막으려던 것은 "느린 배수"가
+	// 아니라 "영원히 안 끝남" 이었고, 그건 이제 다른 자리에서 막는다.
+	//
+	// 한 번도 못 들어가면 승격은 **매번 0건이다** — 그건 여전히 치명적이다.
+	if promoteBudget < judge.DefaultTimeout {
+		t.Errorf("예산(%v)에 판별기(%v)가 한 번도 안 들어간다 — 승격이 영영 0건이다",
+			promoteBudget, judge.DefaultTimeout)
+	}
+	// 판별기가 끝난 뒤 원장을 쓰고 표시를 해소할 여유가 있어야 한다. 예산이 딱
+	// 판별기 크기면 마무리가 훅 상한 밖으로 밀린다.
+	if promoteBudget-judge.DefaultTimeout < 10*time.Second {
+		t.Errorf("예산(%v)에서 판별기(%v)를 빼면 마무리할 여유가 없다",
+			promoteBudget, judge.DefaultTimeout)
+	}
+	// 훅 상한은 예산에 더해 마무리까지 담아야 한다. 승격은 마감 직전에 새 구간을
+	// 시작하지 않으므로(promote.go), 최악은 예산을 꽉 채운 판 하나다.
+	if promoteHookTimeout-promoteBudget < 20*time.Second {
+		t.Errorf("훅 상한(%v)이 예산(%v)에 마무리 여유를 못 남긴다",
+			promoteHookTimeout, promoteBudget)
 	}
 }
 

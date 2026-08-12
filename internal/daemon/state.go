@@ -110,6 +110,15 @@ type Pending struct {
 	// 둘 다 transcript 없이 된다.
 	Excerpt string `json:"excerpt,omitempty"`
 
+	// Fails 는 판별기를 부르다 실패한 횟수다 (판정을 못 받은 것만 — "결정이 아니다"
+	// 라는 판정은 성공이고 구간이 해소된다).
+	//
+	// **이게 없으면 실패한 구간이 영원히 돈다.** 실패해도 구간은 남고, 다음 세션이
+	// 끝날 때 같은 발췌를 같은 판별기에 다시 넘긴다. 실측으로 확인했다 — 구간 하나가
+	// 상한을 6번 연속으로 넘겼고, 매번 세션 끝에서 사람을 그만큼 기다리게 했다.
+	// 판별기는 비결정적이라 재시도에 값이 있지만, **무한히 값이 있지는 않다.**
+	Fails int `json:"fails,omitempty"`
+
 	// ClaimedAt 은 어떤 프로세스가 이 구간을 승격하려고 집어 간 시각이다.
 	//
 	// 승격이 스캔 소유권 게이트 밖으로 나오면서(D12) 여러 훅이 동시에 같은 pending 을
@@ -503,6 +512,50 @@ func ResolvePending(dir, id string) error {
 		return err
 	}
 	return s.Resolve(path, from)
+}
+
+// MaxJudgeFails 는 한 구간을 판별기에 넘겨 볼 횟수다.
+//
+// 판별기는 비결정적이다 — 같은 발췌가 한 번은 상한을 넘고 다음엔 통과한다.
+// 그래서 재시도에 값이 있다. 그런데 **값이 무한하지는 않다.** 세 번 연속으로
+// 판정을 못 받은 발췌는 다음에도 대개 못 받는다.
+//
+// 3 인 이유는 실측이다. 상한(75초)이 실측 중앙값의 5배가 넘으므로 한 번의 실패는
+// 대개 일시적인 부하다. 세 번이면 그 설명이 더는 안 통한다.
+//
+// 넘어서면 구간을 **지우지 않는다.** 확인 큐에 남겨 사람에게 넘긴다 — 자동으로
+// 처리 못 한 것이지 결정이 없는 것이 아니다. 지워 버리면 그 자리에 있었을지 모를
+// 결정이 조용히 사라진다.
+const MaxJudgeFails = 3
+
+// GaveUp 은 이 구간을 더는 자동으로 처리하지 않는다는 뜻이다.
+func (p Pending) GaveUp() bool { return p.Fails >= MaxJudgeFails }
+
+// FailPending 은 판별 실패를 한 번 새긴다. 새긴 뒤의 횟수를 준다.
+//
+// **선점 표시를 같이 지운다.** 실패한 구간의 선점이 claimTTL(5분) 동안 남아 있으면,
+// 바로 뒤에 도는 승격이 그 구간을 "처리 중" 으로 보고 건너뛴다 — 실패를 선점으로
+// 오해하는 것이다. 실패는 처리가 끝난 것이므로 자리를 비워 준다.
+func FailPending(dir, id string) (int, error) {
+	path, from, err := ParseID(id)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	s := NewStore(dir)
+	err = s.mutate(func(st *state) {
+		k := Pending{Path: path, From: from}.key()
+		for i := range st.Pending {
+			if st.Pending[i].key() != k {
+				continue
+			}
+			st.Pending[i].Fails++
+			st.Pending[i].ClaimedAt = time.Time{}
+			n = st.Pending[i].Fails
+			return
+		}
+	})
+	return n, err
 }
 
 // claimTTL 은 승격 선점이 유효한 시간이다.
