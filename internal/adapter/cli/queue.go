@@ -24,12 +24,12 @@ type Queue struct {
 	Confirm []QueuePending `json:"confirm"`
 	// Review 는 판별기가 스스로 만든 노트다. **사람이 검증해야 한다** — 실제로
 	// 판별기가 만든 첫 노트에 없는 어원을 지어낸 전력이 있다.
-	Review []daemon.Promotion `json:"review"`
+	Review []QueueReview `json:"review"`
 	// Retro 는 결과를 물어볼 때가 된 결정이다.
 	Retro []retro.Item `json:"retro"`
 	// Health 는 지금 시스템이 제대로 도는가다. 큐가 셋 다 비었을 때 앱이 보여 줄 것이
 	// 이것뿐이라, 비어 있어도 반드시 채운다.
-	Health []health.Check `json:"health"`
+	Health []QueueCheck `json:"health"`
 	// Warnings 는 큐를 만들다 생긴 문제다. **비어 있지 않으면 큐가 불완전하다.**
 	// 조용히 짧은 목록을 주면 앱이 "할 일이 없다" 로 그린다.
 	Warnings []string `json:"warnings,omitempty"`
@@ -43,6 +43,46 @@ type QueuePending struct {
 	When    string   `json:"when"`
 	Signals []string `json:"signals"`
 	Excerpt string   `json:"excerpt"`
+}
+
+// QueueReview 는 검토 큐 한 줄이다.
+//
+// daemon.Promotion 을 그대로 내보내지 않는다 — 그건 원장의 내부 레코드라 진단용
+// 필드(reason·err)까지 달려 있고, 그 형태가 바뀌면 앱이 깨진다. 검토 큐에 필요한
+// 것은 "판별기가 무엇을 만들었고 어느 구간에서 나왔나" 뿐이다.
+type QueueReview struct {
+	ID     string `json:"id"` // 어느 구간에서 나왔나 — 발췌를 다시 찾을 열쇠
+	Domain string `json:"domain"`
+	At     string `json:"at"`   // RFC3339
+	Path   string `json:"path"` // 만들어진 노트 (볼트 상대 경로)
+}
+
+// QueueCheck 는 상태 검사 한 줄이다.
+//
+// health.Check 를 그대로 내보내지 않는다. 그 구조체에는 json 태그가 없어서 Go
+// 필드명(Name·Level·Detail·Fix)이 그대로 나가고, 무엇보다 **Level 이 정수로 나간다** —
+// 앱이 `0 == 정상` 을 외워야 하고, 상수 순서가 바뀌면 조용히 뒤집힌다.
+type QueueCheck struct {
+	Name   string `json:"name"`
+	Level  string `json:"level"` // ok | warn | fail
+	Detail string `json:"detail"`
+	Fix    string `json:"fix,omitempty"`
+}
+
+// levelName 은 등급을 스스로 설명하는 문자열로 바꾼다.
+//
+// 모르는 값이 오면 "unknown" 이다. 정상으로 뭉개지 않는다 — 새 등급이 생겼는데
+// 앱이 그걸 초록불로 그리면, 하필 알아야 할 상태가 안 보인다.
+func levelName(l health.Level) string {
+	switch l {
+	case health.OK:
+		return "ok"
+	case health.Warn:
+		return "warn"
+	case health.Fail:
+		return "fail"
+	}
+	return "unknown"
 }
 
 func newQueueCmd() *cobra.Command {
@@ -63,7 +103,7 @@ func newQueueCmd() *cobra.Command {
 			}
 			q := Queue{
 				Confirm: []QueuePending{},
-				Review:  []daemon.Promotion{},
+				Review:  []QueueReview{},
 				Retro:   []retro.Item{},
 			}
 
@@ -89,7 +129,10 @@ func newQueueCmd() *cobra.Command {
 				}
 				for _, r := range recs {
 					if r.Recorded {
-						q.Review = append(q.Review, r)
+						q.Review = append(q.Review, QueueReview{
+							ID: r.ID, Domain: r.Domain,
+							At: r.At.Format(time.RFC3339), Path: r.Path,
+						})
 					}
 				}
 			}
@@ -104,7 +147,12 @@ func newQueueCmd() *cobra.Command {
 					fmt.Sprintf("읽지 못한 노트가 있어 회고 큐가 불완전하다: %s", l.RelPath(s.Path)))
 			}
 
-			q.Health = health.Vault(c, l).Checks
+			for _, ck := range health.Vault(c, l).Checks {
+				q.Health = append(q.Health, QueueCheck{
+					Name: ck.Name, Level: levelName(ck.Level),
+					Detail: ck.Detail, Fix: ck.Fix,
+				})
+			}
 
 			if !asJSON {
 				return fmt.Errorf("이 명령은 지금 --json 으로만 쓴다 (사람이 읽을 것은 prior pending·doctor 다)")
