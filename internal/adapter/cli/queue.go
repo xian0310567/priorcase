@@ -1,0 +1,119 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/xian0310567/priorcase/internal/core/health"
+	"github.com/xian0310567/priorcase/internal/core/retro"
+	"github.com/xian0310567/priorcase/internal/daemon"
+)
+
+// Queue 는 감독 표면이 한 번에 받아 가는 스냅샷이다.
+//
+// **명령 하나로 주는 이유는 일관성이다.** 네 번 따로 부르면 그 사이에 훅이 돌아
+// pending 이 늘거나 승격이 노트를 만들 수 있고, 그러면 화면 위에서 서로 어긋난 세
+// 큐가 나란히 보인다. 사람은 그걸 버그로 읽는다.
+//
+// 그리고 유지해야 할 계약 표면이 하나로 줄어든다. 사람이 읽는 출력은 문구를 자유롭게
+// 고칠 수 있어야 하는데, 앱이 그걸 파싱하면 문구를 못 고치게 된다.
+type Queue struct {
+	// Confirm 은 "여기 결정이 있는 것 같다" 고 표시된 구간이다. 사람이 맞나 아니나만 답한다.
+	Confirm []QueuePending `json:"confirm"`
+	// Review 는 판별기가 스스로 만든 노트다. **사람이 검증해야 한다** — 실제로
+	// 판별기가 만든 첫 노트에 없는 어원을 지어낸 전력이 있다.
+	Review []daemon.Promotion `json:"review"`
+	// Retro 는 결과를 물어볼 때가 된 결정이다.
+	Retro []retro.Item `json:"retro"`
+	// Health 는 지금 시스템이 제대로 도는가다. 큐가 셋 다 비었을 때 앱이 보여 줄 것이
+	// 이것뿐이라, 비어 있어도 반드시 채운다.
+	Health []health.Check `json:"health"`
+	// Warnings 는 큐를 만들다 생긴 문제다. **비어 있지 않으면 큐가 불완전하다.**
+	// 조용히 짧은 목록을 주면 앱이 "할 일이 없다" 로 그린다.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// QueuePending 은 확인 큐 한 줄이다. daemon.Pending 을 그대로 내보내지 않는다 —
+// 그건 내부 상태 구조라 필드가 바뀌면 앱이 깨진다.
+type QueuePending struct {
+	ID      string   `json:"id"`
+	Domain  string   `json:"domain"`
+	When    string   `json:"when"`
+	Signals []string `json:"signals"`
+	Excerpt string   `json:"excerpt"`
+}
+
+func newQueueCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "queue",
+		Short: "사람이 확인해야 할 것을 한 번에 준다 (감독 표면용)",
+		Long: "확인 큐·자동 기록 검토·회고 큐·상태를 한 스냅샷으로 준다.\n\n" +
+			"데스크탑 앱이 쓰는 명령이다. 네 번 따로 부르면 그 사이에 상태가 바뀌어 " +
+			"서로 어긋난 큐가 나란히 보이므로 한 번에 준다.",
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, l, err := loadFrom(cmd)
+			if err != nil {
+				return err
+			}
+			q := Queue{
+				Confirm: []QueuePending{},
+				Review:  []daemon.Promotion{},
+				Retro:   []retro.Item{},
+			}
+
+			sd, err := daemon.DefaultDir()
+			if err != nil {
+				q.Warnings = append(q.Warnings, "상태 디렉토리를 찾을 수 없다: "+err.Error())
+			} else {
+				items, perr := daemon.ReadPending(sd)
+				if perr != nil {
+					q.Warnings = append(q.Warnings, "미확인 구간을 읽지 못했다: "+perr.Error())
+				}
+				for _, p := range items {
+					q.Confirm = append(q.Confirm, QueuePending{
+						ID: p.ID(), Domain: p.Domain, When: p.When(),
+						Signals: p.Signals, Excerpt: p.Excerpt,
+					})
+				}
+				// **판별기가 스스로 만든 것만 검토 대상이다.** 기록 안 함·실패는
+				// 사람이 할 일이 없다 — 그건 doctor 가 볼 진단이다.
+				recs, rerr := daemon.ReadPromotions(sd, time.Time{})
+				if rerr != nil {
+					q.Warnings = append(q.Warnings, "승격 원장을 읽지 못했다: "+rerr.Error())
+				}
+				for _, r := range recs {
+					if r.Recorded {
+						q.Review = append(q.Review, r)
+					}
+				}
+			}
+
+			due, skipped, derr := retro.Due(l, c)
+			if derr != nil {
+				q.Warnings = append(q.Warnings, "회고 큐를 만들지 못했다: "+derr.Error())
+			}
+			q.Retro = append(q.Retro, due...)
+			for _, s := range skipped {
+				q.Warnings = append(q.Warnings,
+					fmt.Sprintf("읽지 못한 노트가 있어 회고 큐가 불완전하다: %s", l.RelPath(s.Path)))
+			}
+
+			q.Health = health.Vault(c, l).Checks
+
+			if !asJSON {
+				return fmt.Errorf("이 명령은 지금 --json 으로만 쓴다 (사람이 읽을 것은 prior pending·doctor 다)")
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(q)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "JSON 으로 출력한다 (지금은 필수)")
+	return cmd
+}

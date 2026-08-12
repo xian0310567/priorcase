@@ -142,3 +142,58 @@ func TestReleaseUsesTrustedPublishingNotTokens(t *testing.T) {
 			"npm 11.5.1 이상을 요구한다", major)
 	}
 }
+
+// ★ **회고 큐는 편승 회수를 그대로 재현해야 한다.**
+//
+// retro.Due 는 "그 결정을 기록하던 순간 무엇이 함께 보였나" 를 다시 계산한다.
+// capture 가 쓰는 회수 조건(Limit·MinScore)과 값이 갈리면 그건 재현이 아니라 다른
+// 계산이고, 그러면 회고 큐가 실제로는 아무도 못 본 관계를 근거로 사람에게 묻게 된다.
+//
+// 두 값은 서로 다른 패키지에 있어서 한쪽만 고쳐도 컴파일이 통과한다 — 그래서 검사다.
+func TestRetroMirrorsCaptureRecallOptions(t *testing.T) {
+	root := repoRoot(t)
+	cap := readFile(t, filepath.Join(root, "internal/core/capture/capture.go"))
+	rt := readFile(t, filepath.Join(root, "internal/core/retro/retro.go"))
+
+	m := regexp.MustCompile(`search\.Options\{CrossProject: true, Limit: (\d+), MinScore: (\d+)\}`).
+		FindStringSubmatch(cap)
+	if m == nil {
+		t.Fatal("capture 의 편승 회수 옵션을 찾지 못했다 — 형태가 바뀌었으면 이 검사도 같이 고쳐라")
+	}
+
+	// ★ **Cwd 를 주는지까지 봐야 한다.** 처음 이 검사를 쓸 때 Limit·MinScore 만 보고
+	// Cwd 를 빠뜨렸고, 그래서 실제로 어긋난 것을 못 잡았다. cwd 도메인에는 +4 가
+	// 붙어서 다른 프로젝트의 결정이 상위 3에서 통째로 밀려난다 — 실측에서 큐가
+	// 26건과 33건으로 갈렸고 빠진 7건이 전부 다른 프로젝트 것이었다.
+	if strings.Contains(m[0], "Cwd") {
+		t.Error("capture 가 Cwd 를 주기 시작했다 — retro 도 같이 줘야 한다")
+	}
+	if regexp.MustCompile(`(?s)search\.Recall\(l, c,.*?Cwd:`).MatchString(rt) {
+		t.Error("retro 가 Cwd 를 준다 — capture 는 안 준다. cwd 도메인에 +4 가 붙어 " +
+			"다른 프로젝트의 결정이 상위 3에서 밀려나고, 큐가 그만큼 조용해진다")
+	}
+
+	// **질의 구성도 같아야 한다.** capture 는 summary 와 slug 를 붙여 던진다.
+	// retro 가 summary 만 던지면 점수가 달라져 재현이 아니게 된다.
+	if !strings.Contains(cap, `r.Summary+" "+r.Slug`) {
+		t.Error("capture 의 편승 질의 구성이 바뀌었다 — 이 검사도 같이 고쳐라")
+	}
+	if !strings.Contains(rt, `n.Meta.Summary+" "+slugOf(l, n.Stem)`) {
+		t.Error("retro 의 질의가 capture 와 다르다 — summary 와 slug 를 같이 던져야 한다")
+	}
+	for _, want := range []struct{ konst, val string }{
+		{"recallLimit", m[1]},
+		{"recallMinScore", m[2]},
+	} {
+		re := regexp.MustCompile(want.konst + `\s*=\s*(\d+)`)
+		got := re.FindStringSubmatch(rt)
+		if got == nil {
+			t.Errorf("retro 에 %s 가 없다", want.konst)
+			continue
+		}
+		if got[1] != want.val {
+			t.Errorf("retro.%s = %s 인데 capture 는 %s 를 쓴다 — 회고 큐가 편승 회수를 "+
+				"재현하지 못하고, 아무도 못 본 관계를 근거로 묻게 된다", want.konst, got[1], want.val)
+		}
+	}
+}

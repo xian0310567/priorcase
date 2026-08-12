@@ -31,6 +31,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newCaptureCmd())
 	root.AddCommand(newReviewCmd())
 	root.AddCommand(newRollupCmd())
+	root.AddCommand(newQueueCmd())
 	return root
 }
 
