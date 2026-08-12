@@ -159,6 +159,33 @@ func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 	var o, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &errb
 	if err := cmd.Run(); err != nil {
+		// ★ **답이 나왔으면 쓴다. 프로세스가 어떻게 끝났든 상관없다.**
+		//
+		// claude CLI 는 답을 찍은 뒤에도 정리(텔레메트리·MCP 종료)에 시간을 쓴다.
+		// 그 사이에 상한이 걸리면 프로세스는 killed 인데 **stdout 에는 완전한 JSON 이
+		// 이미 들어 있다.** 그걸 실패로 버리면 판별기를 부른 값을 통째로 날린다 —
+		// 그리고 그 구간은 다음에도 같은 일을 반복한다.
+		//
+		// 실측으로 확인했다: 원장에 남은 killed 기록 중 하나가 완전한 verdict 를
+		// 담고 있었다 (record·slug·summary·body 전부). 그 발췌는 그 뒤로도 계속
+		// 큐에 남아 있었다.
+		//
+		// **`record=true` 만 받는다.** 이 비대칭이 이 가드의 핵심이다.
+		//
+		// parse 는 불완전한 답(`{"record":true}` 처럼 slug 가 없는 것)을 에러로
+		// 만들지 않고 **record=false 로 바꿔서** 준다. 그건 정상 경로에서는 옳다 —
+		// 조용히 빈 노트를 만드는 것보다 안 만드는 것이 낫기 때문이다. 그런데
+		// 프로세스가 실패한 뒤에는 그 변환이 위험해진다: 출력이 중간에 잘린 것과
+		// 판별기가 "결정이 아니다" 라고 판정한 것이 **같은 모양이 된다.**
+		//
+		// 그래서 증거를 남기는 쪽만 받는다. record=true 는 노트가 만들어지므로
+		// 사람이 검토 큐에서 볼 수 있다. record=false 를 받으면 구간이 조용히
+		// 해소되고 — 그게 잘린 출력 때문이었다면 그 결정은 영영 사라진다.
+		//
+		// 못 받은 record=false 는 손해가 작다. 구간이 남아 다음에 다시 시도된다.
+		if v, perr := parse(o.String()); perr == nil && v.Record {
+			return v, nil
+		}
 		// **stdout 도 같이 보여 준다.** claude CLI 는 "Not logged in · Please run /login"
 		// 같은 실패를 stdout 에 쓴다 — stderr 만 보면 `exit status 1` 뒤가 비어서
 		// 사용자가 무엇을 해야 할지 알 수 없다. 실제로 새 사용자 시뮬레이션에서

@@ -258,3 +258,60 @@ func TestPromptForbidsFabrication(t *testing.T) {
 		t.Error("출력 형식의 body 설명에 발췌 제약이 없다")
 	}
 }
+
+// ★★ **답이 나왔으면 프로세스가 어떻게 끝났든 쓴다.**
+//
+// claude CLI 는 답을 찍은 뒤에도 정리(텔레메트리·MCP 종료)에 시간을 쓴다. 그 사이에
+// 상한이 걸리면 프로세스는 killed 인데 **stdout 에는 완전한 JSON 이 이미 있다.**
+// 그걸 실패로 버리면 판별기를 부른 값을 통째로 날리고, 그 구간은 다음에도 같은 일을
+// 반복한다.
+//
+// 실측으로 확인했다: 원장의 killed 기록 하나가 완전한 verdict 를 담고 있었고
+// (record·slug·summary·body), 그 발췌는 그 뒤로도 계속 큐에 남아 있었다.
+func TestDecideUsesOutputEvenWhenProcessFails(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "judge")
+	// 답을 찍고 0 아닌 코드로 죽는다 — killed 를 흉내낸다.
+	//
+	// **echo 를 쓰지 않는다.** sh 의 echo 는 \n 을 해석해서 JSON 문자열 안에 진짜
+	// 줄바꿈을 넣어 버린다 — 그러면 파싱이 깨지고, 테스트가 구현을 탓하게 된다.
+	// 실제로 그렇게 한 번 헛짚었다.
+	script := "#!/bin/sh\ncat >/dev/null\ncat <<'J'\n" +
+		`{"record":true,"slug":"저장엔진","summary":"SQLite 로 간다","body":"## 결정"}` +
+		"\nJ\nexit 137\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &CLI{Path: bin, Model: "m", Timeout: 10 * time.Second}
+	v, err := c.Decide(context.Background(), Request{Excerpt: "x", Domain: "alpha"})
+	if err != nil {
+		t.Fatalf("답이 있는데 실패로 버렸다: %v", err)
+	}
+	if !v.Record || v.Slug != "저장엔진" {
+		t.Errorf("verdict 가 안 읽혔다: %+v", v)
+	}
+}
+
+// ★ **그렇다고 아무 출력이나 통과시키면 안 된다.** 잘린 JSON·로그·빈 출력은
+// 여전히 실패다 — 안 그러면 실패가 조용히 "기록 안 함" 으로 둔갑한다.
+func TestDecideStillFailsWhenOutputIsNotAVerdict(t *testing.T) {
+	for _, c := range []struct{ name, out string }{
+		{"빈 출력", ""},
+		{"잘린 JSON", `{"record":true,"slug":"저장엔`},
+		{"로그만", "Not logged in · Please run /login"},
+		{"불완전한 record", `{"record":true}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), "judge")
+			script := "#!/bin/sh\ncat >/dev/null\ncat <<'J'\n" + c.out + "\nJ\nexit 137\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			j := &CLI{Path: bin, Model: "m", Timeout: 10 * time.Second}
+			_, err := j.Decide(context.Background(), Request{Excerpt: "x", Domain: "alpha"})
+			if err == nil {
+				t.Error("실패했어야 한다 — 답이 아닌 출력을 verdict 로 받으면 " +
+					"판별기 고장이 '기록 안 함' 으로 둔갑한다")
+			}
+		})
+	}
+}
