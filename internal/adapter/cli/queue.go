@@ -43,6 +43,12 @@ type QueuePending struct {
 	When    string   `json:"when"`
 	Signals []string `json:"signals"`
 	Excerpt string   `json:"excerpt"`
+	// Fails 는 판별기가 이 구간에서 판정을 못 받은 횟수다.
+	// GaveUp 이면 **자동으로는 더 안 온다** — 앱은 그 줄을 기다리는 것이 아니라
+	// 사람이 처리해야 하는 것으로 그려야 한다. 둘을 같이 그리면 사람은 곧
+	// 처리되겠거니 하고 영영 기다린다.
+	Fails  int  `json:"fails"`
+	GaveUp bool `json:"gave_up"`
 }
 
 // QueueReview 는 검토 큐 한 줄이다.
@@ -137,6 +143,7 @@ func newQueueCmd() *cobra.Command {
 					q.Confirm = append(q.Confirm, QueuePending{
 						ID: p.ID(), Domain: p.Domain, When: p.When(),
 						Signals: sig, Excerpt: p.Excerpt,
+						Fails: p.Fails, GaveUp: p.GaveUp(),
 					})
 				}
 				// **판별기가 스스로 만든 것만 검토 대상이다.** 기록 안 함·실패는

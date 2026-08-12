@@ -56,7 +56,10 @@ func TestQueueJSONContract(t *testing.T) {
 	// 최상위. **빈 배열이어도 키는 있어야 한다** — 없으면 앱이 "아직 안 왔다" 와
 	// "할 일이 없다" 를 구별하지 못한다.
 	want("Queue", Queue{}, "confirm", "review", "retro", "health")
-	want("QueuePending", QueuePending{}, "id", "domain", "when", "signals", "excerpt")
+	// fails·gave_up 은 omitempty 가 아니다. 0/false 도 사실이고, 키가 빠지면 앱이
+	// "실패한 적 없다" 와 "이 필드를 모르는 옛 버전이다" 를 구별하지 못한다.
+	want("QueuePending", QueuePending{}, "id", "domain", "when", "signals", "excerpt",
+		"fails", "gave_up")
 	// **excerpt 는 omitempty 가 아니다.** 옛 원장 줄에는 없는데, 키까지 빠지면
 	// 앱이 "발췌가 없다" 와 "필드를 모른다" 를 구별하지 못한다.
 	want("QueueReview", QueueReview{}, "id", "domain", "at", "path", "excerpt")
