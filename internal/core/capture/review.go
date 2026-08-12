@@ -12,9 +12,18 @@ import (
 )
 
 type ReviewRequest struct {
-	Stem          string
-	Outcome       string // 빈 문자열이면 변경 없음
-	Status        string
+	Stem    string
+	Outcome string // 빈 문자열이면 변경 없음
+	Status  string
+	// Summary 는 한 줄 요약을 고친다. 빈 문자열이면 변경 없음.
+	//
+	// **회수에 주입되는 것은 summary 한 줄뿐이다.** 여기에 틀린 사실이 박히면
+	// 그 오류가 앞으로 계속 대화에 실려 나간다 — 본문은 아무도 안 열어 볼 수 있어도
+	// 이 줄은 반드시 읽힌다. 그런데 이 도구에는 그걸 고칠 길이 없었다.
+	//
+	// 실제로 그 상태를 만났다: 2026-08-12 에 시뮬레이션 숫자가 틀린 채로 summary 에
+	// 박혔고, 회고 절에 정정을 적어도 회수는 여전히 틀린 한 줄을 주입했다.
+	Summary       string
 	Retrospective string
 	Supersedes    string // 뒤집는 대상의 stem
 }
@@ -41,6 +50,9 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	}
 	if r.Status != "" {
 		n.Meta.Status = r.Status
+	}
+	if r.Summary != "" {
+		n.Meta.Summary = r.Summary
 	}
 
 	var old store.Note

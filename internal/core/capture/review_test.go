@@ -102,3 +102,57 @@ func TestReviewRejectsBadValues(t *testing.T) {
 		t.Errorf("거부됐는데 파일이 변했다:\n%s", data)
 	}
 }
+
+// ★★ **summary 를 고칠 길이 있어야 한다.**
+//
+// 회수에 주입되는 것은 summary 한 줄뿐이다 (search.scoreAll 의 head 는 파일명·
+// summary·tags 이고, 주입 블록에 나가는 것은 summary 다). 여기에 틀린 사실이
+// 박히면 그 오류가 앞으로 계속 대화에 실려 나간다 — 본문은 아무도 안 열어 볼 수
+// 있어도 이 줄은 반드시 읽힌다.
+//
+// 실제로 그 상태를 만났다. 2026-08-12 에 시뮬레이션 숫자가 틀린 채로 summary 에
+// 박혔는데, 회고 절에 정정을 적어도 회수는 여전히 틀린 한 줄을 주입했다.
+// review 에 그걸 고칠 플래그가 없었다.
+func TestReviewCanCorrectSummary(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	stem := "alpha-결정-저장엔진-2026-08-01"
+	read := func() store.Note {
+		t.Helper()
+		p, err := l.ResolveStem(stem)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := l.Read(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	before := read()
+	if _, err := Review(l, ReviewRequest{Stem: stem, Summary: "고쳐진 한 줄"}); err != nil {
+		t.Fatal(err)
+	}
+	after := read()
+	if after.Meta.Summary != "고쳐진 한 줄" {
+		t.Errorf("Summary = %q, 고쳐졌어야 한다", after.Meta.Summary)
+	}
+	// **다른 필드는 건드리지 않는다.** summary 만 고치러 온 사람이 outcome 이
+	// 초기화되는 것을 알아채지 못한다.
+	if after.Meta.Outcome != before.Meta.Outcome || after.Meta.Status != before.Meta.Status {
+		t.Errorf("summary 만 고쳤는데 다른 필드가 바뀌었다: outcome %q→%q status %q→%q",
+			before.Meta.Outcome, after.Meta.Outcome, before.Meta.Status, after.Meta.Status)
+	}
+	if string(after.Body) != string(before.Body) {
+		t.Error("summary 만 고쳤는데 본문이 바뀌었다")
+	}
+
+	// 빈 문자열은 "변경 없음" 이다 — 안 그러면 outcome 만 고치려는 호출이
+	// summary 를 지운다.
+	if _, err := Review(l, ReviewRequest{Stem: stem, Outcome: "good"}); err != nil {
+		t.Fatal(err)
+	}
+	if again := read(); again.Meta.Summary != "고쳐진 한 줄" {
+		t.Errorf("빈 Summary 가 기존 값을 지웠다: %q", again.Meta.Summary)
+	}
+}
