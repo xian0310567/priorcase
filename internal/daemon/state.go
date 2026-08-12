@@ -189,15 +189,20 @@ const stateLockWait = 2 * time.Second
 //
 // 데몬은 단일 인스턴스지만 fsnotify 콜백이 여러 고루틴에서 오므로 뮤텍스도 둔다.
 type Store struct {
-	dir string
-	mu  sync.Mutex
-	st  state
+	// writes 는 상태 파일을 쓴 횟수다 (성능 회귀 테스트용).
+	writes int
+	dir    string
+	mu     sync.Mutex
+	st     state
 }
 
 // mutate 는 잠금 안에서 디스크를 다시 읽고, 고치고, 쓴다.
 func (s *Store) mutate(fn func(*state)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 쓰기 횟수를 센다. **성능 회귀를 시간으로 재면 기계에 따라 흔들린다** —
+	// 파일마다 쓰는지 한 번에 쓰는지는 횟수로 결정적으로 갈린다.
+	s.writes++
 
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
@@ -227,6 +232,13 @@ func (s *Store) reload() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_ = s.loadLocked()
+}
+
+// Writes 는 상태 파일을 쓴 횟수다. 성능 회귀 테스트가 쓴다.
+func (s *Store) Writes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writes
 }
 
 func NewStore(dir string) *Store {
@@ -590,4 +602,53 @@ func ClaimPending(dir, id string, now time.Time) (bool, error) {
 		}
 	})
 	return got, err
+}
+
+// CheckpointSnapshot 은 체크포인트 전부를 한 번에 준다.
+//
+// **파일마다 Checkpoint() 를 부르면 그때마다 상태 파일을 다시 읽는다.** reload 가
+// 무조건 파싱하기 때문이다. 파일이 3,360개이고 상태 파일이 623KB 이면 그 파싱만
+// 수천 번이라, 실측에서 10초 예산에 119개밖에 못 돌았다.
+//
+// 스냅샷이라 뜬 뒤의 변화는 안 보인다. 훑기 계획을 세우는 데는 그것으로 충분하다 —
+// 계획을 세우는 동안 남이 상태를 바꾸면 다음 판에 반영된다.
+func (s *Store) CheckpointSnapshot() map[string]Checkpoint {
+	s.reload()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]Checkpoint, len(s.st.Checkpoints))
+	for k, v := range s.st.Checkpoints {
+		out[k] = v
+	}
+	return out
+}
+
+// Behind 는 이 파일에 아직 안 읽은 부분이 있는지 스냅샷으로 판정한다.
+// Store 를 다시 읽지 않는다.
+func (cp Checkpoint) Behind(size int64) bool {
+	if size < cp.Size || size < cp.Offset {
+		return true // 잘렸거나 다른 파일이다 — 처음부터 읽어야 한다
+	}
+	return cp.Offset < size
+}
+
+// SeedAll 은 여러 파일의 체크포인트를 **쓰기 한 번으로** 끝으로 찍는다.
+//
+// Advance 를 파일마다 부르면 그때마다 상태 파일을 통째로 다시 쓴다. 처음 설치할 때는
+// 그 파일이 수천 개라 O(n²) 가 된다 — 실측에서 3,360개 시딩에 11.2초가 걸렸고, 그건
+// 사용자의 첫 세션 종료가 그만큼 멎는다는 뜻이다.
+//
+// 나머지 필드는 보존한다. 통째로 갈아치우면 Credited 가 0 으로 돌아가 면제가 다시
+// 무한해진다.
+func (s *Store) SeedAll(sizes map[string]int64) error {
+	if len(sizes) == 0 {
+		return nil
+	}
+	return s.mutate(func(st *state) {
+		for p, sz := range sizes {
+			cp := st.Checkpoints[p]
+			cp.Offset, cp.Size = sz, sz
+			st.Checkpoints[p] = cp
+		}
+	})
 }

@@ -242,45 +242,28 @@ func (d *watcher) watchTree(w *fsnotify.Watcher, root string) error {
 //
 // 기동 후에 새로 생기는 파일은 여기 오지 않으므로 체크포인트가 없어도 0부터 읽힌다.
 func (d *watcher) startupPass(ctx context.Context) {
-	var paths []string
-	for _, r := range d.hosts {
-		got, unreadable, err := r.Host.List(r.Root)
-		if err != nil {
-			if r.Host.Required {
-				d.emit(Event{Kind: "error", Err: err})
-				return
-			}
-			continue
-		}
-		if unreadable > 0 {
-			d.emit(Event{Kind: "error", Note: fmt.Sprintf("%s: 디렉토리 %d개를 읽지 못했다",
-				r.Host.Name, unreadable)})
-		}
-		paths = append(paths, got...)
+	// **판단은 PlanSweep 하나에 있다.** 훅의 훑기도 같은 것을 쓴다 — 각자 구현하면
+	// 시딩 규칙이 어긋나고, 한쪽에서 pending 이 쏟아진다.
+	plan, err := PlanSweep(d.st, d.hosts, d.o.Backfill)
+	if err != nil {
+		d.emit(Event{Kind: "error", Err: err})
+		return
+	}
+	if plan.Unreadable > 0 {
+		d.emit(Event{Kind: "error", Note: fmt.Sprintf("디렉토리 %d개를 읽지 못했다", plan.Unreadable)})
 	}
 
-	seeded, queued := 0, 0
-	for _, p := range paths {
-		known := d.st.Checkpoint(p) != 0
-		if !known && !d.o.Backfill {
-			fi, err := os.Stat(p)
-			if err != nil || fi.Size() == 0 {
-				continue
-			}
-			if err := d.st.Advance(p, fi.Size(), fi.Size()); err != nil {
-				d.emit(Event{Kind: "error", Path: p, Err: err})
-				continue
-			}
-			seeded++
-			continue
-		}
+	seeded := SeedToEnd(d.st, plan.Seed)
+	queued := 0
+	for _, p := range plan.Scan {
 		d.mu.Lock()
 		d.dirty[p] = true
 		d.mu.Unlock()
 		queued++
 	}
 	d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
-		"transcript %d개 — 현재 지점부터 감시 %d개 · 밀린 구간 확인 %d개", len(paths), seeded, queued)})
+		"transcript %d개 — 현재 지점부터 감시 %d개 · 밀린 구간 확인 %d개",
+		len(plan.Seed)+len(plan.Scan), seeded, queued)})
 	if queued > 0 {
 		d.drain(ctx, false)
 	}

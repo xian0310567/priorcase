@@ -207,11 +207,14 @@ func TestTimeoutOrderingIsSafe(t *testing.T) {
 		t.Errorf("예산(%v)에서 판별기(%v)를 빼면 마무리할 여유가 없다",
 			promoteBudget, judge.DefaultTimeout)
 	}
-	// 훅 상한은 예산에 더해 마무리까지 담아야 한다. 승격은 마감 직전에 새 구간을
-	// 시작하지 않으므로(promote.go), 최악은 예산을 꽉 채운 판 하나다.
-	if promoteHookTimeout-promoteBudget < 20*time.Second {
-		t.Errorf("훅 상한(%v)이 예산(%v)에 마무리 여유를 못 남긴다",
-			promoteHookTimeout, promoteBudget)
+	// 훅 상한은 **승격과 훑기를 둘 다** 담고 마무리까지 남겨야 한다.
+	//
+	// 훑기가 뒤에 붙으면서 이 계산이 바뀌었다. 승격만 볼 때는 여유가 30초였는데
+	// 훑기 10초가 그중 3분의 1을 먹는다. 둘을 따로 보면 각자는 맞는데 합이 넘치는
+	// 상태가 조용히 생긴다 — 그때 호스트가 훅을 죽이고 원장은 절반만 남는다.
+	if left := promoteHookTimeout - promoteBudget - sweepBudget; left < 20*time.Second {
+		t.Errorf("훅 상한(%v)에서 승격(%v)과 훑기(%v)를 빼면 %v 뿐이다 — 마무리 여유가 없다",
+			promoteHookTimeout, promoteBudget, sweepBudget, left)
 	}
 }
 
