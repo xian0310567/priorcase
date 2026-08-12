@@ -25,11 +25,24 @@ type PromoteOptions struct {
 	First string
 	// Budget 은 이번 판에 쓸 수 있는 총 시간이다. 0 이면 DefaultPromoteBudget.
 	Budget time.Duration
+	// Only 는 이 구간 하나만 처리한다. 비면 전부 돈다.
+	//
+	// **필터로 둔 이유는 쓰기 경로를 하나로 유지하기 위해서다.** 집기(ClaimPending)·
+	// 원장·크레딧·해소가 전부 아래 루프 안에 있다. 한 건짜리 함수를 따로 만들면
+	// 그 부기가 두 벌이 되고, 한쪽만 고쳐진 채로 남는다 — 이 프로젝트가 죄목으로
+	// 드는 바로 그것이다.
+	Only string
 	// Author 는 승격된 노트에 박을 사람이다. 비면 설정·git 신원에서 정한다.
 	//
 	// 훅은 자기 세션의 cwd 를 알고, 데몬은 모른다. 그래서 호출부가 정해 넘긴다 —
 	// 여기서 짐작하면 훅과 데몬이 같은 구간에 다른 답을 쓴다.
 	Author string
+	// OnResult 는 구간 하나가 끝날 때마다 그 결과를 준다. nil 이면 안 부른다.
+	//
+	// 원장에도 같은 것이 남지만, 호출자가 **이번 호출의 결과**를 알려면 되읽어야
+	// 하고 그건 다른 프로세스가 그 사이에 쓴 것과 섞인다. 앱의 [결정이다] 는
+	// "방금 내가 누른 것이 어떻게 됐나" 를 알아야 한다.
+	OnResult func(Promotion)
 	// Err 는 사람에게 보이는 진행 보고다. nil 이면 버린다.
 	Err io.Writer
 	// Label 은 보고 줄 앞에 붙는 이름이다 ("prior hook session-end" 같은).
@@ -64,6 +77,22 @@ func Promote(ctx context.Context, o PromoteOptions) {
 	items, err := ReadPending(o.StateDir)
 	if err != nil || len(items) == 0 {
 		return
+	}
+	if o.Only != "" {
+		var one []Pending
+		for _, p := range items {
+			if p.ID() == o.Only {
+				one = append(one, p)
+			}
+		}
+		if len(one) == 0 {
+			// **조용히 아무것도 안 하면 안 된다.** 앱의 [결정이다] 가 이걸 부르는데,
+			// 그 구간이 이미 해소됐거나 id 가 틀렸을 때 사람은 눌렀는데 아무 일도
+			// 안 일어난 것으로 본다.
+			o.report(fmt.Sprintf("그런 구간이 없다: %s (이미 처리됐거나 id 가 다르다)", o.Only))
+			return
+		}
+		items = one
 	}
 	items = ownFirst(items, o.First)
 
@@ -106,6 +135,20 @@ func Promote(ctx context.Context, o PromoteOptions) {
 				"설정에 [[domain]] 을 추가하거나 default_domain 을 적어라", p.ID()))
 			continue
 		}
+		// **설정에 없는 도메인은 판별기를 부르기 전에 걸러낸다.**
+		//
+		// 안 그러면 판별기를 부르고 나서 capture 가 "알 수 없는 도메인 접두어" 로
+		// 거부한다 — 호출 한 번(실측 10~45초)이 통째로 버려지고, 그 구간은 다음에도
+		// 같은 일을 반복한다. 예산이 있으므로 그 낭비가 **다른 구간의 기회를 먹는다.**
+		//
+		// 실제로 그 상태다. 2026-08-12 개명(casebook → priorcase) 때 이미 표시돼
+		// 있던 구간의 도메인을 안 옮겼고, 그래서 옛 이름을 단 구간 7건이 큐에 남았다.
+		if _, ok := o.Config.FolderFor(p.Domain); !ok {
+			o.report(fmt.Sprintf("설정에 없는 도메인이라 건너뛴다 (%s): %q — "+
+				"이름을 바꿨다면 prior pending --resolve 로 지우거나 설정에 추가하라",
+				p.ID(), p.Domain))
+			continue
+		}
 		day := p.DecidedOn()
 
 		// **집어 간다.** 승격이 스캔 소유권 밖으로 나온 뒤로(D12) 훅과 데몬이 동시에
@@ -144,6 +187,9 @@ func Promote(ctx context.Context, o PromoteOptions) {
 		}
 		if lerr := AppendPromotion(o.StateDir, rec); lerr != nil {
 			o.report(fmt.Sprintf("승격 원장을 쓰지 못했다: %v", lerr))
+		}
+		if o.OnResult != nil {
+			o.OnResult(rec)
 		}
 
 		switch {

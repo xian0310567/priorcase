@@ -321,3 +321,177 @@ func TestCancelDuringJudgeIsNotRecordedAsFailure(t *testing.T) {
 		t.Errorf("보고가 중단을 말하지 않는다: %q", got)
 	}
 }
+
+// ★★ **Only 는 그 구간 하나만 건드려야 한다.**
+//
+// 앱의 [결정이다] 가 이걸 부른다. 필터가 안 먹으면 버튼 한 번에 큐 전체가 판별기로
+// 넘어가고, 사람은 하나만 승인했다고 믿는다.
+//
+// 필터로 구현한 이유는 쓰기 경로를 하나로 유지하기 위해서다 — 집기·원장·크레딧·
+// 해소가 전부 같은 루프 안에 있고, 한 건짜리 함수를 따로 만들면 그 부기가 두 벌이 된다.
+func TestPromoteOnlyTouchesOneSegment(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"아니다"}`)
+	addPendings(t, sd, 4)
+	before, err := ReadPending(sd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := before[1].ID()
+
+	var seen []Promotion
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: target,
+		Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+	})
+
+	if len(seen) != 1 {
+		t.Fatalf("결과가 %d건이다 — Only 인데 하나만 처리해야 한다", len(seen))
+	}
+	if seen[0].ID != target {
+		t.Errorf("다른 구간을 처리했다: %s (지목: %s)", seen[0].ID, target)
+	}
+	// 나머지는 도장도 안 찍혀야 한다. 찍히면 claimTTL 동안 아무도 못 본다.
+	after, err := ReadPending(sd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range after {
+		if p.ID() != target && !p.ClaimedAt.IsZero() {
+			t.Errorf("%s 에 도장이 찍혔다 — 지목하지 않은 구간이다", p.ID())
+		}
+	}
+}
+
+// ★★ **없는 id 를 주면 조용히 끝내면 안 된다.**
+//
+// 앱이 버튼을 눌러 이걸 부르는데, 그 구간이 이미 해소됐거나 id 가 틀렸을 때
+// 아무 일도 안 일어나면 사람은 승인이 된 줄 안다. 그리고 그 구간은 큐에 계속 남는다.
+func TestPromoteUnknownIDReportsInsteadOfSilence(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"아니다"}`)
+	addPendings(t, sd, 2)
+
+	var errBuf strings.Builder
+	var seen []Promotion
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: "/없는/구간@999",
+		Budget: time.Minute, Err: &errBuf,
+		OnResult: func(p Promotion) { seen = append(seen, p) },
+	})
+
+	if len(seen) != 0 {
+		t.Errorf("없는 id 인데 %d건을 처리했다", len(seen))
+	}
+	if got := errBuf.String(); !strings.Contains(got, "그런 구간이 없다") {
+		t.Errorf("보고가 없다: %q — 앱이 버튼을 눌렀는데 아무 말도 없으면 된 줄 안다", got)
+	}
+}
+
+// OnResult 는 세 갈래를 전부 준다 — 기록함·기록 안 함·실패. 호출자가 "결정이
+// 아니라고 판정했다" 와 "판정을 못 했다" 를 구별할 수 있어야 한다.
+func TestPromoteOnResultCarriesAllBranches(t *testing.T) {
+	for _, c := range []struct {
+		name, judge string
+		check       func(*testing.T, Promotion)
+	}{
+		{"기록함", `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`,
+			func(t *testing.T, p Promotion) {
+				if !p.Recorded || p.Path == "" {
+					t.Errorf("기록했는데 %+v", p)
+				}
+			}},
+		{"기록 안 함", `{"record":false,"reason":"진행 보고다"}`,
+			func(t *testing.T, p Promotion) {
+				if p.Recorded || p.Reason == "" {
+					t.Errorf("판정 결과가 안 실렸다: %+v", p)
+				}
+			}},
+		{"실패", `이건 JSON 이 아니다`,
+			func(t *testing.T, p Promotion) {
+				if p.Recorded || p.Err == "" {
+					t.Errorf("실패가 안 실렸다: %+v", p)
+				}
+			}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, l, sd := promoteFixture(t, c.judge)
+			var seen []Promotion
+			Promote(context.Background(), PromoteOptions{
+				StateDir: sd, Config: cfg, Layout: l,
+				Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+			})
+			if len(seen) == 0 {
+				t.Fatal("OnResult 가 안 불렸다")
+			}
+			c.check(t, seen[0])
+		})
+	}
+}
+
+// ★★ **설정에 없는 도메인은 판별기를 부르기 전에 걸러야 한다.**
+//
+// 안 걸러내면 판별기를 부르고 나서 capture 가 "알 수 없는 도메인 접두어" 로
+// 거부한다. 호출 한 번이 실측 10~45초이고 **예산이 있으므로 그 낭비가 다른 구간의
+// 기회를 먹는다.** 그리고 그 구간은 다음에도 같은 일을 반복한다.
+//
+// 실제로 그 상태였다. 2026-08-12 개명(casebook → priorcase) 때 이미 표시돼 있던
+// 구간의 도메인을 안 옮겨서, 옛 이름을 단 구간 7건이 큐에 남았다.
+func TestPromoteSkipsUnknownDomainBeforeCallingJudge(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
+
+	// 판별기가 불리면 흔적을 남기게 한다 — 안 불렸다는 것을 증명하려면 필요하다.
+	mark := filepath.Join(t.TempDir(), "called")
+	judge := filepath.Join(t.TempDir(), "judge")
+	sh := "#!/bin/sh\ncat >/dev/null\ntouch " + mark + "\necho '{\"record\":false,\"reason\":\"x\"}'\n"
+	if err := os.WriteFile(judge, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.Capture.JudgePath = judge
+
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(Pending{
+		Path: "/t.jsonl", From: 777, Domain: "없는도메인", SessionID: "S1",
+		Days: []string{"2026-08-09"}, Excerpt: "결정했다", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var errBuf strings.Builder
+	var seen []Promotion
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@777",
+		Budget: time.Minute, Err: &errBuf,
+		OnResult: func(p Promotion) { seen = append(seen, p) },
+	})
+
+	if _, err := os.Stat(mark); err == nil {
+		t.Error("판별기를 불렀다 — 설정에 없는 도메인이면 부르기 전에 걸러야 한다")
+	}
+	if len(seen) != 0 {
+		t.Errorf("원장에 %d건이 남았다 — 판정한 적이 없다", len(seen))
+	}
+	got := errBuf.String()
+	if !strings.Contains(got, "설정에 없는 도메인") {
+		t.Errorf("왜 건너뛰었는지 안 알려 준다: %q", got)
+	}
+	if !strings.Contains(got, "없는도메인") {
+		t.Errorf("어느 도메인인지 안 알려 준다: %q", got)
+	}
+	// **구간은 남아 있어야 한다.** 설정을 고치면 다시 처리할 수 있어야 하고,
+	// 지우는 것은 사람의 판단이다.
+	after, _ := ReadPending(sd)
+	found := false
+	for _, p := range after {
+		if p.ID() == "/t.jsonl@777" {
+			found = true
+			if !p.ClaimedAt.IsZero() {
+				t.Error("도장이 찍혔다 — 아무 일도 안 했는데 5분간 건너뛰어진다")
+			}
+		}
+	}
+	if !found {
+		t.Error("구간이 사라졌다 — 건너뛴 것은 해소가 아니다")
+	}
+}
