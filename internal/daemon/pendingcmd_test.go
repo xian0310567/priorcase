@@ -1,18 +1,27 @@
 package daemon
 
 import (
+	"regexp"
 	"strings"
+
+	"github.com/xian0310567/priorcase/internal/testutil"
 	"testing"
 	"time"
 )
 
+// runPending 은 **격리된 설정**으로 명령을 돌린다.
+//
+// `--config` 를 안 주면 `config.Load("")` 가 **사용자의 진짜 설정**을 잡고, 볼트 대조가
+// 진짜 볼트를 읽는다. 그러면 테스트 결과가 그 사람의 볼트 내용에 따라 달라진다 —
+// 실제로 그 상태로 한 번 깨졌다.
 func runPending(t *testing.T, stateDir string, args ...string) (string, error) {
 	t.Helper()
+	cfgPath, _ := testutil.VaultConfigFile(t)
 	cmd := NewPendingCommand()
 	var out strings.Builder
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs(append([]string{"--state-dir", stateDir}, args...))
+	cmd.SetArgs(append([]string{"--state-dir", stateDir, "--config", cfgPath}, args...))
 	err := cmd.Execute()
 	return out.String(), err
 }
@@ -98,5 +107,53 @@ func TestPendingResolveRemoves(t *testing.T) {
 func TestPendingResolveRejectsBadID(t *testing.T) {
 	if _, err := runPending(t, t.TempDir(), "--resolve", "형식이아님"); err == nil {
 		t.Error("형식이 아닌 id 를 받아들였다")
+	}
+}
+
+// ★★ **판별기는 중복 대조를 받는데 사람은 못 받았다.**
+//
+// 자동 승격은 그 도메인의 기존 결정 요약을 판별기에게 넘겨 중복을 거른다. 그런데
+// 확인 큐에서 사람이 판정할 때는 아무 도움도 없어서 볼트를 맨눈으로 뒤져야 했다 —
+// 실측에서 큐 7건 중 4건이 이 대조만으로 판정됐다.
+//
+// **판정하지는 않는다.** 점수와 함께 후보만 보여 준다. 회수는 언제나 무언가를
+// 돌려주므로, 도구가 "이미 기록됨" 이라고 단정하면 그 단정이 틀렸을 때 사람이
+// 확인을 건너뛴다.
+func TestPendingShowsVaultComparison(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// 픽스처 볼트에 "저장 엔진을 임베디드 DB 로 고른다" 노트가 있다.
+	if err := s.AddPending(Pending{
+		SessionID: "S1", Path: "/t/b.jsonl", From: 7, Domain: "alpha", Turns: 9,
+		Signals: []string{"결정"}, Days: []string{"2026-08-08"},
+		At:      time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC),
+		Excerpt: "에이전트: 저장 엔진을 어느 것으로 할지 정했다. 임베디드 DB 로 간다.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPending(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "비슷한 기존 결정") {
+		t.Fatalf("볼트 대조가 안 보인다 — 사람이 맨눈으로 뒤져야 한다:\n%s", out)
+	}
+	if !strings.Contains(out, "저장엔진") {
+		t.Errorf("맞는 노트가 안 나왔다:\n%s", out)
+	}
+	// **점수가 있어야 상대 비교가 된다.** 절대 점수로는 판정할 수 없다는 것이
+	// 실측 결론이므로, 사람이 1위와 2위를 견줄 재료를 줘야 한다.
+	if !regexp.MustCompile(`\n\s+\d+\s+alpha-결정-저장엔진`).MatchString(out) {
+		t.Errorf("점수가 안 붙었다:\n%s", out)
+	}
+	// **판정하지 않는다.**
+	for _, banned := range []string{"이미 기록", "중복이다", "기록됨"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("도구가 단정했다(%q) — 틀리면 사람이 확인을 건너뛴다:\n%s", banned, out)
+		}
 	}
 }

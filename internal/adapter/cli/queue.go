@@ -3,11 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/core/retro"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
@@ -49,6 +53,25 @@ type QueuePending struct {
 	// 처리되겠거니 하고 영영 기다린다.
 	Fails  int  `json:"fails"`
 	GaveUp bool `json:"gave_up"`
+	// Similar 는 볼트에 있는 비슷한 기존 결정이다.
+	//
+	// **판별기는 중복 대조를 받는데 사람은 못 받았다.** 실측에서 확인 큐 7건 중
+	// 4건이 이 대조만으로 판정됐다(이미 있음 3 · 결정 아님 1) — 앱이 이걸 나란히
+	// 놓으면 사람이 실제로 읽을 것이 절반 이하로 준다.
+	//
+	// **앱은 이것으로 단정하면 안 된다.** 점수를 같이 보여 주고 사람이 고른다.
+	// 회수는 언제나 무언가를 돌려주므로, 일치가 없는 발췌도 1위가 나온다.
+	Similar []QueueSimilar `json:"similar"`
+}
+
+// QueueSimilar 는 대조 결과 한 줄이다.
+type QueueSimilar struct {
+	Stem    string `json:"stem"`
+	Path    string `json:"path"` // 볼트 상대 경로
+	Summary string `json:"summary"`
+	// Score 는 회수 점수다. **절대값으로 판정하면 안 된다** — 실측에서 진짜 일치
+	// 65점과 가짜 1위 54점이 겹쳤다. 같은 목록 안의 상대 비교로만 쓸모가 있다.
+	Score int `json:"score"`
 }
 
 // QueueReview 는 검토 큐 한 줄이다.
@@ -99,6 +122,33 @@ func levelName(l health.Level) string {
 	return "unknown"
 }
 
+// similarFor 는 발췌에 붙일 대조 결과를 만든다.
+//
+// **빈 배열은 [] 여야 한다. null 이면 앱이 순회하다 터진다.** 발췌가 없는 옛 구간과
+// 비슷한 것이 정말 없는 경우가 둘 다 흔하다.
+func similarFor(l *store.Layout, c *config.Config, excerpt string, q *Queue) []QueueSimilar {
+	out := []QueueSimilar{}
+	if strings.TrimSpace(excerpt) == "" {
+		return out
+	}
+	hits, skipped, err := search.Similar(l, c, excerpt)
+	if err != nil {
+		q.Warnings = append(q.Warnings, "볼트 대조를 하지 못했다: "+err.Error())
+		return out
+	}
+	if len(skipped) > 0 {
+		q.Warnings = append(q.Warnings,
+			fmt.Sprintf("읽지 못한 노트가 있어 볼트 대조가 불완전하다 (%d건)", len(skipped)))
+	}
+	for _, h := range hits {
+		out = append(out, QueueSimilar{
+			Stem: h.Note.Stem, Path: l.RelPath(h.Note.Path),
+			Summary: h.Note.Meta.Summary, Score: h.Score,
+		})
+	}
+	return out
+}
+
 func newQueueCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -144,6 +194,7 @@ func newQueueCmd() *cobra.Command {
 						ID: p.ID(), Domain: p.Domain, When: p.When(),
 						Signals: sig, Excerpt: p.Excerpt,
 						Fails: p.Fails, GaveUp: p.GaveUp(),
+						Similar: similarFor(l, c, p.Excerpt, &q),
 					})
 				}
 				// **판별기가 스스로 만든 것만 검토 대상이다.** 기록 안 함·실패는

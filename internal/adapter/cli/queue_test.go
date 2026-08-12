@@ -3,9 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/core/retro"
@@ -59,7 +65,8 @@ func TestQueueJSONContract(t *testing.T) {
 	// fails·gave_up 은 omitempty 가 아니다. 0/false 도 사실이고, 키가 빠지면 앱이
 	// "실패한 적 없다" 와 "이 필드를 모르는 옛 버전이다" 를 구별하지 못한다.
 	want("QueuePending", QueuePending{}, "id", "domain", "when", "signals", "excerpt",
-		"fails", "gave_up")
+		"fails", "gave_up", "similar")
+	want("QueueSimilar", QueueSimilar{}, "stem", "path", "summary", "score")
 	// **excerpt 는 omitempty 가 아니다.** 옛 원장 줄에는 없는데, 키까지 빠지면
 	// 앱이 "발췌가 없다" 와 "필드를 모른다" 를 구별하지 못한다.
 	want("QueueReview", QueueReview{}, "id", "domain", "at", "path", "excerpt")
@@ -104,7 +111,7 @@ func TestQueueEmptyIsArrayNotNull(t *testing.T) {
 // 키 존재만 보는 계약 테스트로는 이걸 못 잡는다 — 값의 모양까지 봐야 한다.
 func TestQueueNestedArraysAreNeverNull(t *testing.T) {
 	q := Queue{
-		Confirm: []QueuePending{{ID: "x", Signals: []string{}}},
+		Confirm: []QueuePending{{ID: "x", Signals: []string{}, Similar: []QueueSimilar{}}},
 		Review:  []QueueReview{},
 		Retro:   []retro.Item{},
 		Health:  []QueueCheck{},
@@ -123,7 +130,7 @@ func TestQueueNestedArraysAreNeverNull(t *testing.T) {
 	// 슬라이스 필드를 nil 로 두면 반드시 null 이 된다. 계약 구조체의 모든 슬라이스가
 	// 그 위험을 지니므로, 새 필드가 늘면 여기서 걸리게 한다.
 	var nilSig Queue
-	nilSig.Confirm = []QueuePending{{ID: "x"}} // Signals 를 안 채움
+	nilSig.Confirm = []QueuePending{{ID: "x"}} // Signals·Similar 를 안 채움
 	nilSig.Review = []QueueReview{}
 	nilSig.Retro = []retro.Item{}
 	nilSig.Health = []QueueCheck{}
@@ -135,6 +142,10 @@ func TestQueueNestedArraysAreNeverNull(t *testing.T) {
 	// queue.go 가 그렇게 하는지는 아래에서 본다.
 	if !strings.Contains(readSource(t, "queue.go"), "sig = []string{}") {
 		t.Error("queue.go 가 nil signals 를 [] 로 채우지 않는다")
+	}
+	// similarFor 도 같은 함정을 가진다 — 비슷한 것이 없는 경우가 흔하다.
+	if !strings.Contains(readSource(t, "queue.go"), "out := []QueueSimilar{}") {
+		t.Error("similarFor 가 빈 결과를 [] 로 만들지 않는다 — null 이 나간다")
 	}
 }
 
@@ -195,6 +206,76 @@ func TestQueueDoesNotLeakInternalStructs(t *testing.T) {
 		if strings.Contains(pkg, "/internal/daemon") || strings.Contains(pkg, "/internal/core/health") {
 			t.Errorf("Queue.%s 가 %s 를 그대로 싣는다 — 계약 구조체로 감싸라",
 				f.Name, el.String())
+		}
+	}
+}
+
+// ★★ **손으로 만든 값으로는 배선 누락을 못 잡는다.**
+//
+// 위 TestQueueNestedArraysAreNeverNull 은 Queue 를 직접 구성해 null 을 검사한다.
+// 그건 구조체가 직렬화될 때의 모양만 본다 — **명령이 그 필드를 채우는지는 안 본다.**
+//
+// 실제로 그 구멍에 빠졌다. similarFor 를 만들고 호출부에 안 붙였는데, 계약 테스트는
+// 키 존재만 보고 null 테스트는 손으로 채운 값을 보느라 둘 다 통과했다. 실기기에서
+// `similar: null` 이 나와서야 드러났고, 앱은 거기서 터진다.
+//
+// 그래서 이 테스트는 **명령을 실제로 돌린다.**
+func TestQueueCommandFillsEveryArray(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+	// daemon.DefaultDir() 은 $XDG_STATE_HOME/priorcase 다. 그 자리에 심어야
+	// 명령이 실제로 이 pending 을 본다 — 아니면 큐가 비어 루프가 안 돌고
+	// **테스트가 공허하게 통과한다.**
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	sd := filepath.Join(stateHome, "priorcase")
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(daemon.Pending{
+		Path: "/t.jsonl", From: 1, Domain: "alpha", SessionID: "S1",
+		Days: []string{"2026-08-09"}, At: time.Now().UTC(),
+		Excerpt: "저장 엔진을 어느 것으로 할지 정했다. 임베디드 DB 로 간다.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newQueueCmd()
+	root := &cobra.Command{Use: "prior"}
+	root.PersistentFlags().String("config", "", "")
+	root.AddCommand(cmd)
+	var out, errb strings.Builder
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"queue", "--json", "--config", cfgPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("queue 실행: %v (stderr=%s)", err, errb.String())
+	}
+
+	raw := out.String()
+	if strings.Contains(raw, ":null") || strings.Contains(raw, ": null") {
+		t.Errorf("명령 출력에 null 이 있다 — 앱이 순회하다 터진다:\n%s", raw)
+	}
+	var q Queue
+	if err := json.Unmarshal([]byte(raw), &q); err != nil {
+		t.Fatalf("출력이 JSON 이 아니다: %v\n%s", err, raw)
+	}
+	if q.Confirm == nil || q.Review == nil || q.Retro == nil || q.Health == nil {
+		t.Fatal("최상위 배열 중 nil 이 있다")
+	}
+	// **큐가 비면 이 테스트는 아무것도 검사하지 않는다.** 배선 누락을 잡으려면
+	// 루프가 실제로 돌아야 한다.
+	if len(q.Confirm) == 0 {
+		t.Fatalf("확인 큐가 비었다 — 명령이 상태 디렉토리를 못 찾았다 (경고: %v)", q.Warnings)
+	}
+	for _, c := range q.Confirm {
+		if c.Signals == nil {
+			t.Errorf("%s: signals 가 nil", c.ID)
+		}
+		if c.Similar == nil {
+			t.Errorf("%s: similar 가 nil — similarFor 가 호출부에 안 붙었다", c.ID)
 		}
 	}
 }
