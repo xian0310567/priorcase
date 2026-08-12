@@ -154,10 +154,13 @@ func (o Options) sweepOthers(judgeAvailable bool) {
 		return // prior watch 가 훑기의 주인이다
 	}
 	// 조용히 끝나는 판이 대부분이다 (자란 파일이 없으면 할 일이 없다).
-	if r.Seeded == 0 && r.Scanned == 0 && r.Skipped == 0 && r.Errs == 0 {
+	if r.Seeded == 0 && r.Scanned == 0 && r.Skipped == 0 && r.Errs == 0 && r.Pruned == 0 {
 		return
 	}
 	msg := fmt.Sprintf("다른 호스트 훑기 — 시딩 %d · 훑음 %d", r.Seeded, r.Scanned)
+	if r.Pruned > 0 {
+		msg += fmt.Sprintf(" · 정리 %d", r.Pruned)
+	}
 	if r.Flagged > 0 {
 		msg += fmt.Sprintf(" · 표시 %d", r.Flagged)
 	}

@@ -652,3 +652,81 @@ func (s *Store) SeedAll(sizes map[string]int64) error {
 		}
 	})
 }
+
+// Empty 는 이 체크포인트가 **아무 진행도 담고 있지 않은가**다.
+//
+// 훑은 흔적(At)만 있고 소비한 바이트도, 소모한 크레딧도, 억제한 구간도 없는 상태다.
+// 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피 0부터 읽는다.
+func (cp Checkpoint) Empty() bool {
+	return cp.Offset == 0 && cp.Size == 0 &&
+		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0
+}
+
+// PruneMissing 은 **사라진 파일 중 진행이 없는 항목**을 지운다. 지운 수를 준다.
+//
+// # 왜 지우나
+//
+// 체크포인트는 늘기만 하고 줄지 않았다. 실측에서 175개 중 13개가 이미 사라진 파일을
+// 가리켰고, 전부 한 도구(CodexBar-ClaudeProbe)가 만들었다 짧게 살다 지운 프로브
+// 세션이었다 — **하루 3개꼴로 쌓인다.** 상태 파일은 mutate 마다 통째로 읽고 쓰므로
+// 그 무게가 모든 쓰기에 실린다.
+//
+// # 왜 진행이 있는 것은 안 지우나
+//
+// 지우면 그 파일이 돌아왔을 때 **0부터 다시 훑는다.** 외장 디스크·네트워크 마운트·
+// 권한 변경처럼 파일이 일시적으로 안 보이는 경우가 있고, 그때 지워 버리면 다음에
+// 붙였을 때 pending 이 쏟아진다. 안전망이 소음이 되면 에이전트가 무시하는 법을 배운다.
+//
+// 진행이 없는 항목은 그 위험이 없다 — 돌아와도 어차피 0부터 읽는다. 실측의 13개가
+// 전부 그랬고, 증가분의 주범도 그 부류다.
+//
+// **파일이 있는지 없는지를 여기서 판정한다.** 호출자가 미리 걸러 주지 않는 이유는,
+// 그러면 "무엇을 지울 수 있나" 의 규칙이 두 곳에 생기기 때문이다.
+func PruneMissing(st *Store) (int, error) {
+	var doomed []string
+	for p, cp := range st.CheckpointSnapshot() {
+		if !cp.Empty() {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			continue // 파일이 있다
+		} else if !os.IsNotExist(err) {
+			// 권한 오류 등은 "없다" 가 아니다. 판단할 수 없으면 건드리지 않는다.
+			continue
+		}
+		doomed = append(doomed, p)
+	}
+	return pruneDoomed(st, doomed)
+}
+
+// pruneDoomed 는 삭제 후보를 **잠금 안에서 다시 보고** 지운다.
+//
+// 따로 뺀 이유는 시험 가능성이다. 경합(스냅샷 → stat 루프 → mutate 사이에 남이
+// 크레딧을 새김)은 시간에 기대지 않고는 재현하기 어려운데, 이 함수는 낡은 목록을
+// 직접 넘겨 그 상황을 결정적으로 만든다.
+func pruneDoomed(st *Store, doomed []string) (int, error) {
+	if len(doomed) == 0 {
+		return 0, nil
+	}
+	// **쓰기 한 번으로 끝낸다.** 항목마다 쓰면 상태 파일이 클수록 O(n²) 다.
+	// **잠금 안에서 다시 본다.** doomed 는 잠금 밖 스냅샷으로 뽑았고, 그 사이에
+	// os.Stat 을 수천 번 돌았다 — 그 창에서 남이 크레딧을 새길 수 있다. 승격은
+	// watch.lock 게이트 밖이라(D12) 다른 훅이 CreditNoteFor 로 같은 경로를 고칠 수
+	// 있고, pending 은 발췌를 들고 있어 파일이 없어도 승격이 돈다. 하필 그 경로가
+	// doomed 의 표적이다.
+	//
+	// mutate 는 디스크를 다시 읽으므로 여기서 본 값이 최신이다.
+	deleted := 0
+	err := st.mutate(func(s *state) {
+		for _, p := range doomed {
+			if cp, ok := s.Checkpoints[p]; ok && cp.Empty() {
+				delete(s.Checkpoints, p)
+				deleted++
+			}
+		}
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}

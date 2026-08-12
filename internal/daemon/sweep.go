@@ -54,6 +54,19 @@ func PlanSweep(st *Store, rs []hosts.Resolved, backfill bool) (SweepPlan, error)
 		}
 		plan.Unreadable += unreadable
 		for _, p := range got {
+			// **"아는 파일" 은 Offset 으로 판정한다.**
+			//
+			// 항목의 존재(_, seen := cps[p])로 바꿔 봤다가 되돌렸다. 그러면 임계
+			// 미만으로 끝난 파일이 영원히 재훑기 집합에 남는다 — Scan 이 임계 미만이면
+			// 전진하지 않으므로(scan.go 갈래 2) Offset 이 0으로 굳고, Behind 가 늘
+			// true 라 stat 필터도 못 거른다. 실측으로 이 기계의 Claude Code 기록
+			// 68.7% · Codex 92.2% 가 임계 미만이라, 훑기가 예산을 그 재파싱에 다 쓰고
+			// 목록 꼬리(=Codex 전체)에 영영 도달하지 못한다.
+			//
+			// Offset 판정은 그 파일들을 시딩으로 보내 한 번에 끝낸다. 대신 "훑었지만
+			// 0바이트를 소비한 파일" 이 시딩된다는 알려진 약점이 있다 — 그건 별도
+			// 문제이고, 고치려면 체크포인트가 **누적 발화 수**를 들어야 한다.
+			// 볼트의 결정 노트에 적어 뒀다.
 			if cps[p].Offset != 0 {
 				plan.Scan = append(plan.Scan, p)
 				continue
@@ -112,6 +125,8 @@ type SweepResult struct {
 	// 조용히 넘기면 "결정이 없었다" 로 보인다.
 	Skipped int
 	Errs    int
+	// Pruned 는 지운 체크포인트 수다 (사라진 파일 · 진행 없음).
+	Pruned int
 }
 
 // SweepOnce 는 데몬이 없을 때 **다른 호스트의 기록까지** 훑는다.
@@ -192,7 +207,20 @@ func sweepPlanned(o SweepOptions, st *Store, rs []hosts.Resolved) (SweepResult, 
 		return r, true, err
 	}
 	r.Seeded = SeedToEnd(st, plan.Seed)
-	// 시딩이 상태를 바꿨으므로 다시 뜬다. 그 뒤로는 루프 안에서 다시 읽지 않는다.
+
+	// **여기서 정리한다.** 훑기는 이미 모든 호스트의 파일 목록을 손에 쥐고 있고,
+	// 락도 잡고 있다 — 정리에 필요한 것이 다 여기 있다. 따로 도는 자리를 만들면
+	// 그 자리가 안 불리는 상태가 조용히 생긴다.
+	pruned, perr := PruneMissing(st)
+	if perr != nil && o.Err != nil {
+		fmt.Fprintf(o.Err, "체크포인트 정리 실패: %v\n", perr)
+	}
+	r.Pruned = pruned
+
+	// **시딩 뒤에만 다시 뜬다.** 정리는 지우기만 하므로 루프가 읽는 값을 못 바꾼다 —
+	// 지워진 경로는 plan.Scan 에 없거나(파일이 없으니 List 에 안 잡힌다) 있어도
+	// Behind 가 true 를 줘서 Scan 으로 간다. 그것 때문에 643KB 를 다시 파싱하면
+	// 순수 낭비다.
 	cps := st.CheckpointSnapshot()
 
 	for i, p := range plan.Scan {

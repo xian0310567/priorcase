@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -354,5 +356,355 @@ func TestSweepWritesNothingWhenNothingGrew(t *testing.T) {
 	}
 	if w := st2.Writes() - before; w != 0 {
 		t.Errorf("자란 파일이 없는데 상태 파일을 %d번 썼다 — 파일마다 Scan 을 부르고 있다", w)
+	}
+}
+
+// ★★ **진행이 없는 항목만 지운다.**
+//
+// 사라진 파일을 가리키는 항목은 늘기만 한다 — 실측에서 175개 중 13개였고 하루
+// 3개꼴로 는다. 그런데 **진행이 있는 항목을 지우면** 그 파일이 돌아왔을 때 0부터
+// 다시 훑어 pending 이 쏟아진다. 외장 디스크·네트워크 마운트가 그 상황을 만든다.
+func TestPruneMissingKeepsProgress(t *testing.T) {
+	root := t.TempDir()
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	alive := writeJSONL(t, root, "alive.jsonl", 3)
+	goneEmpty := filepath.Join(root, "gone-empty.jsonl")
+	goneProgress := filepath.Join(root, "gone-progress.jsonl")
+	goneCredit := filepath.Join(root, "gone-credit.jsonl")
+
+	if err := st.Advance(alive, 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	// 훑은 흔적만 있고 진행은 없는 항목 (실측의 13개가 이 모양이다).
+	if err := st.NoteScan(goneEmpty, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	// 진행이 있는 항목.
+	if err := st.Advance(goneProgress, 500, 500); err != nil {
+		t.Fatal(err)
+	}
+	// 바이트는 0 인데 크레딧을 소모한 항목 — 이것도 지우면 안 된다.
+	if err := st.mutate(func(s *state) {
+		cp := s.Checkpoints[goneCredit]
+		cp.SessionCredited = 2
+		s.Checkpoints[goneCredit] = cp
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := PruneMissing(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("%d개를 지웠다, 1이어야 한다", n)
+	}
+	cps := st.CheckpointSnapshot()
+	if _, ok := cps[goneEmpty]; ok {
+		t.Error("진행 없는 항목이 안 지워졌다")
+	}
+	if _, ok := cps[goneProgress]; !ok {
+		t.Error("★ 진행이 있는 항목을 지웠다 — 파일이 돌아오면 0부터 훑어 pending 이 쏟아진다")
+	}
+	if _, ok := cps[goneCredit]; !ok {
+		t.Error("★ 크레딧을 소모한 항목을 지웠다 — 면제가 무한해진다")
+	}
+	if _, ok := cps[alive]; !ok {
+		t.Error("★ 살아 있는 파일의 항목을 지웠다")
+	}
+}
+
+// ★ 정리는 상태 파일을 한 번만 써야 한다.
+func TestPruneMissingWritesOnce(t *testing.T) {
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if err := st.NoteScan(fmt.Sprintf("/없는곳/s%02d.jsonl", i), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := st.Writes()
+	n, err := PruneMissing(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 20 {
+		t.Fatalf("%d개를 지웠다", n)
+	}
+	if w := st.Writes() - before; w != 1 {
+		t.Errorf("항목 20개를 지우는데 상태 파일을 %d번 썼다 — 한 번이어야 한다", w)
+	}
+}
+
+// ★★ **판단할 수 없으면 건드리지 않는다.**
+//
+// 권한 오류는 "파일이 없다" 가 아니다. 부모 디렉토리의 권한이 잠깐 바뀌었을 때
+// 그것을 삭제 신호로 읽으면, 권한을 되돌린 순간 그 파일들이 전부 0부터 훑힌다.
+func TestPruneMissingIgnoresUnreadable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root 는 권한 검사를 우회한다")
+	}
+	root := t.TempDir()
+	sub := filepath.Join(root, "locked")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(sub, "s.jsonl")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.NoteScan(p, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(sub, 0o755) }()
+
+	n, err := PruneMissing(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("읽을 수 없는 자리의 항목을 %d개 지웠다 — 권한이 돌아오면 0부터 훑는다", n)
+	}
+}
+
+// ★★ **정리가 실제로 불리는지 본다.**
+//
+// 함수만 시험하면 호출부를 떼어내도 안 잡힌다. 이 세션에서만 그 부류의 결함을
+// 두 번 냈다 (similarFor · sweepOthers) — 함수에는 통과하는 테스트가 있는데
+// 아무도 부르지 않는 상태다.
+func TestSweepPrunesMissingCheckpoints(t *testing.T) {
+	root := t.TempDir()
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONL(t, root, "a.jsonl", 3)
+	// 사라진 파일 · 진행 없음.
+	ghost := filepath.Join(root, "ghost.jsonl")
+	if err := st.NoteScan(ghost, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, err := sweepWithHosts(SweepOptions{
+		StateDir: sd, Config: scanCfg(), Budget: time.Minute},
+		[]hosts.Resolved{fakeHost(t, root, true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Pruned != 1 {
+		t.Errorf("정리 %d건 — 훑기가 PruneMissing 을 안 부른다", r.Pruned)
+	}
+	if _, ok := st.CheckpointSnapshot()[ghost]; ok {
+		t.Error("사라진 항목이 남았다")
+	}
+}
+
+// ★★ **Empty() 는 필드 화이트리스트라 새 필드가 늘면 조용히 삭제 범위가 넓어진다.**
+//
+// 컴파일러도 기존 테스트도 안 잡는다. 폴백이 "지운다" 인 곳은 여기 하나뿐이라
+// (Advance·SeedAll·Credit 은 읽고-덮기라 자동으로 안전하다) 여기만 지킨다.
+func TestCheckpointEmptyCoversEveryField(t *testing.T) {
+	const known = 6 // Offset · Size · At · SessionCredited · DayCredited · Suppressed
+	if n := reflect.TypeOf(Checkpoint{}).NumField(); n != known {
+		t.Fatalf("Checkpoint 필드가 %d개다 (알던 것 %d개) — Empty() 가 새 필드를 "+
+			"안 보면 그 정보만 가진 항목이 조용히 지워진다. Empty() 를 고치고 이 수를 갱신하라", n, known)
+	}
+	// At 만 있는 것은 Empty 다 (실측의 13개가 이 모양이었다).
+	if !(Checkpoint{At: time.Now()}).Empty() {
+		t.Error("훑은 흔적만 있는 항목이 Empty 가 아니다 — 정리가 아무것도 못 지운다")
+	}
+	// 나머지 다섯은 하나라도 있으면 Empty 가 아니다.
+	for name, cp := range map[string]Checkpoint{
+		"Offset":          {Offset: 1},
+		"Size":            {Size: 1},
+		"SessionCredited": {SessionCredited: 1},
+		"DayCredited":     {DayCredited: map[string]int{"2026-08-13": 1}},
+		"Suppressed":      {Suppressed: 1},
+	} {
+		if cp.Empty() {
+			t.Errorf("%s 가 있는데 Empty 다 — 그 정보가 지워진다", name)
+		}
+	}
+}
+
+// ★★ **잠금 밖에서 뽑은 삭제 목록을 잠금 안에서 다시 봐야 한다.**
+//
+// doomed 는 스냅샷으로 뽑고 그 뒤 os.Stat 을 수천 번 돈다. 그 창에서 남이 크레딧을
+// 새길 수 있다 — 승격은 watch.lock 게이트 밖이고(D12), pending 은 발췌를 들고 있어
+// 파일이 없어도 승격이 돈다. 하필 그 경로가 삭제 표적이다.
+func TestPruneMissingRechecksInsideLock(t *testing.T) {
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	target := "/없는곳/s.jsonl"
+	if err := st.NoteScan(target, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 스냅샷 시점에는 Empty 였다.
+	if !st.CheckpointSnapshot()[target].Empty() {
+		t.Fatal("전제가 깨졌다")
+	}
+	// 그 뒤(= stat 루프가 도는 동안) 남이 크레딧을 새긴다.
+	if err := st.mutate(func(s *state) {
+		cp := s.Checkpoints[target]
+		cp.SessionCredited = 3
+		s.Checkpoints[target] = cp
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// **낡은 목록을 그대로 넘긴다.** 실제 경합에서 doomed 가 이 모양이다.
+	n, err := pruneDoomed(st, []string{target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d개를 지웠다 — 잠금 안에서 다시 안 봤다", n)
+	}
+	if cp := st.CheckpointSnapshot()[target]; cp.SessionCredited != 3 {
+		t.Errorf("★ 그 사이 새긴 크레딧이 사라졌다: %+v", cp)
+	}
+}
+
+// ★★★ **정리는 동작을 바꾸지 않는다. 그것이 이 기능의 안전 근거다.**
+//
+// PlanSweep 은 `cps[p].Offset != 0` 으로 "아는 파일" 을 판정한다. Empty 항목은
+// Offset 이 0 이므로 **항목이 아예 없는 것과 똑같이** 분류된다 — 둘 다 시딩이다.
+// 그래서 Empty 항목을 지우는 것은 관측 가능한 변화를 만들지 않는다.
+//
+// 이 논거를 한 번 잃은 적이 있다. 같은 작업에서 판정을 "항목의 존재" 로 바꿨더니
+// 지우는 것이 곧 "끝으로 시딩" 이 되어 대화가 사라졌다 — 적대적 검증이 재현해서
+// 잡았고 그 변경을 되돌렸다. **판정을 다시 건드리면 이 테스트가 먼저 깨진다.**
+func TestPruneIsBehaviorNeutral(t *testing.T) {
+	build := func(t *testing.T, prune bool) SweepPlan {
+		t.Helper()
+		root := t.TempDir()
+		sd := t.TempDir()
+		st := NewStore(sd)
+		if err := st.Load(); err != nil {
+			t.Fatal(err)
+		}
+		hs := []hosts.Resolved{fakeHost(t, root, true)}
+
+		live := writeJSONL(t, root, "live.jsonl", 3)
+		// 사라진 파일의 Empty 항목 — 정리 대상.
+		if err := st.NoteScan(filepath.Join(root, "gone.jsonl"), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		// 살아 있는 파일의 Empty 항목 — 정리 대상이 아니다.
+		if err := st.NoteScan(live, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if prune {
+			if n, err := PruneMissing(st); err != nil || n != 1 {
+				t.Fatalf("정리 %d건 err=%v", n, err)
+			}
+		}
+		plan, err := PlanSweep(st, hs, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+	base := func(p SweepPlan) (int, int) { return len(p.Seed), len(p.Scan) }
+	s1, c1 := base(build(t, false))
+	s2, c2 := base(build(t, true))
+	if s1 != s2 || c1 != c2 {
+		t.Errorf("정리가 분류를 바꿨다: 정리없음 Seed=%d Scan=%d · 정리함 Seed=%d Scan=%d\n"+
+			"  Empty 항목은 항목이 없는 것과 같게 분류돼야 한다 — 아니면 삭제가 곧 손실이다",
+			s1, c1, s2, c2)
+	}
+}
+
+// ★★ **Empty 항목과 항목 없음은 같게 분류돼야 한다.**
+//
+// 위 중립성의 근거를 직접 못 박는다. 판정을 "항목의 존재" 로 바꾸면 여기서 깨진다.
+func TestEmptyEntryClassifiesLikeNoEntry(t *testing.T) {
+	root := t.TempDir()
+	hs := []hosts.Resolved{fakeHost(t, root, true)}
+	p := writeJSONL(t, root, "a.jsonl", 3)
+
+	withEmpty := func() SweepPlan {
+		st := NewStore(t.TempDir())
+		if err := st.Load(); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.NoteScan(p, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := PlanSweep(st, hs, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}()
+	withNothing := func() SweepPlan {
+		st := NewStore(t.TempDir())
+		if err := st.Load(); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := PlanSweep(st, hs, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}()
+	if len(withEmpty.Seed) != len(withNothing.Seed) || len(withEmpty.Scan) != len(withNothing.Scan) {
+		t.Errorf("Empty 항목(Seed=%d Scan=%d)과 항목 없음(Seed=%d Scan=%d)이 다르게 분류된다",
+			len(withEmpty.Seed), len(withEmpty.Scan), len(withNothing.Seed), len(withNothing.Scan))
+	}
+}
+
+// ★★ **데몬 경로도 정리를 부르는지 본다.**
+//
+// 정리를 훑기에만 넣으면 데몬을 켠 사용자는 한 번도 안 돈다 — 훑기는 락을 못 얻으면
+// 통째로 건너뛰기 때문이다. 1차 적대적 검증이 정확히 그 구멍을 지적했다.
+//
+// 그리고 이건 이 세션에서 **세 번째**로 나온 같은 부류다 (similarFor · sweepOthers ·
+// 여기). 함수에는 테스트가 있는데 호출부에는 없는 상태 — 변형 테스트만이 잡는다.
+func TestDaemonStartupPassPrunes(t *testing.T) {
+	root := t.TempDir()
+	sd := t.TempDir()
+	st := NewStore(sd)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONL(t, root, "a.jsonl", 3)
+	ghost := filepath.Join(root, "ghost.jsonl")
+	if err := st.NoteScan(ghost, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &watcher{
+		o:     Options{StateDir: sd, Config: scanCfg(), TranscriptRoot: root},
+		st:    st,
+		dirty: map[string]bool{},
+		hosts: []hosts.Resolved{fakeHost(t, root, true)},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // drain 은 돌리지 않는다 — 정리가 불리는지만 본다
+	d.startupPass(ctx)
+
+	if _, ok := st.CheckpointSnapshot()[ghost]; ok {
+		t.Error("데몬 기동 정리가 사라진 항목을 안 지웠다 — 데몬 사용자는 영영 안 준다")
 	}
 }

@@ -254,6 +254,16 @@ func (d *watcher) startupPass(ctx context.Context) {
 	}
 
 	seeded := SeedToEnd(d.st, plan.Seed)
+
+	// **데몬도 정리한다.** 정리를 훑기에만 넣으면 데몬을 켠 사용자는 한 번도 안
+	// 돈다 — 훑기는 락을 못 얻으면 통째로 건너뛰기 때문이다. 정리를 그쪽에 둔
+	// 근거("훑기가 이미 파일 목록과 락을 쥐고 있다")가 데몬에도 그대로 적용된다.
+	if n, err := PruneMissing(d.st); err != nil {
+		d.emit(Event{Kind: "error", Err: err})
+	} else if n > 0 {
+		d.emit(Event{Kind: "seed", Note: fmt.Sprintf("체크포인트 %d개를 정리했다 "+
+			"(사라진 파일 · 진행 없음)", n)})
+	}
 	queued := 0
 	for _, p := range plan.Scan {
 		d.mu.Lock()
