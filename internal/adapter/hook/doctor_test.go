@@ -9,6 +9,7 @@ import (
 
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/daemon"
+	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
 func wiringReport(t *testing.T, o DoctorOptions) *health.Report {
@@ -424,5 +425,65 @@ func TestHumanAgoHandlesSlightlyFutureTimestamps(t *testing.T) {
 	got := humanAgo(now, now.Add(5*time.Hour))
 	if !strings.Contains(got, "시계 어긋남") {
 		t.Errorf("5시간 미래를 %q 로 냈다 — 시계가 어긋났다고 말해야 한다", got)
+	}
+}
+
+// ★★ **설정에 없는 도메인을 단 구간은 영원히 승격되지 않는다. 그걸 알려야 한다.**
+//
+// 승격이 판별기 앞에서 걸러 내므로 낭비는 없다. 하지만 그 구간은 큐에 계속 남아
+// 매 세션 다시 뜨고, **그 사실이 아무 데도 안 보인다** — 사람은 "왜 이건 계속
+// 안 없어지지" 만 겪는다. 그리고 이 프로젝트에서 소음은 사람에게 경고를 무시하는
+// 법을 가르친다.
+//
+// 실제로 그 상태였다. 2026-08-12 개명 때 state.json 의 pending 도메인을 안 옮겨
+// 옛 이름을 단 구간 7건이 남았다.
+func TestSafetyNetReportsUndeclaredDomainPendings(t *testing.T) {
+	stateDir := t.TempDir()
+	s := daemon.NewStore(stateDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	// alpha 는 픽스처 설정에 있고, 옛이름 은 없다.
+	//
+	// **From 을 다르게 준다.** Pending 의 중복 판정 키가 Path+From 이라 같은 값을
+	// 주면 두 건이 하나로 합쳐진다 — 그러면 "2건" 을 세는 이 테스트가 헛돈다.
+	for i, d := range []string{"alpha", "옛이름", "옛이름"} {
+		if err := s.AddPending(daemon.Pending{
+			Path: "/t/x.jsonl", From: int64(i+1) * 100,
+			Domain: d, Turns: 9, At: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	self, _ := os.Executable()
+	cfg := testutil.VaultConfig(t)
+
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: stateDir, Now: now,
+		Config: cfg, RecentDecisions: ptr(5)}), "안전망")
+
+	if !strings.Contains(got.Detail, "2건은 설정에 없는 도메인") {
+		t.Errorf("고아 구간을 안 알린다: %s", got.Detail)
+	}
+	if !strings.Contains(got.Fix, "pending --resolve") {
+		t.Errorf("고치는 법을 안 준다: %q", got.Fix)
+	}
+
+	// 전부 아는 도메인이면 조용해야 한다 — 없는 문제를 말하면 그것도 소음이다.
+	clean := t.TempDir()
+	s2 := daemon.NewStore(clean)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.AddPending(daemon.Pending{
+		Path: "/t/a.jsonl", Domain: "alpha", Turns: 9, At: now}); err != nil {
+		t.Fatal(err)
+	}
+	ok := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: clean, Now: now,
+		Config: cfg, RecentDecisions: ptr(5)}), "안전망")
+	if strings.Contains(ok.Detail, "설정에 없는 도메인") {
+		t.Errorf("멀쩡한데 고아라고 한다: %s", ok.Detail)
 	}
 }

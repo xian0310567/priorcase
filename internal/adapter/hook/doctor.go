@@ -306,10 +306,25 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 		add(r, "안전망", health.OK, mode+act+" · 미확인 구간 없음", "")
 		return
 	}
-	stale := 0
+	stale, orphan := 0, 0
 	for _, p := range items {
 		if !p.At.IsZero() && o.Now.Sub(p.At) > pendingStale {
 			stale++
+		}
+		// **설정에 없는 도메인을 단 구간은 영원히 승격되지 않는다.**
+		//
+		// 승격이 판별기 앞에서 걸러 내므로 낭비는 없지만, 그 구간은 큐에 계속 남아
+		// 매 세션 다시 뜬다. 그리고 그 사실이 아무 데도 안 보인다 — 사람은 "왜 이건
+		// 계속 안 없어지지" 만 겪는다.
+		//
+		// 실제로 그 상태였다: 개명(casebook → priorcase) 때 state.json 의 pending
+		// 도메인을 안 옮겨 7건이 남았다.
+		// Config 가 없으면 판정하지 않는다. "모른다" 를 "없다" 로 읽으면
+		// 멀쩡한 구간을 고아라고 말하게 된다.
+		if o.Config != nil && p.Domain != "" {
+			if _, ok := o.Config.FolderFor(p.Domain); !ok {
+				orphan++
+			}
 		}
 	}
 	detail := fmt.Sprintf("%s%s · 미확인 구간 %d건%s", mode, act, len(items), silent)
@@ -327,6 +342,10 @@ func checkDaemon(r *health.Report, o DoctorOptions) {
 		fix = "결정 시점에 prior capture 를 불러라. 미확인 구간부터 확인하라"
 	} else if stale > 0 {
 		detail += fmt.Sprintf(" (그중 %d건은 7일 넘게 방치)", stale)
+	}
+	if orphan > 0 {
+		detail += fmt.Sprintf(" · **%d건은 설정에 없는 도메인이라 영영 승격되지 않는다**", orphan)
+		fix = "도메인 이름을 바꿨다면 그 구간을 prior pending --resolve 로 지우거나 설정에 도메인을 추가하라"
 	}
 	add(r, "안전망", lv, detail, fix)
 }

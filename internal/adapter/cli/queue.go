@@ -105,6 +105,7 @@ func newQueueCmd() *cobra.Command {
 				Confirm: []QueuePending{},
 				Review:  []QueueReview{},
 				Retro:   []retro.Item{},
+				Health:  []QueueCheck{},
 			}
 
 			sd, err := daemon.DefaultDir()
@@ -116,9 +117,18 @@ func newQueueCmd() *cobra.Command {
 					q.Warnings = append(q.Warnings, "미확인 구간을 읽지 못했다: "+perr.Error())
 				}
 				for _, p := range items {
+					// **빈 배열은 [] 여야 한다. null 이면 앱이 순회하다 터진다.**
+					//
+					// 판별기가 있으면 시그널 필터를 건너뛰므로(D9) Signals 가 비는 것이
+					// 정상이다. 즉 이건 예외가 아니라 흔한 경우다 — 실측으로 27건 중
+					// 2건이 그랬고, jq 가 "Cannot iterate over null" 로 터졌다.
+					sig := p.Signals
+					if sig == nil {
+						sig = []string{}
+					}
 					q.Confirm = append(q.Confirm, QueuePending{
 						ID: p.ID(), Domain: p.Domain, When: p.When(),
-						Signals: p.Signals, Excerpt: p.Excerpt,
+						Signals: sig, Excerpt: p.Excerpt,
 					})
 				}
 				// **판별기가 스스로 만든 것만 검토 대상이다.** 기록 안 함·실패는
