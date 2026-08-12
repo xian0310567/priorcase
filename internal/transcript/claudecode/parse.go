@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/transcript"
+	"github.com/xian0310567/priorcase/internal/transcript/toolsum"
 )
 
 // record 는 JSONL 한 줄 중 우리가 쓰는 부분만 담는다. 스키마 전체를 옮기지 않는 이유:
@@ -154,7 +155,7 @@ func (rec *record) turns() []transcript.Turn {
 			// **발화가 아니지만 일어난 일이다.** 턴 수에는 안 센다(감사 결함 6) —
 			// Kind.Counts() 가 KindTool 을 뺀다. 발췌에는 싣는다: 되돌리기 어려운
 			// 선택은 산문이 아니라 편집과 명령으로 남는 경우가 많다.
-			if line := toolLine(b.Name, b.Input); line != "" {
+			if line := toolsum.Line(b.Name, b.Input); line != "" {
 				out = append(out, mk(transcript.KindTool, line))
 			}
 		}

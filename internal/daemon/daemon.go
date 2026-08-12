@@ -16,7 +16,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/store"
-	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/transcript/hosts"
 )
 
 const lockFile = "watch.lock"
@@ -105,9 +105,11 @@ func Run(ctx context.Context, o Options) error {
 }
 
 type watcher struct {
-	o     Options
-	st    *Store
-	l     *store.Layout
+	o  Options
+	st *Store
+	l  *store.Layout
+	// hosts 는 run 이 시작할 때 푼 호스트별 루트다. 스캔이 이걸로 파서를 고른다.
+	hosts []hosts.Resolved
 	mu    sync.Mutex
 	dirty map[string]bool
 }
@@ -125,11 +127,27 @@ func (d *watcher) run(ctx context.Context) error {
 	}
 	defer w.Close()
 
-	if err := d.watchTree(w, d.o.TranscriptRoot); err != nil {
+	// **호스트마다 루트가 따로다.** 하나만 감시하면 나머지 호스트의 대화는
+	// 파서가 있어도 영영 안 읽힌다.
+	rs, err := hosts.Resolve(d.o.TranscriptRoot)
+	if err != nil {
 		return err
 	}
+	d.hosts = rs
+	var watched []string
+	for _, r := range rs {
+		if err := d.watchTree(w, r.Root); err != nil {
+			// 필수 호스트가 아니면 자리가 없는 것이 정상이다 — 그 사람은 그 도구를
+			// 안 쓴다. 필수인데 없으면 배선이 틀린 것이라 알린다.
+			if r.Host.Required {
+				return err
+			}
+			continue
+		}
+		watched = append(watched, r.Host.Name+"("+r.Root+")")
+	}
 	d.startupPass(ctx)
-	d.emit(Event{Kind: "ready", Note: fmt.Sprintf("감시 시작 (%s)", d.o.TranscriptRoot)})
+	d.emit(Event{Kind: "ready", Note: fmt.Sprintf("감시 시작 (%s)", strings.Join(watched, " · "))})
 
 	// 디바운스 타이머. 처음에는 멈춰 있다.
 	timer := time.NewTimer(time.Hour)
@@ -224,13 +242,21 @@ func (d *watcher) watchTree(w *fsnotify.Watcher, root string) error {
 //
 // 기동 후에 새로 생기는 파일은 여기 오지 않으므로 체크포인트가 없어도 0부터 읽힌다.
 func (d *watcher) startupPass(ctx context.Context) {
-	paths, unreadable, err := claudecode.List(d.o.TranscriptRoot)
-	if err != nil {
-		d.emit(Event{Kind: "error", Err: err})
-		return
-	}
-	if unreadable > 0 {
-		d.emit(Event{Kind: "error", Note: fmt.Sprintf("디렉토리 %d개를 읽지 못했다", unreadable)})
+	var paths []string
+	for _, r := range d.hosts {
+		got, unreadable, err := r.Host.List(r.Root)
+		if err != nil {
+			if r.Host.Required {
+				d.emit(Event{Kind: "error", Err: err})
+				return
+			}
+			continue
+		}
+		if unreadable > 0 {
+			d.emit(Event{Kind: "error", Note: fmt.Sprintf("%s: 디렉토리 %d개를 읽지 못했다",
+				r.Host.Name, unreadable)})
+		}
+		paths = append(paths, got...)
 	}
 
 	seeded, queued := 0, 0
@@ -272,7 +298,7 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 
 	flagged := false
 	for _, p := range paths {
-		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable)
+		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable, d.hosts)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
 			continue
@@ -331,6 +357,10 @@ func (w eventWriter) Write(b []byte) (int, error) {
 //
 // owned 가 false 면 아무것도 안 한 것이다 — 실패가 아니라 "주인이 따로 있다" 는 뜻이다.
 // 이걸 에러로 만들면 훅이 매번 시끄러워진다.
+//
+// **호스트는 Claude Code 로 고정이다.** 이 함수를 부르는 것은 Claude Code 훅뿐이고,
+// 훅은 자기를 부른 호스트를 안다. 경로로 추측하면 호스트가 기록 자리를 옮기는 순간
+// 훅이 자기 대화를 못 읽는다 — 그리고 그건 조용히 실패한다.
 func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string, judgeAvailable bool) (r ScanResult, owned bool, err error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return r, false, err
@@ -353,7 +383,7 @@ func ScanOnce(stateDir string, c *config.Config, l *store.Layout, path string, j
 	if err := st.Load(); err != nil {
 		return r, true, err
 	}
-	r, err = Scan(st, c, l, path, judgeAvailable)
+	r, err = Scan(st, c, l, path, judgeAvailable, hosts.ClaudeCode())
 	return r, true, err
 }
 

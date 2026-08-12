@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"fmt"
+	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/transcript/hosts"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +73,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r1, err := Scan(s, c, nil, tp, false)
+	r1, err := Scan(s, c, nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +86,7 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 
 	// 4턴 더. 누적 8턴이 보여야 한다.
 	writeLines(t, tp, turns(t, 4, "여기서 결정했다", "/tmp/proj/alpha")...)
-	r2, err := Scan(s, c, nil, tp, false)
+	r2, err := Scan(s, c, nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +109,7 @@ func TestOverThresholdWithoutSignalAdvancesWithoutFlag(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "그냥 잡담이다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, scanCfg(), nil, tp, false)
+	r, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,7 @@ func TestCorruptLineBlocksAdvance(t *testing.T) {
 	lines = append(lines, "{이건 JSON 이 아니다\n")
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, scanCfg(), nil, tp, false)
+	r, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +160,7 @@ func TestRepeatedScanOfBlockedSegmentDoesNotPileUp(t *testing.T) {
 	writeLines(t, tp, lines...)
 
 	for i := 0; i < 3; i++ {
-		if _, err := Scan(s, c, nil, tp, false); err != nil {
+		if _, err := Scan(s, c, nil, tp, false, anyHost(tp)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,7 +177,7 @@ func TestExcludedCwdIsNotFlagged(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/secret")...)
-	r, err := Scan(s, scanCfg(), nil, tp, false)
+	r, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +195,7 @@ func TestPendingCarriesDomainAndSignals(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "이 방식을 채택하기로 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()
@@ -219,12 +221,12 @@ func TestNothingNewIsNoop(t *testing.T) {
 	c := scanCfg()
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, c, nil, tp, false); err != nil {
+	if _, err := Scan(s, c, nil, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	before := len(s.Pending())
 
-	r, err := Scan(s, c, nil, tp, false)
+	r, err := Scan(s, c, nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +268,7 @@ func TestAlreadyRecordedIsNotFlagged(t *testing.T) {
 	}
 	writeLines(t, tp, recorded...)
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestUnrecordedDayIsFlagged(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +324,7 @@ func TestOtherDomainRecordDoesNotSuppress(t *testing.T) {
 	}
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +348,7 @@ func TestVaultReadFailureStillFlags(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +378,7 @@ func TestSessionMatchSuppressesAcrossDays(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // sessionId=S1, 2026-08-07
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +407,7 @@ func TestDifferentSessionDoesNotSuppress(t *testing.T) {
 	}
 	writeLines(t, tp, lines...)
 
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +428,7 @@ func TestPendingCarriesConversationDate(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07
 
-	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()[0]
@@ -478,7 +480,7 @@ func TestPendingCarriesExcerpt(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "저장 엔진을 임베디드 DB 로 하기로 결정했다", "/tmp/proj/alpha")...)
 
-	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	p := s.Pending()[0]
@@ -502,7 +504,7 @@ func TestExcerptSurvivesTranscriptDeletion(t *testing.T) {
 	tp := filepath.Join(dir, "s.jsonl")
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if _, err := Scan(s, scanCfg(), nil, tp, false); err != nil {
+	if _, err := Scan(s, scanCfg(), nil, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(tp); err != nil {
@@ -540,7 +542,7 @@ func TestJudgeAvailableSkipsSignalFilter(t *testing.T) {
 
 	// 판별기 없음 — 지금까지의 동작. 아무것도 안 걸린다.
 	s1 := newStore(t)
-	r1, err := Scan(s1, c, nil, tp, false)
+	r1, err := Scan(s1, c, nil, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +555,7 @@ func TestJudgeAvailableSkipsSignalFilter(t *testing.T) {
 
 	// 판별기 있음 — 시그널을 건너뛰고 표시한다.
 	s2 := newStore(t)
-	r2, err := Scan(s2, c, nil, tp, true)
+	r2, err := Scan(s2, c, nil, tp, true, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,11 +580,49 @@ func TestJudgeDoesNotOverrideExclusion(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "그냥 잡담", "/tmp/proj/secret")...)
 
-	r, err := Scan(s, scanCfg(), nil, tp, true)
+	r, err := Scan(s, scanCfg(), nil, tp, true, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Flagged {
 		t.Error("제외 구역인데 판별기가 있다고 표시했다")
+	}
+}
+
+// ★★ **어느 호스트의 파일인지 모르면 읽지 않는다.**
+//
+// 아무 파서나 대면 발화가 0개로 나온다. 그건 "그 세션에 결정이 없었다" 와 구별되지
+// 않아서, 안전망이 도는 것처럼 보이면서 아무것도 안 하는 상태가 된다 — 이 도구가
+// 가장 피해야 하는 실패 모양이다. 조용히 0을 주느니 시끄럽게 실패한다.
+func TestScanRefusesFileFromUnknownHost(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	if err := os.WriteFile(tp, []byte(`{"type":"user","message":{"content":"결정했다"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(t.TempDir())
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 루트가 전혀 다른 호스트 목록 — 이 파일은 어디에도 속하지 않는다.
+	other := []hosts.Resolved{{
+		Host: hosts.Host{Name: "다른곳", Parse: claudecode.Parse, List: claudecode.List,
+			DefaultRoot: func() (string, error) { return "/전혀/다른/곳", nil }, Required: true},
+		Root: "/전혀/다른/곳",
+	}}
+
+	_, err := Scan(s, scanCfg(), nil, tp, false, other)
+	if err == nil {
+		t.Fatal("모르는 경로를 조용히 훑었다 — 발화 0개가 '결정 없음' 으로 보인다")
+	}
+	if !strings.Contains(err.Error(), "어느 호스트") {
+		t.Errorf("이유가 안 드러난다: %v", err)
+	}
+
+	// **훑지 않았으므로 생존 흔적도 남기면 안 된다.** 남기면 doctor 에게
+	// "방금 훑음" 으로 보여서, 생존 증거로 세운 값이 거짓말을 한다.
+	if !s.LastScan().IsZero() {
+		t.Error("실패한 스캔이 '방금 훑음' 흔적을 남겼다")
 	}
 }

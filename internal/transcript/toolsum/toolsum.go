@@ -1,4 +1,12 @@
-package claudecode
+// Package toolsum 은 도구 호출 하나를 발췌에 실을 한 줄로 줄인다.
+//
+// **호스트마다 파서는 다르지만 이 요약은 같다.** 도구 이름과 대상(파일 경로·명령
+// 첫 줄)만 남기고 결과는 안 남긴다는 규칙, 준비 동작(cd·export)을 건너뛴다는 규칙,
+// 그리고 **자격증명을 가린다**는 규칙은 호스트와 무관하게 옳다.
+//
+// 특히 가림(redact)은 호스트별로 복제하면 안 된다. 한쪽만 고치면 다른 쪽이 조용히
+// 토큰을 상태 파일과 판별기로 흘린다 — 복제된 보안 규칙은 반드시 어긋난다.
+package toolsum
 
 import (
 	"encoding/json"
@@ -6,12 +14,11 @@ import (
 	"strings"
 )
 
-// toolLine 은 도구 호출 하나를 한 줄로 줄인다. 없으면 빈 문자열.
-//
 // **무엇을 했는지만 남기고 결과는 안 남긴다.** tool_result 본문은 이 세션만 840KB 라
 // 담으면 발췌가 터진다. 도구 이름과 대상(파일 경로·명령 첫 줄)만으로도 "무슨 일이
 // 있었나" 는 충분히 전해지고, 판별기가 필요로 하는 것도 그것이다.
-func toolLine(name string, input json.RawMessage) string {
+// Line 은 도구 호출 하나를 한 줄로 줄인다. 없으면 빈 문자열.
+func Line(name string, input json.RawMessage) string {
 	if name == "" {
 		return ""
 	}
@@ -27,11 +34,11 @@ func toolLine(name string, input json.RawMessage) string {
 		}
 	}
 	if s, ok := in["command"].(string); ok && s != "" {
-		return name + " " + redact(meaningfulCommand(s))
+		return name + " " + Redact(Command(s))
 	}
 	for _, k := range []string{"description", "prompt", "query", "pattern", "url"} {
 		if s, ok := in[k].(string); ok && s != "" {
-			return name + " " + redact(firstLine(s))
+			return name + " " + Redact(FirstLine(s))
 		}
 	}
 	return name
@@ -52,7 +59,8 @@ var prelude = regexp.MustCompile(`^\s*(cd|export|set|source|\.|unset|umask|alias
 //
 // 줄바꿈과 `&&`·`;` 로 쪼갠다. 전부 준비 동작이면 첫 조각을 준다 — 그래도
 // 아무것도 안 담는 것보다는 낫다.
-func meaningfulCommand(s string) string {
+// Command 는 준비 동작을 건너뛰고 실제로 한 일을 준다.
+func Command(s string) string {
 	parts := splitCommand(s)
 	for _, c := range parts {
 		c = strings.TrimSpace(c)
@@ -78,7 +86,8 @@ func splitCommand(s string) []string {
 	return out
 }
 
-func firstLine(s string) string {
+// FirstLine 은 첫 줄만 상한까지 잘라 준다.
+func FirstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexAny(s, "\n\r"); i >= 0 {
 		s = s[:i]
@@ -112,4 +121,5 @@ var secretRe = regexp.MustCompile(
 		`(api[_-]?key|secret|token|passwd|password|credential)\s*[=:]\s*\S+|` +
 		`(gh[pousr]_|sk-|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{8,})`)
 
-func redact(s string) string { return secretRe.ReplaceAllString(s, "…(가림)") }
+// Redact 는 흔한 자격증명 모양을 지운다.
+func Redact(s string) string { return secretRe.ReplaceAllString(s, "…(가림)") }

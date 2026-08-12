@@ -48,7 +48,7 @@ func TestSuppressionIsConsumedNotPermanent(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	first, err := Scan(s, vc, l, tp, false)
+	first, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestSuppressionIsConsumedNotPermanent(t *testing.T) {
 
 	// 노트는 그대로. 대화만 8발화 더 이어졌다 — 이 구간은 아무도 안 봤다.
 	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	second, err := Scan(s, vc, l, tp, false)
+	second, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,13 +80,13 @@ func TestNewNoteBuysNewSuppression(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, err := Scan(s, vc, l, tp, false); err != nil || !r.Recorded {
+	if r, err := Scan(s, vc, l, tp, false, anyHost(tp)); err != nil || !r.Recorded {
 		t.Fatalf("첫 구간 면제 실패: %+v %v", r, err)
 	}
 
 	note(t, vc, "둘째기록", "2026-01-02", "S1") // 에이전트가 또 기록했다
 	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,12 +116,12 @@ func TestDayDomainSuppressionIsAlsoConsumed(t *testing.T) {
 	}
 	// 픽스처 볼트에는 alpha 의 2026-08-01 결정이 이미 있다.
 	writeLines(t, tp, day(8, "여기서 결정했다")...)
-	if r, err := Scan(s, vc, l, tp, false); err != nil || !r.Recorded {
+	if r, err := Scan(s, vc, l, tp, false, anyHost(tp)); err != nil || !r.Recorded {
 		t.Fatalf("같은 날 같은 도메인 노트가 가려 줘야 한다: %+v %v", r, err)
 	}
 
 	writeLines(t, tp, day(8, "또 다른 결정을 했다")...)
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestScanLeavesTraceEvenWhenNothingToRead(t *testing.T) {
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
 
-	if _, err := Scan(s, vc, l, tp, false); err != nil {
+	if _, err := Scan(s, vc, l, tp, false, anyHost(tp)); err != nil {
 		t.Fatal(err)
 	}
 	firstTrace := s.LastScan()
@@ -171,7 +171,7 @@ func TestScanLeavesTraceEvenWhenNothingToRead(t *testing.T) {
 
 	time.Sleep(2 * time.Millisecond)
 	// 새 내용이 없다 — from >= size 로 즉시 반환하는 가장 흔한 경로다.
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,19 +199,19 @@ func TestLaterSuppressionDoesNotEraseEarlierFlag(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
 		t.Fatal("1구간은 면제돼야 한다")
 	}
 
 	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Flagged {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Flagged {
 		t.Fatal("2구간은 표시돼야 한다")
 	}
 
 	// 새 노트가 생겨 3구간이 다시 면제된다.
 	note(t, vc, "둘째기록", "2026-01-02", "S1")
 	writeLines(t, tp, turns(t, 8, "세 번째 결정을 했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
 		t.Fatal("3구간은 새 노트로 면제돼야 한다")
 	}
 
@@ -253,14 +253,14 @@ func TestBusyDayDoesNotPoisonLaterDays(t *testing.T) {
 	}
 
 	writeLines(t, tp, seg("2026-08-01")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
 		t.Fatal("바쁜 날은 면제돼야 한다")
 	}
 
 	// 이튿날. 에이전트가 이 세션으로 결정을 제대로 남겼다.
 	note(t, vc, "제대로기록", "2026-08-02", "S1")
 	writeLines(t, tp, seg("2026-08-02")...)
-	r2, err := Scan(s, vc, l, tp, false)
+	r2, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestBusyDayDoesNotPoisonLaterDays(t *testing.T) {
 	// 사흘째. 또 기록했다.
 	note(t, vc, "또기록", "2026-08-03", "S1")
 	writeLines(t, tp, seg("2026-08-03")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
 		t.Error("사흘째도 면제가 안 걸렸다 — 래칫이 살아 있다")
 	}
 }
@@ -288,14 +288,14 @@ func TestOtherSessionsNotesDoNotPoisonThisSession(t *testing.T) {
 	tp := filepath.Join(t.TempDir(), "s.jsonl")
 	s := newStore(t)
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07, S1
-	if r, _ := Scan(s, vc, l, tp, false); !r.Recorded {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
 		t.Fatal("같은 날 노트가 있으니 첫 구간은 면제된다")
 	}
 
 	// 이 세션이 자기 결정을 기록한다. 날짜 축의 고점(5)에 막히면 안 된다.
 	note(t, vc, "내가기록", "2026-08-07", "S1")
 	writeLines(t, tp, turns(t, 8, "또 여기서 결정했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestAutoPromotedNoteDoesNotBuyFutureExemption(t *testing.T) {
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false); !r.Flagged {
+	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Flagged {
 		t.Fatal("1구간은 표시돼야 한다 (볼트에 가려 줄 노트가 없다)")
 	}
 
@@ -327,7 +327,7 @@ func TestAutoPromotedNoteDoesNotBuyFutureExemption(t *testing.T) {
 	}
 
 	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false)
+	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestFailedScanLeavesNoTrace(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(tp, 0o644) })
 
-	if _, err := Scan(s, vc, l, tp, false); err == nil {
+	if _, err := Scan(s, vc, l, tp, false, anyHost(tp)); err == nil {
 		t.Fatal("읽을 수 없는 파일인데 성공했다")
 	}
 	if got := s.LastScan(); !got.IsZero() {

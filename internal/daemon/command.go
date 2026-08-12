@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/judge"
-	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
 )
 
 // NewCommand 는 `prior watch` 를 만든다. mcp.NewCommand 와 같은 이유로 cli 가 아니라
@@ -39,11 +38,8 @@ func NewCommand() *cobra.Command {
 					return err
 				}
 			}
-			if root == "" {
-				if root, err = claudecode.DefaultRoot(); err != nil {
-					return err
-				}
-			}
+			// root 는 이제 **Claude Code 루트의 덮어쓰기**다. 나머지 호스트는
+			// hosts.Resolve 가 각자 기본 자리를 찾는다 (daemon.run).
 
 			out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
 			err = Run(cmd.Context(), Options{

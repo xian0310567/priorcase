@@ -12,7 +12,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/transcript"
-	"github.com/xian0310567/priorcase/internal/transcript/claudecode"
+	"github.com/xian0310567/priorcase/internal/transcript/hosts"
 )
 
 // ScanResult 는 파일 하나를 한 번 훑은 결과다.
@@ -63,7 +63,12 @@ type ScanResult struct {
 //     길어져도 안전망이 한 번도 발동하지 않는다. 구간을 누적해야 임계가 의미를 갖는다.
 //  3. 임계를 넘겼다 → 전진한다. 시그널이 있으면 표시하고, 없으면 다 보고 결정이
 //     없다고 판단한 것이므로 그냥 전진한다.
-func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailable bool) (ScanResult, error) {
+//
+// Scan 은 파일 하나를 훑는다.
+//
+// hs 는 이 파일이 어느 호스트의 것인지 고르는 데 쓴다. 비어 있으면 기본 목록을
+// 쓴다 — 호출부 대부분이 그렇고, 테스트만 좁혀 준다.
+func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailable bool, hs []hosts.Resolved) (ScanResult, error) {
 	var r ScanResult
 
 	info, err := os.Stat(path)
@@ -100,7 +105,21 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 		return r, scanErr
 	}
 
-	turns, meta, consumed, bad, err := claudecode.Parse(f)
+	// **어느 호스트의 파일인지 못 고르면 읽지 않는다.**
+	//
+	// 아무 파서나 대면 발화가 0개로 나오는데, 그건 "그 세션에 결정이 없었다" 와
+	// 구별되지 않는다 — 안전망이 조용히 아무것도 안 하는 상태가 된다.
+	if len(hs) == 0 {
+		// 호출부가 안 넘겼으면 기본 목록으로 푼다. 실패해도 계속 간다 — 그러면
+		// 아래에서 "어느 호스트인지 모르겠다" 로 걸려 조용히 넘어가지 않는다.
+		hs, _ = hosts.Resolve("")
+	}
+	h := hosts.For(path, hs)
+	if h == nil {
+		scanErr = fmt.Errorf("어느 호스트의 기록인지 모르겠다 (%s) — 지원하는 호스트의 루트 밖이다", path)
+		return r, scanErr
+	}
+	turns, meta, consumed, bad, err := h.Host.Parse(f)
 	if err != nil {
 		scanErr = fmt.Errorf("transcript 파싱 실패 (%s): %w", path, err)
 		return r, scanErr
