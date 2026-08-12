@@ -495,3 +495,144 @@ func TestPromoteSkipsUnknownDomainBeforeCallingJudge(t *testing.T) {
 		t.Error("구간이 사라졌다 — 건너뛴 것은 해소가 아니다")
 	}
 }
+
+// ★★ **승격된 구간의 발췌는 원장에 남아야 한다.**
+//
+// 승격되면 ResolvePending 이 구간을 지운다. 그러면 판별기가 만든 노트를 **무엇을
+// 보고 썼는지와 대조할 방법이 없다** — 감독 앱의 검토 화면이 바로 그 대조이고,
+// 스펙이 그것을 "앱의 존재 이유에 가장 가까운 화면" 이라고 적었다.
+//
+// 2026-08-12 에 21건을 승격시키고 만들어진 노트를 검증하려다 실제로 막혔다.
+//
+// id 에 경로+오프셋이 있어 트랜스크립트를 다시 읽을 수는 있지만, 그건 호스트의
+// 파일이라 지워질 수 있다. pending 에 발췌를 통째로 실은 이유가 그것이었는데
+// 승격 뒤에는 그 자리가 비어 있었다.
+func TestPromotionCarriesExcerptWhenSegmentDisappears(t *testing.T) {
+	for _, c := range []struct {
+		name, judge string
+		wantExcerpt bool
+		why         string
+	}{
+		{"기록함", `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`,
+			true, "노트를 대조하려면 필요하다"},
+		{"기록 안 함", `{"record":false,"reason":"진행 보고다"}`,
+			true, "구간이 해소되므로 발췌가 사라진다 — 판정이 옳았는지 나중에 못 본다"},
+		{"판별기 실패", `이건 JSON 이 아니다`,
+			false, "구간이 안 지워지고 다시 시도한다 — state.json 에 그대로 있다"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, l, sd := promoteFixture(t, c.judge)
+			var seen []Promotion
+			Promote(context.Background(), PromoteOptions{
+				StateDir: sd, Config: cfg, Layout: l,
+				Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+			})
+			if len(seen) == 0 {
+				t.Fatal("OnResult 가 안 불렸다")
+			}
+			got := seen[0].Excerpt != ""
+			if got != c.wantExcerpt {
+				t.Errorf("발췌 있음=%v, %v 여야 한다 — %s", got, c.wantExcerpt, c.why)
+			}
+			// 원장에도 실제로 들어갔는지 본다. OnResult 만 맞고 파일이 다르면
+			// 앱은 못 읽는다.
+			recs, err := ReadPromotions(sd, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(recs) == 0 {
+				t.Fatal("원장이 비었다")
+			}
+			if (recs[0].Excerpt != "") != c.wantExcerpt {
+				t.Errorf("원장의 발췌가 OnResult 와 다르다: %q", recs[0].Excerpt)
+			}
+		})
+	}
+}
+
+// ★ **긴 발췌는 잘라야 한다.** 한 줄이 스캐너 상한을 넘으면 그 줄만이 아니라
+// **그 뒤가 통째로 안 읽힌다** — 그리고 하필 그 순간이 진단이 가장 필요한 순간이다.
+func TestPromotionExcerptIsTrimmed(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"x"}`)
+	s := NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("가", 9000)
+	if err := s.AddPending(Pending{
+		Path: "/t.jsonl", From: 424242, Domain: "alpha", SessionID: "S1",
+		Days: []string{"2026-08-09"}, Excerpt: huge, At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen []Promotion
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@424242",
+		Budget: time.Minute, OnResult: func(p Promotion) { seen = append(seen, p) },
+	})
+	if len(seen) != 1 {
+		t.Fatalf("결과가 %d건", len(seen))
+	}
+	if n := len([]rune(seen[0].Excerpt)); n > maxLedgerText+10 {
+		t.Errorf("발췌가 %d 자다 — 잘리지 않았다", n)
+	}
+	// 잘렸다는 것이 보여야 한다. 조용히 자르면 사람이 "판별기가 이만큼만 봤나" 를
+	// 오해한다.
+	if !strings.Contains(seen[0].Excerpt, "잘림") {
+		t.Error("잘렸다는 표시가 없다")
+	}
+	// 그리고 그 줄이 여전히 읽혀야 한다 — 자르기의 목적이 그것이다.
+	if _, err := ReadPromotions(sd, time.Time{}); err != nil {
+		t.Fatalf("원장을 못 읽는다: %v", err)
+	}
+}
+
+// ★ **지목한 구간이 이미 선점돼 있으면 그렇다고 말해야 한다.**
+//
+// 전체를 도는 중이라면 남이 집어 간 구간을 조용히 건너뛰는 것이 맞다. 그런데
+// Only 로 하나를 지목했다면 호출자(앱의 [결정이다] 버튼)는 그것이 처리되기를
+// 기다린다 — 조용히 끝나면 "그런 구간이 없다" 로 보이고 실제 원인이 안 드러난다.
+//
+// 실측으로 만났다: 판별기가 죽은 뒤 바로 재시도하니 5분간 "구간이 없다" 고 나왔다.
+// 방금 실패한 시도의 도장이 claimTTL 동안 남아 있던 것이다.
+func TestPromoteReportsClaimContentionWhenTargeted(t *testing.T) {
+	c, l, sd := promoteFixture(t, `{"record":false,"reason":"x"}`)
+	items, err := ReadPending(sd)
+	if err != nil || len(items) == 0 {
+		t.Fatal("픽스처에 구간이 없다")
+	}
+	id := items[0].ID()
+
+	// 남이 방금 집어 간 상태를 만든다.
+	if ok, err := ClaimPending(sd, id, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("선점 준비 실패: ok=%v err=%v", ok, err)
+	}
+
+	var errBuf strings.Builder
+	var seen []Promotion
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l, Only: id,
+		Budget: time.Minute, Err: &errBuf,
+		OnResult: func(p Promotion) { seen = append(seen, p) },
+	})
+
+	if len(seen) != 0 {
+		t.Errorf("선점된 구간을 처리했다 — 두 프로세스가 같은 대화에 노트를 둘 만든다")
+	}
+	got := errBuf.String()
+	if !strings.Contains(got, "이미 처리 중") {
+		t.Errorf("선점을 안 알린다: %q — 호출자는 '구간이 없다' 로 오해한다", got)
+	}
+
+	// **전체를 도는 경우에는 조용해야 한다.** 남이 집어 간 것을 건너뛰는 것은
+	// 정상 동작이고, 매번 보고하면 소음이 된다.
+	var quiet strings.Builder
+	Promote(context.Background(), PromoteOptions{
+		StateDir: sd, Config: c, Layout: l,
+		Budget: time.Minute, Err: &quiet,
+	})
+	if strings.Contains(quiet.String(), "이미 처리 중") {
+		t.Errorf("전체를 도는데 선점을 보고했다 (소음): %q", quiet.String())
+	}
+}

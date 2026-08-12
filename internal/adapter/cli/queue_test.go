@@ -57,7 +57,9 @@ func TestQueueJSONContract(t *testing.T) {
 	// "할 일이 없다" 를 구별하지 못한다.
 	want("Queue", Queue{}, "confirm", "review", "retro", "health")
 	want("QueuePending", QueuePending{}, "id", "domain", "when", "signals", "excerpt")
-	want("QueueReview", QueueReview{}, "id", "domain", "at", "path")
+	// **excerpt 는 omitempty 가 아니다.** 옛 원장 줄에는 없는데, 키까지 빠지면
+	// 앱이 "발췌가 없다" 와 "필드를 모른다" 를 구별하지 못한다.
+	want("QueueReview", QueueReview{}, "id", "domain", "at", "path", "excerpt")
 	want("QueueCheck", QueueCheck{Fix: "x"}, "name", "level", "detail", "fix")
 	want("retro.Item", retro.Item{Author: "x"},
 		"stem", "date", "domain", "summary", "author", "reason", "hits")

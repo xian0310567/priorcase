@@ -32,6 +32,20 @@ type Promotion struct {
 	Path     string    `json:"path,omitempty"`   // 만들어진 노트 (Recorded 일 때)
 	Reason   string    `json:"reason,omitempty"` // 안 만든 이유 (판별기가 준 것)
 	Err      string    `json:"err,omitempty"`    // 판별기를 못 불렀을 때
+
+	// Excerpt 는 판별기가 본 발췌다. **pending 이 사라지는 경우에만 담는다.**
+	//
+	// 왜 필요한가: 승격되면 ResolvePending 이 구간을 지운다. 그러면 판별기가 만든
+	// 노트를 **무엇을 보고 썼는지와 대조할 방법이 없다** — 감독 앱의 검토 화면이
+	// 바로 그 대조인데, 2026-08-12 에 21건을 승격시키고 검증하려다 실제로 막혔다.
+	//
+	// 왜 id 로 트랜스크립트를 다시 읽지 않는가: 그건 호스트의 파일이라 지워질 수
+	// 있다. pending 에 발췌를 통째로 실은 이유가 바로 그것이었는데, 승격 뒤에는
+	// 같은 이유가 적용되는 자리가 비어 있었다.
+	//
+	// **판별기 실패에는 안 담는다.** 그때는 구간이 안 지워지고 다음 기회에 다시
+	// 시도하므로, 발췌는 state.json 에 그대로 있다. 두 곳에 같은 것을 두지 않는다.
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 // AppendPromotion 은 승격 기록 한 줄을 덧붙인다.

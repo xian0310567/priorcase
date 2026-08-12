@@ -155,6 +155,20 @@ func Promote(ctx context.Context, o PromoteOptions) {
 		// 같은 구간을 집을 수 있다 — 판별기는 비결정적이라 같은 대화에 slug 가 다른
 		// 결정 노트가 둘 생긴다.
 		if ok, cerr := ClaimPending(o.StateDir, p.ID(), time.Now().UTC()); cerr != nil || !ok {
+			// **지목해서 부른 경우에는 조용히 넘어가면 안 된다.**
+			//
+			// 전체를 도는 중이라면 남이 집어 간 구간을 건너뛰는 것이 맞다. 그런데
+			// Only 로 그 하나를 지목했다면 호출자는 그것이 처리되기를 기다린다 —
+			// 조용히 끝나면 "그런 구간이 없다" 로 보이고, 실제 원인(방금 실패한
+			// 시도의 도장이 claimTTL 동안 남아 있다)이 안 드러난다.
+			//
+			// 실측으로 그 상태를 만났다: 판별기가 죽은 뒤 바로 재시도하니 5분간
+			// "구간이 없다" 고 나왔다.
+			if o.Only != "" {
+				o.report(fmt.Sprintf("이미 처리 중인 구간이다 (%s) — "+
+					"조금 전 시도가 %v 동안 선점하고 있다. 그 뒤에 다시 하라",
+					p.ID(), claimTTL))
+			}
 			continue
 		}
 		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
@@ -184,6 +198,11 @@ func Promote(ctx context.Context, o PromoteOptions) {
 		}
 		if r.Err != nil {
 			rec.Err = TrimLedgerText(r.Err.Error())
+		} else {
+			// 실패가 아니면 이 구간은 곧 해소된다 — 발췌를 여기 남기지 않으면
+			// 사라진다. 같은 상한(TrimLedgerText)을 쓴다: 한 줄이 스캐너 상한을
+			// 넘으면 그 줄만이 아니라 **그 뒤가 통째로 안 읽힌다.**
+			rec.Excerpt = TrimLedgerText(p.Excerpt)
 		}
 		if lerr := AppendPromotion(o.StateDir, rec); lerr != nil {
 			o.report(fmt.Sprintf("승격 원장을 쓰지 못했다: %v", lerr))

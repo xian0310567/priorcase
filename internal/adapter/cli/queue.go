@@ -51,10 +51,18 @@ type QueuePending struct {
 // 필드(reason·err)까지 달려 있고, 그 형태가 바뀌면 앱이 깨진다. 검토 큐에 필요한
 // 것은 "판별기가 무엇을 만들었고 어느 구간에서 나왔나" 뿐이다.
 type QueueReview struct {
-	ID     string `json:"id"` // 어느 구간에서 나왔나 — 발췌를 다시 찾을 열쇠
+	ID     string `json:"id"` // 어느 구간에서 나왔나
 	Domain string `json:"domain"`
 	At     string `json:"at"`   // RFC3339
 	Path   string `json:"path"` // 만들어진 노트 (볼트 상대 경로)
+	// Excerpt 는 판별기가 본 것이다. **이 화면의 존재 이유다** — 노트를 이것과
+	// 나란히 놓고 사람이 대조한다. 판별기는 LLM 이라 근거를 지어낼 수 있고,
+	// 지시문의 제약은 완화이지 보장이 아니다.
+	//
+	// 옛 원장 줄에는 없을 수 있다 (2026-08-12 이전 기록). 그때는 빈 문자열이고,
+	// 앱은 "대조할 발췌가 없다" 고 말해야 한다 — 없는 것을 조용히 안 보여 주면
+	// 사람은 노트만 보고 맞다고 누른다.
+	Excerpt string `json:"excerpt"`
 }
 
 // QueueCheck 는 상태 검사 한 줄이다.
@@ -142,6 +150,7 @@ func newQueueCmd() *cobra.Command {
 						q.Review = append(q.Review, QueueReview{
 							ID: r.ID, Domain: r.Domain,
 							At: r.At.Format(time.RFC3339), Path: r.Path,
+							Excerpt: r.Excerpt,
 						})
 					}
 				}
