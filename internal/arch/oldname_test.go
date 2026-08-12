@@ -35,6 +35,7 @@ func TestOldNameDoesNotReturn(t *testing.T) {
 		"npm/priorcase/bin/prior.js":         "옛 이름의 조직이 막혔던 사실을 적는다",
 		"internal/adapter/hook/init.go":      "개명 전 훅 표시와 백업 이름을 알아본다",
 		"internal/adapter/hook/init_test.go": "개명 전 훅·백업을 재현한다",
+		"internal/daemon/promote_test.go":    "개명 때 옮기지 않은 옛 도메인이 남은 사실을 적는다",
 	}
 
 	// `cb` 는 흔한 두 글자라 낱말 경계로만 잡는다. 그래도 base64 조각 안에서는
