@@ -1,3 +1,12 @@
 :root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; }
 body { margin: 0; font-size: 13px; }
 #app { padding: 12px; min-width: 420px; }
+
+.error { padding: 16px; }
+.error-title { font-size: 14px; margin: 0 0 8px; }
+.error-body { color: #666; line-height: 1.5; margin: 0; }
+.error-stderr { background: #0001; padding: 8px; border-radius: 4px; white-space: pre-wrap; font-size: 11px; margin: 0; }
+.warnings { background: #fbbf2422; border: 1px solid #fbbf2455; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+.warnings-list { margin: 4px 0 0; padding-left: 18px; }
+.warnings-item { color: #92400e; }
+.empty { color: #888; text-align: center; padding: 28px 0; margin: 0; }
