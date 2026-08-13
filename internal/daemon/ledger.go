@@ -46,6 +46,60 @@ type Promotion struct {
 	// **판별기 실패에는 안 담는다.** 그때는 구간이 안 지워지고 다음 기회에 다시
 	// 시도하므로, 발췌는 state.json 에 그대로 있다. 두 곳에 같은 것을 두지 않는다.
 	Excerpt string `json:"excerpt,omitempty"`
+
+	// Reviewed 는 **사람이 이 승격을 검증했다**는 표시다.
+	//
+	// 승격 레코드와 같은 줄이 아니라 **나중에 덧붙는 별도 줄**이다 (At·ID·Reviewed
+	// 만 채운다). 원장은 append-only 이므로 기존 줄을 고칠 수 없고, 고칠 수 있게
+	// 만들면 "그때 무슨 일이 있었나" 라는 원장의 존재 이유가 무너진다.
+	//
+	// **outcome 을 쓰지 않는 이유가 있다.** outcome 은 "그 결정이 결과적으로
+	// 좋았나" 이고 회고 큐가 outcome != pending 인 노트를 영영 제외한다. 검토는
+	// "판별기가 사실대로 썼나" 라는 다른 질문이다 — 둘을 한 값에 실으면, 노트를
+	// 검증했을 뿐인데 **나중에 결과를 묻는 자리가 조용히 사라진다.**
+	Reviewed bool `json:"reviewed,omitempty"`
+}
+
+// ReviewedIDs 는 사람이 검증했다고 표시한 승격 ID 들이다.
+//
+// 검토 큐는 이것을 빼고 준다. 안 빼면 큐가 영영 안 줄어들고, 사람은 같은 3건을
+// 매번 다시 보다가 화면 전체를 무시하는 법을 배운다.
+func ReviewedIDs(recs []Promotion) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range recs {
+		if r.Reviewed {
+			out[r.ID] = true
+		}
+	}
+	return out
+}
+
+// MarkReviewed 는 검토 표시 한 줄을 원장에 덧붙인다.
+//
+// 이미 표시돼 있으면 아무것도 안 하고 false 를 준다 — 앱이 같은 것을 두 번
+// 보내도 원장이 부풀지 않는다.
+func MarkReviewed(dir, id string) (bool, error) {
+	recs, err := ReadPromotions(dir, time.Time{})
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, r := range recs {
+		if r.ID == id && r.Recorded {
+			found = true
+		}
+		if r.ID == id && r.Reviewed {
+			return false, nil
+		}
+	}
+	// **없는 ID 는 거부한다.** 오타를 조용히 받으면 원장에 아무도 안 보는 줄이
+	// 쌓이고, 사람은 눌렀는데 큐가 안 줄어드는 것만 본다.
+	if !found {
+		return false, fmt.Errorf("승격 원장에 그런 기록이 없다: %s", id)
+	}
+	return true, AppendPromotion(dir, Promotion{
+		At: time.Now().UTC(), ID: id, Reviewed: true,
+	})
 }
 
 // AppendPromotion 은 승격 기록 한 줄을 덧붙인다.
