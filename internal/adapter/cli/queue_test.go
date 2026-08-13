@@ -290,6 +290,62 @@ func TestQueueCommandFillsEveryArray(t *testing.T) {
 	}
 }
 
+// ★★★ **검토 큐 줄에도 볼트가 붙어야 한다.**
+//
+// QueueReview 에는 Vault 필드와 그것이 왜 필요한지 적은 주석까지 있었는데
+// **조립부가 안 채우고 있었다** — 실측으로 검토 3건 전부 volt 가 빈 채 나왔다.
+// 앱은 그걸 "⚠️ 볼트 미상"(설정 오류)으로 그리므로, 멀쩡한 줄이 전부 고장으로
+// 보인다.
+//
+// 이 세션에서만 같은 모양의 누락이 다섯 번째다: similarFor · sweepOthers ·
+// 데몬 정리 · 확인 큐 볼트 · 그리고 이것. **구조체를 손으로 만들어 보면 절대
+// 안 잡힌다** — 조립부를 안 지나가기 때문이다. 명령을 돌린다.
+func TestQueueReviewCarriesVault(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	sd := filepath.Join(stateHome, "priorcase")
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 승격 원장에 "기록됨" 한 줄을 심는다 — 검토 큐는 여기서 나온다.
+	if err := daemon.AppendPromotion(sd, daemon.Promotion{
+		At: time.Now().UTC(), ID: "/t.jsonl@1", Domain: "alpha",
+		Recorded: true, Path: "alpha/decisions/alpha-결정-저장엔진-2026-08-01.md",
+		Excerpt: "저장 엔진을 임베디드 DB 로 정했다.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newQueueCmd()
+	root := &cobra.Command{Use: "prior"}
+	root.PersistentFlags().String("config", "", "")
+	root.AddCommand(cmd)
+	var out, errb strings.Builder
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"queue", "--json", "--config", cfgPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("queue 실행: %v (stderr=%s)", err, errb.String())
+	}
+	var q Queue
+	if err := json.Unmarshal([]byte(out.String()), &q); err != nil {
+		t.Fatalf("출력이 JSON 이 아니다: %v", err)
+	}
+	// **큐가 비면 이 테스트는 아무것도 검사하지 않는다.**
+	if len(q.Review) == 0 {
+		t.Fatalf("검토 큐가 비었다 — 원장을 못 찾았다 (경고: %v)", q.Warnings)
+	}
+	for _, r := range q.Review {
+		if r.Vault == "" {
+			t.Errorf("%s: vault 가 비었다 — 앱이 '볼트 미상' 으로 그린다", r.ID)
+		}
+		if r.Excerpt == "" {
+			t.Errorf("%s: excerpt 가 비었다 — 대조할 것이 없어진다", r.ID)
+		}
+	}
+}
+
 // ★★★ **큐가 볼트를 전부 덮는지, 그리고 줄마다 볼트가 붙는지 명령으로 확인한다.**
 //
 // 메뉴바 앱에는 cwd 가 없다. 큐가 한 볼트만 보면 앱은 **셸이 마지막으로 있던

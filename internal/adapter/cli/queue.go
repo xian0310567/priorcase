@@ -234,7 +234,7 @@ func newQueueCmd() *cobra.Command {
 				for _, r := range recs {
 					if r.Recorded {
 						q.Review = append(q.Review, QueueReview{
-							ID: r.ID, Domain: r.Domain,
+							ID: r.ID, Domain: r.Domain, Vault: vaultName(c, r.Domain),
 							At: r.At.Format(time.RFC3339), Path: r.Path,
 							Excerpt: r.Excerpt,
 						})
