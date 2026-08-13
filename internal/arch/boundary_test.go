@@ -12,7 +12,10 @@ package arch
 
 import (
 	"errors"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -116,5 +119,56 @@ func TestAdaptersDoCallCore(t *testing.T) {
 		if !found {
 			t.Errorf("어댑터 %s 가 core 를 전혀 부르지 않는다", a)
 		}
+	}
+}
+
+// ★★★ **상태를 밀어 쓰는 것은 daemon 안에서만 한다.**
+//
+// 남은 리뷰 지적 중 하나가 "원장 쓰기가 어댑터에 산다(계층 규칙 위반 소지)" 였다.
+// 실제로 재 보니 지금은 어댑터가 원장을 직접 쓰지 않는다 — 위반이 아니라 **소지**가
+// 맞는 표현이었다. 그런데 소지를 막는 것이 아무것도 없다.
+//
+// 무엇이 문제인가: 원장 한 줄과 체크포인트 전진에는 규칙이 붙어 있다. 승격 원장은
+// **append-only** 이고(고칠 수 있게 만들면 "그때 무슨 일이 있었나" 라는 존재 이유가
+// 무너진다), 전진은 **깨진 줄이 없을 때만** 하며(스펙 §7.2), 임계 미만이면 누적을
+// 같이 남겨야 한다. 그 규칙들은 daemon 안의 함수에 들어 있다.
+//
+// 어댑터가 AppendPromotion·Advance 를 직접 부르기 시작하면 규칙이 호출부마다
+// 흩어지고, 한 곳만 고쳐진 채로 남는다 — 이 프로젝트가 죄목으로 드는 "쓰기 경로가
+// 둘로 갈라진다" 그 자체다.
+//
+// 시험 픽스처는 예외다. 그건 상태를 심어 놓고 명령을 돌리려는 것이지 규칙을
+// 우회하는 것이 아니다.
+func TestOnlyDaemonWritesState(t *testing.T) {
+	// daemon 밖에서 부르면 안 되는 것들. 읽기(ReadPromotions·Pending)와
+	// 의도 수준 API(MarkReviewed·Promote)는 여기 없다 — 그건 부르라고 있는 것이다.
+	guarded := []string{"AppendPromotion", "AdvanceAccum", "SeedAll"}
+
+	root := ".."
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		// daemon 이 자기 규칙을 구현하는 자리다.
+		if strings.Contains(filepath.ToSlash(p), "/daemon/") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		src := string(b)
+		for _, sym := range guarded {
+			if strings.Contains(src, "daemon."+sym+"(") {
+				t.Errorf("%s 가 daemon.%s 를 직접 부른다 — 상태 쓰기 규칙이 호출부로 샌다 (§4.1)", p, sym)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
