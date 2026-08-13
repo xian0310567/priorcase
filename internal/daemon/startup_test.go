@@ -125,3 +125,79 @@ func TestStartupDrainHasBudget(t *testing.T) {
 		t.Error("예산이 1ns 인데 전부 훑었다 — 예산이 안 걸린다")
 	}
 }
+
+// ★★★ **호스트가 더는 다루지 않는 기록의 체크포인트를 지운다.**
+//
+// 서브에이전트 기록을 목록에서 빼기 시작하면 그 파일들의 체크포인트가 죽은 채
+// 남는다 — 실측으로 3,648항목 중 1,417개가 이 모양이었다. 상태 파일은 mutate
+// 마다 통째로 다시 쓰므로 죽은 항목의 무게가 **모든 쓰기에** 실린다.
+func TestStartupPrunesUnlistedCheckpoints(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	c, l := accCfg(t)
+	root := t.TempDir()
+	rs := accHosts(t, root)
+
+	live := filepath.Join(root, "proj", "c851bbeb-e0a9-49bb-aeef-79bccdab0b67.jsonl")
+	dead := filepath.Join(root, "proj", "agent-a5801c63bd316cd1b.jsonl")
+	writeTurns(t, live, 2, "가")
+	writeTurns(t, dead, 2, "나")
+	sizes := map[string]int64{}
+	for _, p := range []string{live, dead} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes[p] = fi.Size()
+	}
+	if err := st.SeedAll(sizes); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &watcher{o: Options{Config: c, StateDir: dir}, st: st, l: l, hosts: rs, dirty: map[string]bool{}}
+	d.startupPass(context.Background())
+
+	cps := st.CheckpointSnapshot()
+	if _, ok := cps[dead]; ok {
+		t.Error("서브에이전트 기록의 체크포인트가 남았다 — 상태 파일이 안 줄어든다")
+	}
+	if _, ok := cps[live]; !ok {
+		t.Error("본 대화의 체크포인트가 지워졌다 — 다시 시딩되면 그 사이 대화를 잃는다")
+	}
+}
+
+// ★★★ **목록이 실패한 루트의 것은 지우면 안 된다.**
+//
+// 호스트가 잠깐 안 보이면(외장 디스크·권한) 목록이 빈다. 그때 "목록에 없으니
+// 죽은 것" 으로 지우면 멀쩡한 체크포인트를 잃고, 그 파일들이 다시 시딩돼
+// **그 사이의 대화가 사라진다.**
+func TestPruneUnlistedIgnoresOtherRoots(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir() // 다른 호스트의 자리 — 이번 목록에 안 들어간다
+	p := filepath.Join(other, "s.jsonl")
+	if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedAll(map[string]int64{p: 3}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	n, err := PruneUnlisted(st, []string{root}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d개를 지웠다 — 목록을 만들지 않은 자리는 건드리면 안 된다", n)
+	}
+	if _, ok := st.CheckpointSnapshot()[p]; !ok {
+		t.Error("다른 루트의 체크포인트가 사라졌다")
+	}
+}

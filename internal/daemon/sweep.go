@@ -22,6 +22,15 @@ type SweepPlan struct {
 	// Unreadable 은 못 읽은 디렉토리 수다. 조용히 줄어든 목록은
 	// "결정이 없었다" 와 구별되지 않는다.
 	Unreadable int
+
+	// Listed 는 이번에 **목록에 든 파일 전부**다 (Seed + Scan).
+	// Roots 는 그 목록을 **성공적으로 만든** 루트다.
+	//
+	// 둘을 같이 주는 이유: 호스트가 거르는 규칙이 바뀌면 그 파일들의 체크포인트가
+	// 죽은 채 남는데, 그걸 지우려면 "목록이 성공한 자리" 를 알아야 한다. 목록이
+	// 실패한 루트의 것을 지우면 멀쩡한 체크포인트를 잃고 그 사이 대화가 사라진다.
+	Listed map[string]bool
+	Roots  []string
 }
 
 // PlanSweep 은 호스트들의 파일을 시딩 대상과 훑기 대상으로 나눈다.
@@ -42,6 +51,7 @@ func PlanSweep(st *Store, rs []hosts.Resolved, backfill bool) (SweepPlan, error)
 	// **스냅샷을 한 번만 뜬다.** 파일마다 st.Checkpoint() 를 부르면 그때마다 상태
 	// 파일을 다시 파싱한다 — 실측에서 그것 때문에 10초에 119개밖에 못 돌았다.
 	cps := st.CheckpointSnapshot()
+	plan.Listed = map[string]bool{}
 	for _, r := range rs {
 		got, unreadable, err := r.Host.List(r.Root)
 		if err != nil {
@@ -53,6 +63,13 @@ func PlanSweep(st *Store, rs []hosts.Resolved, backfill bool) (SweepPlan, error)
 			continue
 		}
 		plan.Unreadable += unreadable
+		// **목록이 성공한 루트만 담는다.** 실패한 루트는 위에서 continue 했다.
+		if r.Root != "" {
+			plan.Roots = append(plan.Roots, r.Root)
+		}
+		for _, p := range got {
+			plan.Listed[p] = true
+		}
 		for _, p := range got {
 			// **"아는 파일" 은 Offset 으로 판정한다.**
 			//
@@ -216,6 +233,17 @@ func sweepPlanned(o SweepOptions, st *Store, rs []hosts.Resolved) (SweepResult, 
 		fmt.Fprintf(o.Err, "체크포인트 정리 실패: %v\n", perr)
 	}
 	r.Pruned = pruned
+
+	// **호스트가 더는 다루지 않는 기록도 지운다.**
+	//
+	// 데몬에만 두면 데몬을 안 쓰는 사람은 한 번도 안 돈다 — 정리를 훑기에 둔
+	// 근거("훑기가 이미 파일 목록과 락을 쥐고 있다")가 여기에도 그대로다.
+	// 실측으로 서브에이전트 기록 1,417개가 이 모양으로 남는다.
+	unl, uerr := PruneUnlisted(st, plan.Roots, plan.Listed)
+	if uerr != nil && o.Err != nil {
+		fmt.Fprintf(o.Err, "목록 밖 체크포인트 정리 실패: %v\n", uerr)
+	}
+	r.Pruned += unl
 
 	// **시딩 뒤에만 다시 뜬다.** 정리는 지우기만 하므로 루프가 읽는 값을 못 바꾼다 —
 	// 지워진 경로는 plan.Scan 에 없거나(파일이 없으니 List 에 안 잡힌다) 있어도

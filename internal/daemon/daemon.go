@@ -265,6 +265,16 @@ func (d *watcher) startupPass(ctx context.Context) {
 	// **데몬도 정리한다.** 정리를 훑기에만 넣으면 데몬을 켠 사용자는 한 번도 안
 	// 돈다 — 훑기는 락을 못 얻으면 통째로 건너뛰기 때문이다. 정리를 그쪽에 둔
 	// 근거("훑기가 이미 파일 목록과 락을 쥐고 있다")가 데몬에도 그대로 적용된다.
+	// **호스트가 더는 목록에 넣지 않는 파일의 체크포인트도 지운다.**
+	//
+	// 서브에이전트 기록을 제외하기 시작하면서 1,417개가 죽은 채 남는다. 상태
+	// 파일은 mutate 마다 통째로 다시 쓰므로 그 무게가 모든 쓰기에 실린다.
+	if n, err := PruneUnlisted(d.st, plan.Roots, plan.Listed); err != nil {
+		d.emit(Event{Kind: "error", Err: err})
+	} else if n > 0 {
+		d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
+			"체크포인트 %d개를 정리했다 (호스트가 더는 다루지 않는 기록)", n)})
+	}
 	if n, err := PruneMissing(d.st); err != nil {
 		d.emit(Event{Kind: "error", Err: err})
 	} else if n > 0 {

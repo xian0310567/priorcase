@@ -736,12 +736,65 @@ func (cp Checkpoint) Empty() bool {
 //
 // **파일이 있는지 없는지를 여기서 판정한다.** 호출자가 미리 걸러 주지 않는 이유는,
 // 그러면 "무엇을 지울 수 있나" 의 규칙이 두 곳에 생기기 때문이다.
-func PruneMissing(st *Store) (int, error) {
+// PruneUnlisted 는 **호스트가 더는 목록에 넣지 않는 파일**의 체크포인트를 지운다.
+//
+// 왜 필요한가: 호스트가 거르는 규칙이 바뀌면(예: 서브에이전트 기록 제외) 그
+// 파일들은 다시는 List 에 안 나오지만 체크포인트는 그대로 남는다. 상태 파일은
+// mutate 마다 통째로 다시 쓰므로 **죽은 항목의 무게가 모든 쓰기에 실린다** —
+// 실측으로 3,648항목 중 1,417개가 이 모양이었다 (836KB 중 대부분).
+//
+// **listed 는 목록이 성공한 루트의 것이어야 한다.** 호스트가 잠깐 안 보일 때
+// (외장 디스크·권한) 그 목록을 넘기면 멀쩡한 체크포인트를 지우고, 그러면 그
+// 파일들이 다시 시딩돼 **그 사이의 대화를 잃는다.** 호출부가 그것을 지킨다.
+//
+// **파일이 없는 것은 여기서 안 지운다** — 그건 PruneMissing 의 몫이고, 그쪽은
+// "진행이 없는 항목만" 이라는 더 좁은 규칙을 쓴다. 여기서 같이 처리하면 그
+// 안전장치가 조용히 넓어진다.
+func PruneUnlisted(st *Store, roots []string, listed map[string]bool) (int, error) {
+	if len(roots) == 0 {
+		return 0, nil
+	}
 	var doomed []string
-	for p, cp := range st.CheckpointSnapshot() {
-		if !cp.Empty() {
+	for p := range st.CheckpointSnapshot() {
+		if listed[p] {
 			continue
 		}
+		if !underAny(p, roots) {
+			continue // 우리가 목록을 만든 자리가 아니다 — 판단하지 않는다
+		}
+		if _, err := os.Stat(p); err != nil {
+			continue // 없거나 못 보는 것은 PruneMissing 의 몫이다
+		}
+		doomed = append(doomed, p)
+	}
+	return pruneDoomed(st, doomed, false)
+}
+
+// underAny 는 경로가 주어진 루트 중 하나 아래인지 본다.
+//
+// 문자열 접두사만 보면 /a/bc 가 /a/b 아래로 잡힌다. 경계를 확인한다.
+func underAny(p string, roots []string) bool {
+	for _, r := range roots {
+		if r == "" {
+			continue
+		}
+		rel, err := filepath.Rel(r, p)
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func PruneMissing(st *Store) (int, error) {
+	// **비었는지는 여기서 보지 않는다.** pruneDoomed 가 잠금 안에서 본다 —
+	// 두 곳에서 같은 규칙을 검사하면 앞쪽이 뒤쪽을 가려서, 뒤쪽이 망가져도
+	// 아무 시험이 못 잡는다 (변형 시험으로 실제로 드러났다).
+	var doomed []string
+	for p := range st.CheckpointSnapshot() {
 		if _, err := os.Stat(p); err == nil {
 			continue // 파일이 있다
 		} else if !os.IsNotExist(err) {
@@ -750,7 +803,7 @@ func PruneMissing(st *Store) (int, error) {
 		}
 		doomed = append(doomed, p)
 	}
-	return pruneDoomed(st, doomed)
+	return pruneDoomed(st, doomed, true)
 }
 
 // pruneDoomed 는 삭제 후보를 **잠금 안에서 다시 보고** 지운다.
@@ -758,7 +811,16 @@ func PruneMissing(st *Store) (int, error) {
 // 따로 뺀 이유는 시험 가능성이다. 경합(스냅샷 → stat 루프 → mutate 사이에 남이
 // 크레딧을 새김)은 시간에 기대지 않고는 재현하기 어려운데, 이 함수는 낡은 목록을
 // 직접 넘겨 그 상황을 결정적으로 만든다.
-func pruneDoomed(st *Store, doomed []string) (int, error) {
+// pruneDoomed 는 표적을 지운다.
+//
+// requireEmpty 는 **왜 지우는가**에 따라 다르다.
+//
+//   - 사라진 파일(PruneMissing): 진행이 있으면 안 지운다. 파일이 돌아올 수 있고
+//     (동기화·마운트), 그때 진행을 잃으면 그 사이 대화가 사라진다.
+//   - 호스트가 안 다루는 파일(PruneUnlisted): 진행이 있어도 지운다. 다시는
+//     목록에 안 나오므로 그 진행값은 아무도 안 읽는다 — 남겨 두면 죽은 무게가
+//     모든 상태 쓰기에 실릴 뿐이다.
+func pruneDoomed(st *Store, doomed []string, requireEmpty bool) (int, error) {
 	if len(doomed) == 0 {
 		return 0, nil
 	}
@@ -773,7 +835,8 @@ func pruneDoomed(st *Store, doomed []string) (int, error) {
 	deleted := 0
 	err := st.mutate(func(s *state) {
 		for _, p := range doomed {
-			if cp, ok := s.Checkpoints[p]; ok && cp.Empty() {
+			cp, ok := s.Checkpoints[p]
+			if ok && (!requireEmpty || cp.Empty()) {
 				delete(s.Checkpoints, p)
 				deleted++
 			}

@@ -575,7 +575,7 @@ func TestPruneMissingRechecksInsideLock(t *testing.T) {
 	}
 
 	// **낡은 목록을 그대로 넘긴다.** 실제 경합에서 doomed 가 이 모양이다.
-	n, err := pruneDoomed(st, []string{target})
+	n, err := pruneDoomed(st, []string{target}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
