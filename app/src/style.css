@@ -35,3 +35,14 @@ button.primary { background: #2563eb; color: #fff; border-color: transparent; }
 .stem { font-size: 11px; word-break: break-all; }
 .path { font-size: 10px; color: #888; word-break: break-all; margin-top: 2px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
+
+.summary { line-height: 1.5; margin-bottom: 4px; }
+.author { font-size: 11px; color: #888; }
+.reason { font-weight: 600; color: inherit; }
+.health-row { display: grid; grid-template-columns: 16px 120px 1fr; gap: 8px; align-items: baseline; padding: 4px 0; font-size: 12px; }
+.health-row .health-fix { grid-column: 2 / -1; font-size: 11px; color: #666; }
+.level-ok .health-mark { color: #16a34a; }
+.level-warn .health-mark { color: #d97706; }
+.level-fail .health-mark { color: #dc2626; }
+.level-unknown .health-mark { color: #6b7280; }
+.health-detail { color: #555; }
