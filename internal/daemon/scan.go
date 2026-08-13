@@ -93,6 +93,16 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 	if from >= size {
 		return r, nil // 새로 읽을 것이 없다
 	}
+	// **누적을 들고 온다.** 임계 미만으로 끝난 앞 구간의 발화 수와 시작점이다.
+	// from 이 0 으로 되감겼으면(잘림) 누적도 못 믿으므로 버린다.
+	cp := s.CheckpointEntry(path)
+	carried, segStart := cp.Turns, cp.Seg
+	if from == 0 {
+		carried, segStart = 0, 0
+	}
+	if carried == 0 {
+		segStart = from
+	}
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -139,8 +149,41 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 	if minTurns <= 0 {
 		minTurns = 1
 	}
+	// **누적을 더해서 판정한다.** 짧은 세션이 이어져 임계를 넘기는 판이 흔하다.
+	r.Turns += carried
 	if r.Turns < minTurns {
+		// **전진한다.** 안 하면 Offset 이 0 으로 굳고, PlanSweep 이 이 파일을
+		// 처음 보는 것으로 분류해 시딩이 앞의 대화를 버린다.
+		// 파싱이 깨진 줄은 전진시키지 않는다 — 그 규칙은 아래와 같다.
+		if bad == 0 {
+			if err := s.AdvanceAccum(path, from+consumed, size, int64(r.Turns), segStart); err != nil {
+				scanErr = err
+				return r, scanErr
+			}
+			r.Advanced = true
+		}
 		return r, nil // 갈래 2 — 누적한다
+	}
+
+	// **임계를 넘겼다. 구간 처음부터 다시 읽는다.**
+	//
+	// 지금 손에 있는 turns 는 마지막 조각뿐이다. 그대로 쓰면 발췌·시그널·날짜가
+	// 뒤 조각만 담고, 사람은 앞부분을 못 본 채 판단한다.
+	if segStart < from {
+		if _, err := f.Seek(segStart, io.SeekStart); err != nil {
+			scanErr = err
+			return r, scanErr
+		}
+		t2, m2, c2, b2, err := h.Host.Parse(f)
+		if err != nil {
+			scanErr = fmt.Errorf("transcript 재파싱 실패 (%s): %w", path, err)
+			return r, scanErr
+		}
+		turns, meta, consumed, bad = t2, m2, c2, b2
+		r.Bad = bad
+		r.Signals = matchSignals(c.Capture.Signals, turns)
+		days = segmentDays(turns)
+		from = segStart
 	}
 
 	// 제외된 구역은 표시하지 않는다. 다만 전진은 시켜야 한다 — 안 그러면 그 프로젝트의
@@ -197,7 +240,9 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 	}
 
 	if bad == 0 {
-		if err := s.Advance(path, from+consumed, size); err != nil {
+		// **누적을 0 으로 되돌린다.** 안 그러면 다음 한 발화가 곧바로 임계를
+		// 넘겨 매번 표시된다.
+		if err := s.AdvanceAccum(path, from+consumed, size, 0, 0); err != nil {
 			scanErr = err
 			return r, scanErr
 		}

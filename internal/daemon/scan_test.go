@@ -66,7 +66,7 @@ func turns(t *testing.T, n int, text, cwd string) []string {
 // 전진시키면 임계가 영원히 안 찬다: 4턴 보고 전진 → 다음에 또 4턴 보고 전진 →
 // 매번 4 < 6 이라 아무것도 표시되지 않는다. 대화가 아무리 길어져도 안전망이
 // 한 번도 발동하지 않는 침묵 실패다.
-func TestUnderThresholdDoesNotAdvance(t *testing.T) {
+func TestUnderThresholdAdvancesButAccumulates(t *testing.T) {
 	dir := t.TempDir()
 	tp := filepath.Join(dir, "s.jsonl")
 	s := newStore(t)
@@ -80,8 +80,16 @@ func TestUnderThresholdDoesNotAdvance(t *testing.T) {
 	if r1.Flagged {
 		t.Error("4턴인데 표시했다 (임계 6)")
 	}
-	if r1.Advanced {
-		t.Fatal("임계 미달인데 체크포인트를 전진시켰다 — 임계가 영원히 안 찬다")
+	// ★★ **전진하되 누적을 체크포인트가 든다.**
+	//
+	// 예전에는 전진하지 않는 것이 누적의 유일한 수단이었다. 그러면 Offset 이 0 으로
+	// 굳고, PlanSweep 이 그 파일을 처음 보는 것으로 분류해 **시딩이 앞의 대화를
+	// 버린다.** 지금은 Checkpoint.Turns 가 누적을 들므로 전진해도 임계가 찬다.
+	if !r1.Advanced {
+		t.Fatal("임계 미달이라고 전진을 안 했다 — Offset 이 0 으로 굳으면 시딩이 이 파일을 버린다")
+	}
+	if cp := s.CheckpointEntry(tp); cp.Turns != 4 {
+		t.Fatalf("누적이 체크포인트에 %d턴 — 4턴이어야 한다", cp.Turns)
 	}
 
 	// 4턴 더. 누적 8턴이 보여야 한다.

@@ -80,6 +80,25 @@ type Checkpoint struct {
 	// Suppressed 는 이 파일에서 면제로 넘긴 구간 수다. 진단용이다 — 억제가 그냥
 	// 사라지면 안전망이 일을 안 하는 것과 구분되지 않는다.
 	Suppressed int `json:"suppressed,omitempty"`
+
+	// Turns 는 **임계 미만으로 누적 중인** 발화 수다.
+	//
+	// 이것이 없으면 임계 미만 구간을 누적하는 유일한 방법이 "전진하지 않는 것"
+	// 이고, 그러면 Offset 이 0 으로 굳는다. PlanSweep 은 Offset 으로 아는 파일을
+	// 판정하므로 **이미 훑은 파일이 처음 보는 파일로 분류돼 끝으로 시딩된다** —
+	// 그 앞의 대화가 통째로 사라진다. 안전망 자신의 데이터 손실이다.
+	//
+	// 판정을 항목 존재로 바꿔 봤다가 되돌린 것도 같은 뿌리다. 그때는 임계 미만
+	// 파일이 영원히 재훑기 집합에 남아 예산을 태웠다 (실측: 임계 미만이
+	// Claude Code 68.7% · Codex 92.2%). 누적을 체크포인트가 들면 **전진하면서도
+	// 누적**할 수 있어 둘이 같이 풀린다.
+	Turns int `json:"turns,omitempty"`
+
+	// Seg 는 누적 중인 구간이 시작한 오프셋이다.
+	//
+	// 임계를 넘길 때 여기서부터 다시 읽어 발췌·시그널·날짜를 만든다. 마지막
+	// 조각만 담으면 사람이 앞부분을 못 보고 판단한다.
+	Seg int64 `json:"seg,omitempty"`
 }
 
 // Pending 은 "이 구간에 결정이 있었을 수 있다" 는 표시다. 결정 노트가 아니다.
@@ -329,6 +348,38 @@ func (s *Store) Advance(path string, offset, size int64) error {
 	return s.mutate(func(st *state) {
 		cp := st.Checkpoints[path]
 		cp.Offset, cp.Size = offset, size
+		st.Checkpoints[path] = cp
+	})
+}
+
+// CheckpointEntry 는 한 파일의 체크포인트를 통째로 준다.
+//
+// CheckpointSnapshot 은 지도 전체를 복사하므로 파일마다 부르면 O(n²) 다 —
+// 실측에서 그 모양 때문에 훑기가 10초에 119개밖에 못 돌았다.
+func (s *Store) CheckpointEntry(path string) Checkpoint {
+	s.reload()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.st.Checkpoints[path]
+}
+
+// AdvanceAccum 은 **임계 미만인 구간을 전진시키면서 누적을 남긴다.**
+//
+// 전진하는 이유: 안 하면 Offset 이 0 으로 굳어 PlanSweep 이 이 파일을 처음 보는
+// 것으로 분류하고, 시딩이 그 앞의 대화를 버린다 (§ Checkpoint.Turns).
+//
+// turns 가 0 이면 누적이 끝났다는 뜻이라 Seg 도 같이 지운다 — 안 지우면 다음
+// 구간이 옛 시작점부터 다시 읽힌다.
+func (s *Store) AdvanceAccum(path string, offset, size int64, turns, seg int64) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.Offset, cp.Size = offset, size
+		cp.Turns = int(turns)
+		if turns == 0 {
+			cp.Seg = 0
+		} else {
+			cp.Seg = seg
+		}
 		st.Checkpoints[path] = cp
 	})
 }
@@ -659,7 +710,10 @@ func (s *Store) SeedAll(sizes map[string]int64) error {
 // 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피 0부터 읽는다.
 func (cp Checkpoint) Empty() bool {
 	return cp.Offset == 0 && cp.Size == 0 &&
-		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0
+		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0 &&
+		// **누적 중인 항목은 비어 있지 않다.** 임계 미만 발화를 모으는 중이라
+		// 지우면 그만큼의 대화를 잃는다.
+		cp.Turns == 0 && cp.Seg == 0
 }
 
 // PruneMissing 은 **사라진 파일 중 진행이 없는 항목**을 지운다. 지운 수를 준다.
