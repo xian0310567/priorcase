@@ -78,6 +78,53 @@ pub fn promote(id: String) -> Result<String, CmdError> {
     run(&prior_bin(), &["promote", &id, "--json"], WRITE_TIMEOUT).map_err(to_cmd_error)
 }
 
+/// mark_reviewed 는 "판별기가 사실대로 썼다" 는 검증 표시다.
+///
+/// **review(outcome) 과 다른 명령이다.** outcome 은 "그 결정이 결과적으로
+/// 좋았나" 이고 회고 큐가 그 값이 정해진 노트를 영영 제외한다. 검토는 다른
+/// 질문이므로 다른 자리에 남긴다 — 안 그러면 노트를 검증했을 뿐인데 나중에
+/// 결과를 묻는 자리가 조용히 사라진다.
+#[tauri::command]
+pub fn mark_reviewed(id: String) -> Result<(), CmdError> {
+    run(&prior_bin(), &["reviewed", &id], WRITE_TIMEOUT)
+        .map(|_| ())
+        .map_err(to_cmd_error)
+}
+
+/// path 는 결정 노트의 절대 경로를 준다.
+///
+/// **앱이 볼트 경로를 조립하지 않는다.** 조립하면 볼트 선택 규칙이 둘이 되고,
+/// 다중 볼트에서 그 어긋남은 엉뚱한 파일을 열거나 못 여는 것으로 나타난다.
+#[tauri::command]
+pub fn note_path(stem: String) -> Result<String, CmdError> {
+    run(&prior_bin(), &["path", &stem], READ_TIMEOUT).map_err(to_cmd_error)
+}
+
+/// open_note 는 노트를 OS 기본 앱으로 연다.
+///
+/// **셸을 거치지 않는다.** 볼트 경로에 공백이 있다 (실측: `Obsidian Vault`).
+/// 셸 문자열로 만들면 거기서 쪼개지고, 따옴표로 감싸는 순간 경로에 따옴표가
+/// 있는 경우가 뚫린다. 인자로 넘기면 그런 자리가 없다.
+#[tauri::command]
+pub fn open_note(stem: String) -> Result<(), CmdError> {
+    let p = note_path(stem)?;
+    let p = p.trim();
+    if p.is_empty() {
+        return Err(CmdError {
+            kind: "failed".into(),
+            message: "prior path 가 빈 줄을 냈다".into(),
+        });
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    run(opener, &[p], READ_TIMEOUT).map(|_| ()).map_err(to_cmd_error)
+}
+
 #[tauri::command]
 pub fn review(stem: String, outcome: String) -> Result<(), CmdError> {
     run(
@@ -87,6 +134,20 @@ pub fn review(stem: String, outcome: String) -> Result<(), CmdError> {
     )
     .map(|_| ())
     .map_err(to_cmd_error)
+}
+
+/// set_tray_title 은 메뉴바 아이콘 옆의 글자를 바꾼다.
+///
+/// **푸시 알림을 보내지 않는다.** 먼저 말을 거는 도구는 지워지고, 앱이 지워지면
+/// 자동 기록까지 같이 잃는다. 숫자만 조용히 바꾼다.
+///
+/// 빈 문자열이면 글자를 아예 뗀다 — 할 일이 없을 때 "0" 이 떠 있으면 그것도
+/// 늘 켜진 신호가 되어, 사람이 배지를 무시하는 법을 배운다.
+#[tauri::command]
+pub fn set_tray_title(app: tauri::AppHandle, title: String) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(if title.is_empty() { None } else { Some(title) });
+    }
 }
 
 #[cfg(test)]
@@ -196,6 +257,42 @@ mod tests {
         if let Some(v) = saved {
             std::env::set_var("PRIORCASE_APP_BIN", v);
         }
+    }
+
+    // ★★ **빈 경로로 OS 를 부르면 안 된다.**
+    //
+    // prior path 가 어떤 이유로든 빈 줄을 내면(설정 오류·빈 볼트), 그대로
+    // open 에 넘기면 OS 가 **현재 디렉토리를 연다** — 사람은 왜 파인더가 떴는지
+    // 모른다. 여기서 끊고 무엇이 문제인지 말한다.
+    #[test]
+    fn 빈_경로로는_열지_않는다() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("PRIORCASE_APP_BIN").ok();
+        std::env::set_var("PRIORCASE_APP_BIN", fixture("fake-prior-empty.sh"));
+
+        let e = open_note("무엇이든".into()).expect_err("실패해야 한다");
+        assert_eq!(e.kind, "failed");
+        assert!(e.message.contains("빈 줄"), "message={}", e.message);
+
+        match saved {
+            Some(v) => std::env::set_var("PRIORCASE_APP_BIN", v),
+            None => std::env::remove_var("PRIORCASE_APP_BIN"),
+        }
+    }
+
+    // ★ 새 커맨드 둘도 인자를 그대로 넘겨야 한다. 이름이 어긋나면 조용히 안 먹는다.
+    #[test]
+    fn 새_커맨드들이_인자를_그대로_넘긴다() {
+        let echo = fixture("fake-prior-echo-args.sh");
+        let out = crate::prior::run(&echo, &["reviewed", "/경로 with space.jsonl@42"], READ_TIMEOUT)
+            .expect("성공해야 한다");
+        assert!(out.contains("reviewed"), "out={out}");
+        assert!(out.contains("/경로 with space.jsonl@42"), "인자가 쪼개졌다: {out}");
+
+        let out = crate::prior::run(&echo, &["path", "priorcase-결정-x-2026-08-13"], READ_TIMEOUT)
+            .expect("성공해야 한다");
+        assert!(out.contains("path"), "out={out}");
+        assert!(out.contains("priorcase-결정-x-2026-08-13"), "out={out}");
     }
 
     // ★ 인자를 그대로 넘기는지 본다. id 에 공백·한글이 섞여도 깨지면 안 된다.

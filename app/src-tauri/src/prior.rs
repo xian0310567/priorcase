@@ -229,18 +229,41 @@ mod tests {
                 .count()
         }
 
+        // **정상 자식도 잠깐은 좀비로 보인다.**
+        //
+        // run() 은 20ms 간격으로 try_wait 하므로, 자식이 끝난 뒤 우리가 거두기
+        // 전까지 최대 20ms 동안 상태가 Z 다. 다른 시험이 동시에 자식을 띄우면
+        // 그것들이 기준선에 섞인다 — 실측으로 기준선이 3으로 잡혀 이 시험이
+        // 깨졌다. 그때 잡힌 건 회귀가 아니라 **측정의 결함**이었다.
+        //
+        // 그래서 순간값이 아니라 **가라앉는지**를 본다. 새는 구현은 영영 안
+        // 가라앉고, 지나가는 좀비는 수십 ms 안에 사라진다.
+        fn settle(deadline: Duration) -> usize {
+            let end = std::time::Instant::now() + deadline;
+            loop {
+                let n = zombies();
+                if n == 0 || std::time::Instant::now() >= end {
+                    return n;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
         let _g = SPAWN_LOCK.lock().unwrap();
-        let before = zombies();
+        assert_eq!(
+            settle(Duration::from_secs(3)),
+            0,
+            "시작 전부터 좀비가 남아 있다 — 다른 자식이 안 거둬진다"
+        );
+
         let slow = fixture("fake-prior-slow.sh");
         for _ in 0..3 {
             let _ = run(&slow, &[], Duration::from_millis(150));
         }
-        std::thread::sleep(Duration::from_millis(300));
-        let after = zombies();
         assert_eq!(
-            after, before,
-            "좀비가 {}개 늘었다 — kill 뒤에 wait 를 안 하면 30초마다 쌓인다",
-            after as i64 - before as i64
+            settle(Duration::from_secs(3)),
+            0,
+            "상한을 넘긴 자식이 좀비로 남았다 — kill 뒤에 wait 를 안 하면 30초마다 쌓인다"
         );
     }
 }

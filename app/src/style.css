@@ -46,3 +46,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .level-fail .health-mark { color: #dc2626; }
 .level-unknown .health-mark { color: #6b7280; }
 .health-detail { color: #555; }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid #0002; }
+.tab { border: none; background: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 6px 10px; }
+.tab.active { border-bottom-color: #2563eb; font-weight: 600; }
+.body { min-height: 200px; }

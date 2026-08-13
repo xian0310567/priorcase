@@ -65,6 +65,10 @@ fn main() {
             commands::resolve_pending,
             commands::promote,
             commands::review,
+            commands::mark_reviewed,
+            commands::note_path,
+            commands::open_note,
+            commands::set_tray_title,
         ])
         .setup(|app| {
             // **메뉴바 상주 앱은 Dock 에 뜨면 안 된다.**
