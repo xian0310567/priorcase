@@ -34,6 +34,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newRollupCmd())
 	root.AddCommand(newQueueCmd())
 	root.AddCommand(newPromoteCmd())
+	root.AddCommand(newPathCmd())
 	return root
 }
 
