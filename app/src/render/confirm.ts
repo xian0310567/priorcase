@@ -1,6 +1,7 @@
 import type { Confirm } from "../types";
-import { vaultLabel, clip } from "../format";
+import { vaultLabel } from "../format";
 import { renderEmpty } from "./shell";
+import { el, mountExcerpt } from "./excerpt";
 
 export interface ConfirmActions {
   resolve(id: string): void;
@@ -14,14 +15,6 @@ export interface ConfirmActions {
  * 그래서 펼치기가 장식이 아니라 이 화면의 필수 부품이다 — 접힌 8줄로 "결정인가"
  * 를 판단하는 건 확인이 아니라 판별기를 믿는 것이다. */
 const EXCERPT_LINES = 8;
-
-function el(tag: string, cls: string, text?: string): HTMLElement {
-  const n = document.createElement(tag);
-  n.className = cls;
-  // 발췌·요약·시그널은 전부 **남의 글**이다 (대화 원문 · 노트). textContent 만 쓴다.
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
 
 export function renderConfirm(root: HTMLElement, items: Confirm[], on: ConfirmActions): void {
   root.replaceChildren();
@@ -64,29 +57,7 @@ export function renderConfirm(root: HTMLElement, items: Confirm[], on: ConfirmAc
       card.append(box);
     }
 
-    // 발췌 — 접고, 펼칠 수 있게 한다.
-    //
-    // **펼침 상태는 카드마다 따로 둔다.** 하나 눌렀는데 23장이 다 펼쳐지면
-    // 훑기가 불가능해진다.
-    const ex = el("pre", "excerpt");
-    const more = el("div", "excerpt-more") as HTMLElement;
-    let open = false;
-    const paint = (): void => {
-      const { shown, hidden } = clip(it.excerpt, EXCERPT_LINES);
-      ex.textContent = open ? it.excerpt : shown;
-      if (hidden === 0) {
-        more.remove();
-        return;
-      }
-      more.textContent = open ? "접는다" : `… ${hidden}줄 더 (눌러서 펼친다)`;
-      if (!more.isConnected) card.append(more);
-    };
-    more.addEventListener("click", () => {
-      open = !open;
-      paint();
-    });
-    card.append(ex);
-    paint();
+    mountExcerpt(card, it.excerpt, EXCERPT_LINES);
 
     // 버튼 둘
     const btns = el("div", "buttons");

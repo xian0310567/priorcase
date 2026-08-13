@@ -27,3 +27,11 @@ body { margin: 0; font-size: 13px; }
 .buttons { display: flex; gap: 8px; margin-top: 8px; }
 button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #0003; cursor: pointer; background: #0001; }
 button.primary { background: #2563eb; color: #fff; border-color: transparent; }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.split-side { min-width: 0; }
+.split-title { font-size: 11px; color: #666; margin-bottom: 4px; }
+.missing { color: #b45309; font-size: 11px; margin: 0; line-height: 1.5; }
+.stem { font-size: 11px; word-break: break-all; }
+.path { font-size: 10px; color: #888; word-break: break-all; margin-top: 2px; }
+button:disabled { opacity: .45; cursor: not-allowed; }

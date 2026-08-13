@@ -6,7 +6,9 @@ import type { CmdError } from "../src/types";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-const { fetchQueue, resolvePending, review } = await import("../src/api");
+const { fetchQueue, resolvePending, review, markReviewed, openNote } = await import(
+  "../src/api",
+);
 
 // ★★ **중괄호를 빼면 안 된다.**
 //
@@ -88,6 +90,24 @@ describe("쓰기 명령", () => {
       stem: "priorcase-결정-x-2026-08-13",
       outcome: "good",
     });
+  });
+
+  // ★★★ **검토 표시는 승격 ID 로, outcome 과 다른 명령으로 간다.**
+  //
+  // review --outcome good 으로 보내면 회고 큐가 그 노트를 영영 제외한다 —
+  // 노트를 검증했을 뿐인데 나중에 결과를 묻는 자리가 조용히 사라진다.
+  it("markReviewed 는 mark_reviewed 를 id 로 부른다", async () => {
+    invoke.mockResolvedValue(undefined);
+    await markReviewed("/t.jsonl@42");
+    expect(invoke).toHaveBeenCalledWith("mark_reviewed", { id: "/t.jsonl@42" });
+    // outcome 을 건드리는 명령이 같이 나가면 안 된다.
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("openNote 는 open_note 를 stem 으로 부른다", async () => {
+    invoke.mockResolvedValue(undefined);
+    await openNote("priorcase-결정-x-2026-08-13");
+    expect(invoke).toHaveBeenCalledWith("open_note", { stem: "priorcase-결정-x-2026-08-13" });
   });
 
   it("쓰기가 실패하면 던진다 — 성공한 척하지 않는다", async () => {

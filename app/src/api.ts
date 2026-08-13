@@ -53,6 +53,33 @@ export async function promote(id: string): Promise<void> {
   }
 }
 
+/** markReviewed 는 "판별기가 사실대로 썼다" 는 검증 표시다.
+ *
+ * **승격 ID 를 넘긴다. stem 이 아니다.** 표시는 승격 원장에 남고 그 키가 ID 다.
+ *
+ * review(outcome) 과 다른 명령인 이유: outcome 은 "그 결정이 결과적으로 좋았나"
+ * 이고 회고 큐가 그 값이 정해진 노트를 영영 제외한다. 둘을 한 값에 실으면 노트를
+ * 검증했을 뿐인데 나중에 결과를 묻는 자리가 조용히 사라진다. */
+export async function markReviewed(id: string): Promise<void> {
+  try {
+    await invoke("mark_reviewed", { id });
+  } catch (e) {
+    throw asCmdError(e);
+  }
+}
+
+/** openNote 는 결정 노트를 OS 기본 앱으로 연다.
+ *
+ * 경로 해석과 실행은 Rust 쪽이 한다 — 앱이 볼트 경로를 조립하면 볼트 선택
+ * 규칙이 둘이 된다. */
+export async function openNote(stem: string): Promise<void> {
+  try {
+    await invoke("open_note", { stem });
+  } catch (e) {
+    throw asCmdError(e);
+  }
+}
+
 export async function review(stem: string, outcome: "good" | "bad"): Promise<void> {
   try {
     await invoke("review", { stem, outcome });
