@@ -42,8 +42,17 @@ type Queue struct {
 // QueuePending 은 확인 큐 한 줄이다. daemon.Pending 을 그대로 내보내지 않는다 —
 // 그건 내부 상태 구조라 필드가 바뀌면 앱이 깨진다.
 type QueuePending struct {
-	ID      string   `json:"id"`
-	Domain  string   `json:"domain"`
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+	// Vault 는 이 구간이 기록될 볼트의 이름이다.
+	//
+	// **앱에는 cwd 가 없다.** 메뉴바에 상주하므로 큐가 볼트를 전부 덮는데, 줄에
+	// 볼트가 안 붙으면 사람이 "이게 어디에 쓰일 건지" 를 알 수 없다.
+	//
+	// 도메인이 볼트를 정하는 규칙(config.VaultFor)에서 유도한다 — 여기서 따로
+	// 계산하면 규칙이 둘이 되고, 그러면 앱이 보여 준 볼트와 실제로 쓰이는 볼트가
+	// 어긋날 수 있다.
+	Vault   string   `json:"vault"`
 	When    string   `json:"when"`
 	Signals []string `json:"signals"`
 	Excerpt string   `json:"excerpt"`
@@ -82,8 +91,10 @@ type QueueSimilar struct {
 type QueueReview struct {
 	ID     string `json:"id"` // 어느 구간에서 나왔나
 	Domain string `json:"domain"`
-	At     string `json:"at"`   // RFC3339
-	Path   string `json:"path"` // 만들어진 노트 (볼트 상대 경로)
+	// Vault 는 그 노트가 사는 볼트의 이름이다 (§ QueuePending.Vault 참고).
+	Vault string `json:"vault"`
+	At    string `json:"at"`   // RFC3339
+	Path  string `json:"path"` // 만들어진 노트 (볼트 상대 경로)
 	// Excerpt 는 판별기가 본 것이다. **이 화면의 존재 이유다** — 노트를 이것과
 	// 나란히 놓고 사람이 대조한다. 판별기는 LLM 이라 근거를 지어낼 수 있고,
 	// 지시문의 제약은 완화이지 보장이 아니다.
@@ -104,6 +115,22 @@ type QueueCheck struct {
 	Level  string `json:"level"` // ok | warn | fail
 	Detail string `json:"detail"`
 	Fix    string `json:"fix,omitempty"`
+}
+
+// vaultName 은 도메인이 속한 볼트 이름을 준다. 못 찾으면 빈 문자열이다.
+//
+// **여기서 규칙을 다시 만들지 않는다.** config.VaultFor 가 정본이고, 그것이
+// 쓰기 경로(capture)가 쓰는 것과 같은 함수다 — 앱이 보여 준 볼트와 실제로 쓰이는
+// 볼트가 어긋나면 사람이 그 어긋남을 알아챌 방법이 없다.
+//
+// 못 찾는 경우(설정에 없는 볼트를 가리키는 도메인)는 빈 문자열이다. 기본 볼트로
+// 뭉개지 않는다 — 그건 설정 오류이고 doctor 가 말할 일이다.
+func vaultName(c *config.Config, domain string) string {
+	v, err := c.VaultFor(domain)
+	if err != nil {
+		return ""
+	}
+	return v.Name
 }
 
 // levelName 은 등급을 스스로 설명하는 문자열로 바꾼다.
@@ -191,7 +218,8 @@ func newQueueCmd() *cobra.Command {
 						sig = []string{}
 					}
 					q.Confirm = append(q.Confirm, QueuePending{
-						ID: p.ID(), Domain: p.Domain, When: p.When(),
+						ID: p.ID(), Domain: p.Domain, Vault: vaultName(c, p.Domain),
+						When:    p.When(),
 						Signals: sig, Excerpt: p.Excerpt,
 						Fails: p.Fails, GaveUp: p.GaveUp(),
 						Similar: similarFor(l, c, p.Excerpt, &q),
@@ -214,8 +242,11 @@ func newQueueCmd() *cobra.Command {
 				}
 			}
 
-			due, skipped, derr := retro.Due(l, c)
-			if derr != nil {
+			// **볼트를 전부 돈다.** 앱에는 cwd 가 없으므로 한 볼트만 보면 셸이
+			// 마지막으로 있던 자리의 볼트를 보게 된다 — 실측으로 같은 설정에서
+			// cwd 만 바꿔 부르니 회고 큐가 0건과 43건으로 갈렸다.
+			due, skipped, derrs := retro.AllDue(c)
+			for _, derr := range derrs {
 				q.Warnings = append(q.Warnings, "회고 큐를 만들지 못했다: "+derr.Error())
 			}
 			q.Retro = append(q.Retro, due...)

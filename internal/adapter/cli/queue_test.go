@@ -13,6 +13,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/daemon"
 	"github.com/xian0310567/priorcase/internal/testutil"
 
+	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/core/retro"
 )
@@ -64,15 +65,18 @@ func TestQueueJSONContract(t *testing.T) {
 	want("Queue", Queue{}, "confirm", "review", "retro", "health")
 	// fails·gave_up 은 omitempty 가 아니다. 0/false 도 사실이고, 키가 빠지면 앱이
 	// "실패한 적 없다" 와 "이 필드를 모르는 옛 버전이다" 를 구별하지 못한다.
-	want("QueuePending", QueuePending{}, "id", "domain", "when", "signals", "excerpt",
-		"fails", "gave_up", "similar")
+	// vault 는 omitempty 가 아니다. 설정 오류로 볼트를 못 찾으면 빈 문자열인데,
+	// 키까지 빠지면 앱이 "볼트를 모른다" 와 "필드를 모르는 옛 버전이다" 를
+	// 구별하지 못한다.
+	want("QueuePending", QueuePending{}, "id", "domain", "vault", "when", "signals",
+		"excerpt", "fails", "gave_up", "similar")
 	want("QueueSimilar", QueueSimilar{}, "stem", "path", "summary", "score")
 	// **excerpt 는 omitempty 가 아니다.** 옛 원장 줄에는 없는데, 키까지 빠지면
 	// 앱이 "발췌가 없다" 와 "필드를 모른다" 를 구별하지 못한다.
-	want("QueueReview", QueueReview{}, "id", "domain", "at", "path", "excerpt")
+	want("QueueReview", QueueReview{}, "id", "domain", "vault", "at", "path", "excerpt")
 	want("QueueCheck", QueueCheck{Fix: "x"}, "name", "level", "detail", "fix")
 	want("retro.Item", retro.Item{Author: "x"},
-		"stem", "date", "domain", "summary", "author", "reason", "hits")
+		"stem", "date", "domain", "vault", "summary", "author", "reason", "hits")
 }
 
 // ★ **빈 큐는 `[]` 여야 한다. `null` 이면 안 된다.**
@@ -277,5 +281,145 @@ func TestQueueCommandFillsEveryArray(t *testing.T) {
 		if c.Similar == nil {
 			t.Errorf("%s: similar 가 nil — similarFor 가 호출부에 안 붙었다", c.ID)
 		}
+		// **확인 큐 줄에도 볼트가 붙어야 한다.** 앱에는 cwd 가 없으므로 여러
+		// 볼트의 구간이 한 화면에 섞인다 — 볼트가 없으면 사람이 "이게 어디에
+		// 쓰일 건지" 를 알 수 없다.
+		if c.Vault == "" {
+			t.Errorf("%s: vault 가 비었다 — 어느 볼트에 기록될지 알 수 없다", c.ID)
+		}
+	}
+}
+
+// ★★★ **큐가 볼트를 전부 덮는지, 그리고 줄마다 볼트가 붙는지 명령으로 확인한다.**
+//
+// 메뉴바 앱에는 cwd 가 없다. 큐가 한 볼트만 보면 앱은 **셸이 마지막으로 있던
+// 자리의 볼트**를 보게 되고 사람은 그걸 예측할 수 없다 — 실측으로 같은 설정에서
+// cwd 만 바꿔 부르니 회고 큐가 0건과 43건으로 갈렸다.
+//
+// 구조체를 손으로 만들어 보면 이걸 못 잡는다. 명령을 실제로 돌린다.
+func TestQueueCommandCoversEveryVault(t *testing.T) {
+	// 볼트 둘. 각자 회고 방아쇠에 걸릴 노트를 갖는다.
+	a, b := t.TempDir(), t.TempDir()
+	seed := func(root, project string) {
+		dir := filepath.Join(root, project, "decisions")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range []struct{ date, slug, summary string }{
+			{"2026-08-01", "저장엔진", "저장 엔진을 임베디드 DB 로 고른다"},
+			{"2026-08-02", "저장엔진확장", "저장 엔진 스키마를 단일 테이블로 유지한다"},
+			{"2026-08-03", "저장엔진백업", "저장 엔진 백업을 로컬 git 으로 한다"},
+		} {
+			body := "---\ntype: decision\ndate: " + x.date + "\ndomain: [" + project + "]\n" +
+				"summary: \"" + x.summary + "\"\nstatus: active\noutcome: pending\n---\n\n## 결정\n\nx\n"
+			name := project + "-결정-" + x.slug + "-" + x.date + ".md"
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seed(a, "alpha")
+	seed(b, "beta")
+
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	body := `default_domain = "alpha"
+
+[naming]
+decision_file = "{domain}-결정-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog       = "99-{project}-작업-로그.md"
+index         = "_meta/00-결정-색인.md"
+rollup        = "98-{project}-작업-로그-요약.md"
+
+[[domain]]
+prefix = "alpha"
+folder = "alpha"
+vault  = "personal"
+
+[[domain]]
+prefix = "beta"
+folder = "beta"
+vault  = "work"
+
+[[vault]]
+name = "personal"
+path = "` + a + `"
+
+[[vault]]
+name = "work"
+path = "` + b + `"
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	cmd := newQueueCmd()
+	root := &cobra.Command{Use: "prior"}
+	root.PersistentFlags().String("config", "", "")
+	root.AddCommand(cmd)
+	var out, errb strings.Builder
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"queue", "--json", "--config", cfgPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("queue 실행: %v (stderr=%s)", err, errb.String())
+	}
+
+	var q Queue
+	if err := json.Unmarshal([]byte(out.String()), &q); err != nil {
+		t.Fatalf("출력이 JSON 이 아니다: %v", err)
+	}
+	if len(q.Retro) == 0 {
+		t.Fatalf("회고 큐가 비었다 — 이 테스트가 아무것도 검사하지 않는다 (경고: %v)", q.Warnings)
+	}
+
+	// **두 볼트가 다 나와야 한다.** 하나만 나오면 cwd 에 묶여 있다는 뜻이다.
+	byVault := map[string]int{}
+	for _, it := range q.Retro {
+		if it.Vault == "" {
+			t.Errorf("회고 줄 %s 에 볼트가 없다", it.Stem)
+		}
+		byVault[it.Vault]++
+	}
+	if byVault["personal"] == 0 || byVault["work"] == 0 {
+		t.Errorf("한쪽 볼트만 나왔다: %v — 앱은 cwd 가 없으므로 전부 덮어야 한다", byVault)
+	}
+
+	// 상태도 볼트를 전부 봐야 한다.
+	vaultChecks := 0
+	for _, h := range q.Health {
+		if strings.HasPrefix(h.Name, "볼트") {
+			vaultChecks++
+		}
+	}
+	if vaultChecks < 2 {
+		t.Errorf("상태 검사가 볼트를 %d개만 본다 — 깨진 볼트가 초록불로 보인다", vaultChecks)
+	}
+}
+
+// ★★ **볼트를 못 찾으면 빈 문자열이다. 기본 볼트로 뭉개면 안 된다.**
+//
+// 설정에 없는 볼트를 가리키는 도메인은 **설정 오류**다. 앱이 그걸 기본 볼트로
+// 보여 주면 사람은 그 결정이 거기 쌓이는 줄 알고, 실제로는 기록 자체가 실패한다
+// (capture 는 없는 볼트를 거부한다). 보여 준 것과 실제가 어긋나는 것이 최악이다.
+func TestVaultNameDoesNotFallBack(t *testing.T) {
+	c := &config.Config{
+		Vaults: []config.Vault{{Name: "personal", Path: "/tmp/a"}},
+		Domain: []config.Domain{
+			{Prefix: "alpha", Folder: "alpha", Vault: "personal"},
+			{Prefix: "broken", Folder: "broken", Vault: "없는볼트"},
+		},
+	}
+	if got := vaultName(c, "alpha"); got != "personal" {
+		t.Errorf("alpha → %q, personal 이어야 한다", got)
+	}
+	if got := vaultName(c, "broken"); got != "" {
+		t.Errorf("없는 볼트를 가리키는 도메인 → %q — 빈 문자열이어야 한다. "+
+			"기본 볼트로 뭉개면 앱이 보여 준 볼트와 실제가 어긋난다", got)
+	}
+	// 도메인을 모르면 기본 볼트다 — 그건 오류가 아니라 정상 폴백이다.
+	if got := vaultName(c, ""); got != "personal" {
+		t.Errorf("도메인 불명 → %q, 기본 볼트여야 한다", got)
 	}
 }

@@ -9,6 +9,8 @@
 package retro
 
 import (
+	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -30,9 +32,14 @@ const (
 
 // Item 은 회고 큐의 한 줄이다.
 type Item struct {
-	Stem    string `json:"stem"`
-	Date    string `json:"date"`
-	Domain  string `json:"domain"`
+	Stem   string `json:"stem"`
+	Date   string `json:"date"`
+	Domain string `json:"domain"`
+	// Vault 는 이 결정이 사는 볼트의 이름이다.
+	//
+	// **앱이 이걸 보여 줘야 한다.** 메뉴바 앱에는 cwd 가 없어서 큐가 볼트를 전부
+	// 덮는데, 줄에 볼트가 안 붙으면 사람이 "이게 어디 결정이지" 를 물을 수 없다.
+	Vault   string `json:"vault"`
 	Summary string `json:"summary"`
 	Author  string `json:"author,omitempty"`
 	Reason  Reason `json:"reason"`
@@ -68,6 +75,60 @@ const (
 //
 // **매번 계산한다. 캐시하지 않는다.** 상태를 하나 더 두면 볼트를 손으로 고쳤을 때
 // 그것이 틀어진다 — 색인이 이미 그 문제를 겪었다.
+// AllDue 는 **선언된 볼트를 전부** 돌아 회고 큐를 만든다.
+//
+// # 왜 필요한가
+//
+// Due 는 Layout 하나 = 볼트 하나를 본다. CLI 와 훅은 cwd 로 볼트를 고르므로 그것이
+// 맞지만, **메뉴바 앱에는 cwd 가 없다** — 셸이 마지막으로 있던 자리의 볼트를 보게
+// 되고 사람은 그걸 예측할 수 없다. 실측으로 같은 설정에서 cwd 만 바꿔 부르니
+// 회고 큐가 0건과 43건으로 갈렸다.
+//
+// # 볼트를 넘지 않는다
+//
+// 볼트마다 Due 를 따로 부르고 결과를 잇는다. **한 볼트의 노트가 다른 볼트에서
+// 회수되는 일은 없다** — 회수의 볼트 경계는 그대로다. 넘는 것은 "무엇을 회고할
+// 때가 됐나" 라는 목록뿐이고, 그건 감독이지 회수가 아니다.
+//
+// 한 볼트가 실패해도 나머지를 준다. 다만 **몇 개를 못 봤는지 알린다** — 조용히
+// 짧은 목록을 주면 "회고할 것이 없다" 로 보인다.
+func AllDue(c *config.Config) ([]Item, []store.SkippedNote, []error) {
+	var all []Item
+	var skipped []store.SkippedNote
+	var errs []error
+	for _, v := range c.Vaults {
+		// **볼트가 통째로 없으면 List 는 조용히 빈 목록을 준다.** 결정 폴더를
+		// glob 으로 찾는데 볼트 디렉토리가 없으면 매칭이 0건일 뿐 에러가 아니다.
+		// 그러면 "회고할 것이 없다" 와 "볼트를 못 읽었다" 가 같아 보인다 —
+		// 이 프로젝트가 죄목으로 드는 바로 그 실패다.
+		if fi, err := os.Stat(v.Path); err != nil {
+			errs = append(errs, fmt.Errorf("볼트 %s (%s) 에 접근할 수 없다: %w", v.Name, v.Path, err))
+			continue
+		} else if !fi.IsDir() {
+			errs = append(errs, fmt.Errorf("볼트 %s (%s) 가 디렉토리가 아니다", v.Name, v.Path))
+			continue
+		}
+		items, sk, err := Due(store.NewLayoutFor(c, v), c)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("볼트 %s: %w", v.Name, err))
+			continue
+		}
+		for i := range items {
+			items[i].Vault = v.Name
+		}
+		all = append(all, items...)
+		skipped = append(skipped, sk...)
+	}
+	// 날짜순으로 세운다 — 볼트별로 뭉쳐 있으면 사람이 "오래된 것부터" 를 못 본다.
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Date != all[j].Date {
+			return all[i].Date < all[j].Date
+		}
+		return all[i].Stem < all[j].Stem
+	})
+	return all, skipped, errs
+}
+
 func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error) {
 	notes, skipped, err := l.List()
 	if err != nil {
