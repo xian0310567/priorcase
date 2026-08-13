@@ -30,6 +30,9 @@ func newRecallCmd() *cobra.Command {
 			}
 			hits, skipped, err := search.Recall(l, c, query, search.Options{
 				Cwd: cwd, CrossProject: crossProject, Limit: limit, MinScore: 1,
+				// 사람이 찾을 때도 참고 문서를 본다 — 훅과 같은 코퍼스를 봐야
+				// "훅은 주는데 recall 은 안 준다" 가 안 생긴다.
+				IncludeReferences: true,
 			})
 			if err != nil {
 				return err

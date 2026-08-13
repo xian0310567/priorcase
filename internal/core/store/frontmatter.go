@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -63,10 +64,17 @@ var fence = []byte("---")
 // 걷어낸다. 즉 이 함수는 왕복 무손실이 아니다 — 본문 앞 빈 줄 개수는 보존되지
 // 않고, EmitNote 가 붙이는 빈 줄 하나로 정규화된다. (그 대신 emit∘parse 가
 // 멱등이 된다. 아래 주석 참고.)
+// ErrNoFrontmatter 는 파일이 --- 로 시작하지 않는다는 뜻이다.
+//
+// **센티널로 두는 이유:** 부르는 쪽마다 이게 고장인지 아닌지가 다르다.
+// 결정 노트에는 고장이지만(규약 위반), 참고 문서 훑기에는 그냥 참여하지 않는
+// 평범한 마크다운이다. 문구로 구별하게 하면 문구를 고치는 순간 판정이 깨진다.
+var ErrNoFrontmatter = errors.New("frontmatter 가 없다 (--- 로 시작하지 않는다)")
+
 func ParseFrontmatter(data []byte) (Meta, []byte, error) {
 	var m Meta
 	if !bytes.HasPrefix(data, fence) {
-		return m, nil, fmt.Errorf("frontmatter 가 없다 (--- 로 시작하지 않는다)")
+		return m, nil, ErrNoFrontmatter
 	}
 	rest := data[len(fence):]
 	if i := bytes.IndexByte(rest, '\n'); i >= 0 {

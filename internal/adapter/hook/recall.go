@@ -30,6 +30,13 @@ func (o Options) userPromptSubmit() error {
 	// 읽기 전용이라 그 저장소의 규약을 건드릴 수 없다.
 	hits, skipped, err := search.Recall(o.Layout, o.Config, prompt, search.Options{
 		Cwd: o.Input.Cwd, CrossProject: true, Limit: 3, MinScore: 1,
+		// **참고 문서도 본다.** 실측(2026-08-13)으로 볼트 245건 중 98건이 결정이
+		// 아니었고, 실제 질의 51개로 재 보니 참고를 넣었을 때 1위가 바뀐 것이
+		// 9건인데 결정이 밀려난 것은 1건뿐이었다 — 비어 있던 자리를 채운다.
+		//
+		// 주입은 [참고] 로 갈라 보여 준다. 안 그러면 기획 초안이 확정된 결정으로
+		// 읽힌다.
+		IncludeReferences: true,
 	})
 	if err != nil {
 		return err

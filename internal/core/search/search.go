@@ -30,6 +30,14 @@ type Options struct {
 	CrossProject bool
 	Limit        int
 	MinScore     int
+
+	// IncludeReferences 가 true 면 **참고 문서도 회수 대상**이다
+	// (store.Layout.ListReferences 참고).
+	//
+	// 기본은 false 다 — 결정만 봐야 하는 자리가 있다. capture 의 중복 대조가
+	// 그렇다: "비슷한 기존 **결정**이 있나" 를 묻는 자리에 기획 초안이 끼면
+	// 사람이 중복으로 오판한다.
+	IncludeReferences bool
 }
 
 // Recall 은 프롬프트에 관련된 결정을 점수순으로 주고, 회수 대상에서 아예 빠진
@@ -53,6 +61,14 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	notes, skipped, err := l.List()
 	if err != nil {
 		return nil, nil, err
+	}
+	if o.IncludeReferences {
+		refs, rskipped, rerr := l.ListReferences()
+		if rerr != nil {
+			return nil, nil, rerr
+		}
+		notes = append(notes, refs...)
+		skipped = append(skipped, rskipped...)
 	}
 
 	cwdDomain := ""
@@ -214,6 +230,16 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		summary := m.Summary
 		if summary == "" {
 			summary = h.Note.Stem
+		}
+		// **참고는 결정처럼 그리면 안 된다.**
+		//
+		// 참고에는 status·outcome 이 없다. 위에서 빈 값을 active/pending 으로
+		// 채우므로 그대로 내면 **기획 초안이 확정된 결정으로 보인다** — 에이전트는
+		// 그걸 근거로 삼는다. 상태를 떼고 참고임을 앞에 붙인다.
+		if h.Note.IsReference() {
+			fmt.Fprintf(&b, "- %s %s → %s\n",
+				l.Lang().T("[참고]", "[reference]"), summary, l.RelPath(h.Note.Path))
+			continue
 		}
 		fmt.Fprintf(&b, "- %s %s (%s/%s) → %s\n",
 			date, summary, status, outcome, l.RelPath(h.Note.Path))

@@ -95,6 +95,9 @@ func (s *server) recall(ctx context.Context, req *sdk.CallToolRequest, a recallA
 	cwd, _ := os.Getwd()
 	hits, skipped, err := search.Recall(s.l, s.c, a.Query, search.Options{
 		Cwd: cwd, CrossProject: crossProject, Limit: limit, MinScore: 1,
+		// 사람이 찾을 때도 참고 문서를 본다 — 훅과 같은 코퍼스를 봐야
+		// "훅은 주는데 recall 은 안 준다" 가 안 생긴다.
+		IncludeReferences: true,
 	})
 	if err != nil {
 		return nil, nil, err
