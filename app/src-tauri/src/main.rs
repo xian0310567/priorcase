@@ -1,6 +1,7 @@
 // Windows 릴리스에서 콘솔 창이 뜨지 않게 한다. macOS 에서는 무해하다.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
 mod prior;
 
 use tauri::{
@@ -59,6 +60,12 @@ fn watch_toggle_file(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            commands::queue,
+            commands::resolve_pending,
+            commands::promote,
+            commands::review,
+        ])
         .setup(|app| {
             // **메뉴바 상주 앱은 Dock 에 뜨면 안 된다.**
             //
