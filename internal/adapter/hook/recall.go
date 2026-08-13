@@ -37,6 +37,9 @@ func (o Options) userPromptSubmit() error {
 		// 주입은 [참고] 로 갈라 보여 준다. 안 그러면 기획 초안이 확정된 결정으로
 		// 읽힌다.
 		IncludeReferences: true,
+		// 참고에 두 자리. 주입은 최대 다섯 줄이 된다 — 매 프롬프트에 실리므로
+		// 이보다 늘리면 그 자체가 컨텍스트를 잡아먹는다.
+		ReferenceLimit: 2,
 	})
 	if err != nil {
 		return err

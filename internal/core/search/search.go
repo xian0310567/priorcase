@@ -38,6 +38,16 @@ type Options struct {
 	// 그렇다: "비슷한 기존 **결정**이 있나" 를 묻는 자리에 기획 초안이 끼면
 	// 사람이 중복으로 오판한다.
 	IncludeReferences bool
+
+	// ReferenceLimit 은 **참고에 따로 주는 자리 수**다. 0 이면 참고를 안 준다.
+	//
+	// **한 목록에 섞어 자르면 참고가 결정을 밀어낸다.** H1 제목을 head 로 가정해
+	// 측정했을 때는 밀려남이 2%(51건 중 1건)라 괜찮아 보였는데, 실제 요약을 달고
+	// 다시 재니 **15%(53건 중 8건)** 였다 — 요약은 제목보다 키워드가 촘촘해 훨씬
+	// 센 경쟁자다. 그중에는 "승격 준비해줘" 질의에서 `승격전-적대감사를-기본절차로`
+	// 가 밀린 판이 있었다. 이 시스템이 존재하는 이유가 그런 결정을 그 순간에
+	// 들이미는 것이다.
+	ReferenceLimit int
 }
 
 // Recall 은 프롬프트에 관련된 결정을 점수순으로 주고, 회수 대상에서 아예 빠진
@@ -62,12 +72,13 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if err != nil {
 		return nil, nil, err
 	}
-	if o.IncludeReferences {
-		refs, rskipped, rerr := l.ListReferences()
+	var refs []store.Note
+	if o.IncludeReferences && o.ReferenceLimit > 0 {
+		r, rskipped, rerr := l.ListReferences()
 		if rerr != nil {
 			return nil, nil, rerr
 		}
-		notes = append(notes, refs...)
+		refs = r
 		skipped = append(skipped, rskipped...)
 	}
 
@@ -87,6 +98,15 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	}
 
 	hits = trim(hits, o)
+
+	// **참고는 자기 자리에서 자른다.** 결정과 섞어 자르면 밀어낸다 (§ ReferenceLimit).
+	// 결정을 앞에 둔다 — 사람도 에이전트도 위에서부터 읽는다.
+	if len(refs) > 0 {
+		ro := o
+		ro.Limit = o.ReferenceLimit
+		rhits := trim(scoreAll(refs, keywords, cwdDomain, mentioned), ro)
+		hits = append(hits, rhits...)
+	}
 	return hits, skipped, nil
 }
 
