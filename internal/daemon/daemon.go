@@ -44,6 +44,13 @@ type Options struct {
 	// JudgeAvailable 이 true 면 키워드 시그널을 건너뛴다. 판정은 판별기가 한다.
 	JudgeAvailable bool
 
+	// StartupBudget 은 기동 패스의 drain 에 주는 시간이다. 0 이면 기본값.
+	//
+	// **기동이 밀린 구간에 붙잡히면 안 된다.** 데몬이 오래 꺼져 있었거나
+	// --backfill 이면 밀린 파일이 수백 개일 수 있고, 그걸 다 훑는 동안
+	// `prior watch` 가 뜨지 않는다. 남은 것은 정상 감시 루프의 drain 이 가져간다.
+	StartupBudget time.Duration
+
 	// OnEvent 는 진행 상황을 알린다. nil 이면 아무 데도 안 알린다.
 	OnEvent func(Event)
 }
@@ -264,8 +271,20 @@ func (d *watcher) startupPass(ctx context.Context) {
 		d.emit(Event{Kind: "seed", Note: fmt.Sprintf("체크포인트 %d개를 정리했다 "+
 			"(사라진 파일 · 진행 없음)", n)})
 	}
+	// **자라지 않은 파일은 큐에 넣지 않는다.**
+	//
+	// Scan 은 읽을 것이 없어도 나가면서 흔적을 남기는데 그건 상태 파일 전체를
+	// 다시 쓰는 일이다. 실측으로 이 기계의 체크포인트 3,605건 중 3,563건이 이미
+	// 따라잡은 상태라, 필터가 없으면 매 기동에 그만큼을 헛돈다
+	// (실측 29초 · 상태 쓰기 3,417회).
+	//
+	// **sweepPlanned 와 같은 판단이다.** 두 곳에 두면 한쪽만 고쳐진 채로 남는다.
+	cps := d.st.CheckpointSnapshot()
 	queued := 0
 	for _, p := range plan.Scan {
+		if fi, err := os.Stat(p); err == nil && !cps[p].Behind(fi.Size()) {
+			continue
+		}
 		d.mu.Lock()
 		d.dirty[p] = true
 		d.mu.Unlock()
@@ -279,6 +298,12 @@ func (d *watcher) startupPass(ctx context.Context) {
 	}
 }
 
+// DefaultStartupBudget 은 기동 패스 drain 의 기본 상한이다.
+//
+// 훑기(SweepOnce)의 10초와 같은 수를 쓴다 — 같은 일을 하는 두 자리가 다른
+// 상한을 가지면 어느 쪽이 옳은지 물을 자리가 생긴다.
+const DefaultStartupBudget = 10 * time.Second
+
 // drain 은 쌓인 파일을 훑는다.
 func (d *watcher) drain(ctx context.Context, promote bool) {
 	d.mu.Lock()
@@ -289,8 +314,26 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 	d.dirty = map[string]bool{}
 	d.mu.Unlock()
 
+	// **예산을 넘기면 남은 것을 dirty 로 되돌린다.** 버리면 그 파일은 다시
+	// 바뀌지 않는 한 영영 안 읽힌다 — fsnotify 이벤트가 두 번 다시 안 온다.
+	budget := d.o.StartupBudget
+	if budget <= 0 {
+		budget = DefaultStartupBudget
+	}
+	deadline := time.Now().Add(budget)
+
 	flagged := false
-	for _, p := range paths {
+	for i, p := range paths {
+		if time.Now().After(deadline) {
+			d.mu.Lock()
+			for _, rest := range paths[i:] {
+				d.dirty[rest] = true
+			}
+			d.mu.Unlock()
+			d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
+				"예산(%v)을 넘겨 %d개를 다음 기회로 넘긴다", budget, len(paths)-i)})
+			break
+		}
 		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable, d.hosts)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
