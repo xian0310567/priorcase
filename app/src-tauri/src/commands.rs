@@ -295,6 +295,39 @@ mod tests {
         assert!(out.contains("priorcase-결정-x-2026-08-13"), "out={out}");
     }
 
+    // ★★★ **가짜 prior 가 진짜 하위 프로세스 경로를 통과해야 한다.**
+    //
+    // TS 쪽 시험은 픽스처의 stdout 을 파일에서 읽어 검사한다 — 그건 **JSON 이
+    // 맞는가**를 본다. 여기서는 그 바이트가 실제로 spawn · 파이프 · 상한을 거쳐
+    // 우리 손에 오는지를 본다. 둘은 다른 것이고, 이 경로에서만 나는 고장이
+    // 있다 (파이프 교착 · 좀비 · 상한).
+    #[test]
+    fn 큐_픽스처들이_실제_실행_경로를_통과한다() {
+        for name in ["ok", "warnings", "onebroken"] {
+            let out = run_queue(&fixture(&format!("fake-prior-{name}.sh")))
+                .unwrap_or_else(|e| panic!("{name}: {} ({})", e.message, e.kind));
+            let v: serde_json::Value =
+                serde_json::from_str(&out).unwrap_or_else(|e| panic!("{name}: JSON 아님 {e}"));
+            for k in ["confirm", "review", "retro", "health"] {
+                assert!(v[k].is_array(), "{name}: {k} 가 배열이 아니다");
+            }
+        }
+    }
+
+    // ★★ **깨진 JSON 은 성공으로 온다 — 실패로 오지 않는다.**
+    //
+    // prior 가 종료코드 0 으로 쓰레기를 내는 판이 있다 (패닉 뒤 부분 출력).
+    // Rust 층은 그걸 그대로 넘기고, **판정은 api.ts 가 한다.** 여기서 미리
+    // 실패로 바꾸면 "실행이 안 됐다" 와 "출력이 깨졌다" 가 같아 보인다.
+    #[test]
+    fn 깨진_JSON_은_Rust_층에서_성공으로_온다() {
+        let out = run_queue(&fixture("fake-prior-broken-json.sh")).expect("종료코드는 0 이다");
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&out).is_err(),
+            "픽스처가 실제로 깨진 JSON 을 내야 한다: {out}"
+        );
+    }
+
     // ★ 인자를 그대로 넘기는지 본다. id 에 공백·한글이 섞여도 깨지면 안 된다.
     #[test]
     fn 인자를_그대로_넘긴다() {
