@@ -10,3 +10,20 @@ body { margin: 0; font-size: 13px; }
 .warnings-list { margin: 4px 0 0; padding-left: 18px; }
 .warnings-item { color: #92400e; }
 .empty { color: #888; text-align: center; padding: 28px 0; margin: 0; }
+
+.card { border: 1px solid #0002; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 11px; color: #666; margin-bottom: 6px; }
+.card-head .vault { font-weight: 600; color: inherit; }
+.gaveup { color: #b45309; font-weight: 600; }
+.fails { color: #92400e; }
+.similar { background: #0001; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; font-size: 11px; }
+.similar-title { color: #666; margin-bottom: 4px; }
+.similar-row { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.similar-row .score { min-width: 32px; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
+.similar-summary { color: #666; margin: 0 0 4px 38px; flex-basis: 100%; }
+.excerpt { white-space: pre-wrap; font-size: 11px; background: #0001; padding: 8px; border-radius: 4px; margin: 0; max-height: 320px; overflow: auto; }
+.excerpt-more { font-size: 11px; color: #2563eb; margin-top: 4px; cursor: pointer; user-select: none; }
+.excerpt-more:hover { text-decoration: underline; }
+.buttons { display: flex; gap: 8px; margin-top: 8px; }
+button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #0003; cursor: pointer; background: #0001; }
+button.primary { background: #2563eb; color: #fff; border-color: transparent; }
