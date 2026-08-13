@@ -10,3 +10,8 @@
 # local agent settings (permission grants — never publish)
 # sdd scratch
 dist/
+
+# 데스크탑 앱
+/app/node_modules/
+/app/dist/
+/app/src-tauri/target/

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+src-tauri/target/
+
+# tauri-build 가 매 빌드마다 새로 만든다. 추적하면 diff 가 계속 난다.
+src-tauri/gen/
