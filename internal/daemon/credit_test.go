@@ -17,7 +17,7 @@ import (
 // note 는 픽스처 볼트에 결정 노트 하나를 심는다. session 이 비면 세션 대조에 안 걸린다.
 func note(t *testing.T, vc *config.Config, slug, date, session string) {
 	t.Helper()
-	p := filepath.Join(vc.Vault, "alpha", "decisions",
+	p := filepath.Join(vc.DefaultVaultPath(), "alpha", "decisions",
 		fmt.Sprintf("alpha-결정-%s-%s.md", slug, date))
 	body := fmt.Sprintf("---\ntype: decision\ndate: %s\ndomain: [alpha]\nsummary: \"x\"\n"+
 		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n"+

@@ -60,6 +60,13 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if r.Date == "" {
 		r.Date = time.Now().Format("2006-01-02")
 	}
+	// **볼트를 여기서 정한다.** 도메인이 볼트를 고르는 규칙은 하나여야 하고,
+	// capture 는 도메인을 이미 알고 있다 — 호출부에 맡기면 훅·CLI·MCP 가 서로
+	// 다른 볼트에 쓸 수 있고, 그 어긋남은 파일이 엉뚱한 자리에 생긴 뒤에야 드러난다.
+	l, err := l.For(r.Domain)
+	if err != nil {
+		return Result{}, err
+	}
 	path, err := l.DecisionPath(r.Domain, r.Slug, r.Date)
 	if err != nil {
 		return Result{}, err

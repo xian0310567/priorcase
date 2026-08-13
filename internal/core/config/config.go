@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -51,10 +52,28 @@ type Domain struct {
 	// 체크아웃하므로, 새 팀원이 설정을 손으로 고쳐야 도메인이 잡힌다.
 	// `owner/repo` 는 누구 기계에서든 같다.
 	Repos []string `toml:"repos"`
+	// Vault 는 이 도메인의 결정이 사는 볼트 이름이다. 비면 기본 볼트.
+	//
+	// **프로젝트가 볼트를 고른다.** cwd 로 프로젝트가 정해지면 그 프로젝트의
+	// 볼트에 쓰고 그 볼트에서만 회수한다 — 볼트가 쓰기와 회수의 경계다.
+	Vault string `toml:"vault"`
 }
 
 type Config struct {
-	Vault   string   `toml:"vault"`
+	// Vaults 는 결정 노트가 사는 자리들이다.
+	//
+	// 설정에서는 두 모양을 다 받는다 (Load 의 2패스 디코딩):
+	//
+	//	vault = "~/Documents/Obsidian Vault"     # 하나뿐일 때
+	//
+	//	[[vault]]                                 # 여럿일 때
+	//	name = "personal"
+	//	path = "~/Documents/Obsidian Vault"
+	//
+	// TOML 은 같은 키를 문자열과 테이블 배열로 겸할 수 없어서, 파일을 먼저 훑어
+	// 어느 모양인지 보고 그에 맞는 구조체로 읽는다. 옛 설정을 그대로 쓰게 하려면
+	// 이 방법뿐이다 — 키 이름을 바꾸면 기존 사용자의 설정이 깨진다.
+	Vaults  []Vault  `toml:"-"`
 	Exclude []string `toml:"exclude"`
 	// DefaultDomain 은 어느 [[domain]] 의 paths 에도 안 걸릴 때 쓸 도메인이다.
 	//
@@ -116,31 +135,99 @@ func ResolvePath(path string) (string, error) {
 // Load 는 설정을 읽는다. path 가 비면 ResolvePath 가 정한 경로를 쓴다
 // (PRIORCASE_CONFIG → XDG 기본 경로).
 // PRIORCASE_VAULT 가 설정돼 있으면 vault 를 덮어쓴다 (테스트 볼트 격리용).
+// vaultIsTable 은 설정의 vault 키가 [[vault]] 형태인지 본다.
+//
+// TOML 은 같은 키를 문자열과 테이블 배열로 겸할 수 없고, Go 구조체도 필드 하나에
+// 두 타입을 받을 수 없다. 그래서 **엄격 검사 없이 한 번 가볍게 훑어** 모양을 정하고,
+// 그에 맞는 구조체로 다시 읽는다.
+func vaultIsTable(src []byte) (bool, error) {
+	var raw map[string]any
+	if err := toml.Unmarshal(src, &raw); err != nil {
+		return false, err
+	}
+	_, ok := raw["vault"].([]any)
+	return ok, nil
+}
+
+// tomlBase 는 vault 를 뺀 나머지 설정이다.
+//
+// **두 변형이 이 구조체를 공유해야 한다.** 각자 필드를 들면 한쪽에만 키를 더했을 때
+// 다른 쪽에서 그 키가 조용히 무시되고, DisallowUnknownFields 도 못 잡는다
+// (필드가 있는 변형으로 읽히면 통과하니까).
+type tomlBase struct {
+	Exclude       []string `toml:"exclude"`
+	DefaultDomain string   `toml:"default_domain"`
+	Lang          string   `toml:"lang"`
+	Author        string   `toml:"author"`
+	Naming        Naming   `toml:"naming"`
+	Capture       Capture  `toml:"capture"`
+	Domain        []Domain `toml:"domain"`
+}
+
+func (b tomlBase) into(c *Config) {
+	c.Exclude, c.DefaultDomain, c.Lang, c.Author = b.Exclude, b.DefaultDomain, b.Lang, b.Author
+	c.Naming, c.Capture, c.Domain = b.Naming, b.Capture, b.Domain
+}
+
 func Load(path string) (*Config, error) {
 	path, err := ResolvePath(path)
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(path)
+	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("설정 파일을 열 수 없다 (%s): %w", path, err)
 	}
-	defer f.Close()
 
-	dec := toml.NewDecoder(f)
-	dec.DisallowUnknownFields() // 오타 키를 조용히 넘기지 않는다
-
-	var c Config
-	if err := dec.Decode(&c); err != nil {
-		var se *toml.StrictMissingError
-		if errors.As(err, &se) {
-			return nil, fmt.Errorf("설정에 알 수 없는 키가 있다 (%s):\n%s", path, se.String())
-		}
+	table, err := vaultIsTable(src)
+	if err != nil {
 		return nil, fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
 	}
 
+	var c Config
+	decode := func(v any) error {
+		dec := toml.NewDecoder(bytes.NewReader(src))
+		dec.DisallowUnknownFields() // 오타 키를 조용히 넘기지 않는다
+		if err := dec.Decode(v); err != nil {
+			var se *toml.StrictMissingError
+			if errors.As(err, &se) {
+				return fmt.Errorf("설정에 알 수 없는 키가 있다 (%s):\n%s", path, se.String())
+			}
+			return fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
+		}
+		return nil
+	}
+
+	if table {
+		var f struct {
+			tomlBase
+			Vault []Vault `toml:"vault"`
+		}
+		if err := decode(&f); err != nil {
+			return nil, err
+		}
+		f.tomlBase.into(&c)
+		c.Vaults = f.Vault
+	} else {
+		var f struct {
+			tomlBase
+			Vault string `toml:"vault"`
+		}
+		if err := decode(&f); err != nil {
+			return nil, err
+		}
+		f.tomlBase.into(&c)
+		// 레거시 단일 볼트. 이름이 없으므로 기본 이름을 붙인다 —
+		// 도메인이 vault 를 안 적으면 어차피 이것으로 온다.
+		if f.Vault != "" {
+			c.Vaults = []Vault{{Name: DefaultVaultName, Path: f.Vault}}
+		}
+	}
+
+	// **환경변수는 기본 볼트만 덮는다.** 여러 볼트를 환경변수 하나로 표현할 방법이
+	// 없고, 이건 테스트와 특수 배치를 위한 문이다.
 	if v := os.Getenv("PRIORCASE_VAULT"); v != "" {
-		c.Vault = v
+		c.Vaults = []Vault{{Name: DefaultVaultName, Path: v}}
 	}
 	if err := c.expand(); err != nil {
 		return nil, fmt.Errorf("경로 확장 실패 (%s): %w", path, err)
@@ -183,8 +270,10 @@ func (c *Config) expand() error {
 		return p, nil
 	}
 	var err error
-	if c.Vault, err = tilde(c.Vault); err != nil {
-		return err
+	for i := range c.Vaults {
+		if c.Vaults[i].Path, err = tilde(c.Vaults[i].Path); err != nil {
+			return err
+		}
 	}
 	for i := range c.Exclude {
 		if c.Exclude[i], err = tilde(c.Exclude[i]); err != nil {
@@ -202,8 +291,8 @@ func (c *Config) expand() error {
 }
 
 func (c *Config) validate() error {
-	if c.Vault == "" {
-		return fmt.Errorf("vault 가 비어 있다")
+	if err := c.validateVaults(); err != nil {
+		return err
 	}
 	if err := c.validateNaming(); err != nil {
 		return err

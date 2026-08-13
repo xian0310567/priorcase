@@ -41,8 +41,8 @@ func TestStarterConfigIsLoadable(t *testing.T) {
 		b, _ := os.ReadFile(cfgPath)
 		t.Fatalf("만든 설정을 스스로 읽지 못한다: %v\n---\n%s", err, b)
 	}
-	if c.Vault != vault {
-		t.Errorf("Vault = %q, want %q", c.Vault, vault)
+	if c.DefaultVaultPath() != vault {
+		t.Errorf("Vault = %q, want %q", c.DefaultVaultPath(), vault)
 	}
 	if len(c.Capture.Signals) == 0 {
 		t.Error("signals 가 비었다 — 데몬이 아무것도 표시하지 않는다")
@@ -159,7 +159,7 @@ func TestStarterConfigIsImmediatelyUsable(t *testing.T) {
 		t.Errorf("DomainForCwd = %q, 폴백 %q 여야 한다", got, c.DefaultDomain)
 	}
 	// 볼트가 실제로 있어야 한다 — 없는 경로를 가리키면 첫 실행부터 빨간불이다.
-	if fi, err := os.Stat(c.Vault); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(c.DefaultVaultPath()); err != nil || !fi.IsDir() {
 		t.Errorf("볼트를 안 만들었다: %v", err)
 	}
 	// rollup·judge 키가 있어야 prior rollup 과 자동 기록이 바로 된다.

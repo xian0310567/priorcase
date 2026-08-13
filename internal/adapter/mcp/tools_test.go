@@ -120,7 +120,7 @@ func TestRecallWithNoMatchSaysSo(t *testing.T) {
 // 에이전트 컨텍스트에는 안 들어간다 — MCP 경로에서 침묵이 부활하는 지점이다.
 func TestRecallReportsSkippedInResponse(t *testing.T) {
 	c := testutil.VaultConfig(t)
-	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
+	broken := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
 	if err := os.WriteFile(broken, []byte("---\ntitle: 구 스키마\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestCaptureWritesNoteAndPiggybacks(t *testing.T) {
 		"body":    "## 결정\n캐시를 둔다.\n",
 	}))
 
-	path := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-캐시계층-2026-08-07.md")
+	path := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-캐시계층-2026-08-07.md")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("노트가 디스크에 없다: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestReviewUpdatesOutcome(t *testing.T) {
 		"retrospective": "1년 써 보니 옳았다.",
 	}))
 
-	path := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장엔진-2026-08-01.md")
+	path := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장엔진-2026-08-01.md")
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

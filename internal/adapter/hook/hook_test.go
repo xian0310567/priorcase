@@ -105,7 +105,7 @@ func TestRecallInjectsRelatedDecisions(t *testing.T) {
 // **stdout 은 그대로 컨텍스트가 된다.** 경고가 한 줄이라도 섞이면 주입 블록이 오염된다.
 func TestRecallKeepsStdoutPure(t *testing.T) {
 	c := cfg(t)
-	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
+	broken := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
 	if err := os.WriteFile(broken, []byte("---\ntitle: 구 스키마\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

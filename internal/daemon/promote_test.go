@@ -56,7 +56,7 @@ func TestDaemonCanPromoteWithoutHook(t *testing.T) {
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Err: &out, Label: "prior watch"})
 
-	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*저장엔진*"))
+	m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*저장엔진*"))
 	if len(m) == 0 {
 		t.Fatalf("데몬이 승격하지 못했다:\n%s", out.String())
 	}
@@ -192,7 +192,7 @@ func TestWatchPromotesInSteadyState(t *testing.T) {
 	cancel()
 	<-done
 
-	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*데몬승격*"))
+	m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*데몬승격*"))
 	if len(m) == 0 {
 		t.Error("노트가 안 만들어졌다")
 	}

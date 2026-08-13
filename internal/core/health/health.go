@@ -82,7 +82,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
 	checkIndex(r, l, notes)
-	checkIndexInGit(r, c, l)
+	checkIndexInGit(r, l)
 	return r
 }
 
@@ -190,16 +190,26 @@ func slugKey(stem string) string {
 	return string(out)
 }
 
+// checkVaultDir 은 **선언된 볼트를 전부** 본다.
+//
+// 하나만 보면 나머지가 깨져 있어도 초록불이 뜬다 — 그 볼트를 쓰는 프로젝트에서
+// 일할 때에야 드러나고, 그때는 기록이 이미 실패한 뒤다.
 func checkVaultDir(r *Report, c *config.Config) {
-	fi, err := os.Stat(c.Vault)
-	switch {
-	case err != nil:
-		r.add("볼트", Fail, fmt.Sprintf("%s 에 접근할 수 없다 (%v)", c.Vault, err),
-			"설정의 vault 경로를 확인하라")
-	case !fi.IsDir():
-		r.add("볼트", Fail, c.Vault+" 가 디렉토리가 아니다", "설정의 vault 경로를 확인하라")
-	default:
-		r.add("볼트", OK, c.Vault, "")
+	for _, v := range c.Vaults {
+		label := "볼트"
+		if len(c.Vaults) > 1 {
+			label = "볼트 " + v.Name
+		}
+		fi, err := os.Stat(v.Path)
+		switch {
+		case err != nil:
+			r.add(label, Fail, fmt.Sprintf("%s 에 접근할 수 없다 (%v)", v.Path, err),
+				"설정의 vault 경로를 확인하라")
+		case !fi.IsDir():
+			r.add(label, Fail, v.Path+" 가 디렉토리가 아니다", "설정의 vault 경로를 확인하라")
+		default:
+			r.add(label, OK, v.Path, "")
+		}
 	}
 }
 
@@ -232,7 +242,7 @@ func checkDomainFolders(r *Report, c *config.Config, l *store.Layout) {
 			fmt.Sprintf("%d개 · 폴백 %s", len(c.Domain), c.DefaultDomain), "")
 	}
 
-	checkTeamPortability(r, c)
+	checkTeamPortability(r, c, l)
 
 	dirs := l.DecisionDirs()
 	var missing []string
@@ -342,8 +352,8 @@ func hasPrefix(c *config.Config, prefix string) bool {
 // 그 사람에게 이 경고는 고칠 이유가 없는 소음이다. 이 프로젝트는 소음을 죄목으로
 // 삼는다 — 안전망이 소음이 되면 사람은 무시하는 법을 배운다. 볼트가 git 아래 있다는
 // 것은 **실제로 공유되고 있다는 신호**이고, 그때만 이 경고가 행동을 부른다.
-func checkTeamPortability(r *Report, c *config.Config) {
-	if config.RepoFor(c.Vault) == "" && !isGitDir(c.Vault) {
+func checkTeamPortability(r *Report, c *config.Config, l *store.Layout) {
+	if config.RepoFor(l.Vault()) == "" && !isGitDir(l.Vault()) {
 		return
 	}
 	var pathOnly []string
@@ -397,12 +407,12 @@ func isGitDir(dir string) bool {
 //
 // **볼트가 git 이고 색인이 무시 목록에 없을 때만 말한다.** 혼자 쓰거나 git 이
 // 아니면 아무 문제가 아니다.
-func checkIndexInGit(r *Report, c *config.Config, l *store.Layout) {
-	if !isGitDir(c.Vault) {
+func checkIndexInGit(r *Report, l *store.Layout) {
+	if !isGitDir(l.Vault()) {
 		return
 	}
 	rel := l.RelPath(l.IndexPath())
-	if gitIgnores(c.Vault, rel) {
+	if gitIgnores(l.Vault(), rel) {
 		r.add("색인/git", OK, rel+" 은 무시 목록에 있다 — 병합 충돌이 없다", "")
 		return
 	}

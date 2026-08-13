@@ -53,7 +53,7 @@ func TestPromoteRunsEvenWhenDaemonOwnsLock(t *testing.T) {
 	if !strings.Contains(r.err, "자동 기록") {
 		t.Errorf("데몬이 락을 쥐었다고 승격을 건너뛰었다 — prior watch 가 자동 기록을 끈다:\n%s", r.err)
 	}
-	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*저장엔진*"))
+	m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*저장엔진*"))
 	if len(m) == 0 {
 		t.Error("노트가 안 만들어졌다")
 	}

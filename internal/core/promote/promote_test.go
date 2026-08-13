@@ -60,7 +60,7 @@ func TestPromoteWritesThroughCapture(t *testing.T) {
 		t.Errorf("태그가 안 붙었다:\n%s", s)
 	}
 	// 색인도 갱신됐어야 한다.
-	idx, _ := os.ReadFile(filepath.Join(c.Vault, "_meta", "00-결정-색인.md"))
+	idx, _ := os.ReadFile(filepath.Join(c.DefaultVaultPath(), "_meta", "00-결정-색인.md"))
 	if !strings.Contains(string(idx), "SQLite 로 간다") {
 		t.Error("색인이 갱신되지 않았다")
 	}

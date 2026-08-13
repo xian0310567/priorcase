@@ -16,7 +16,7 @@ import (
 func englishLayout(t *testing.T) (*store.Layout, *config.Config) {
 	t.Helper()
 	c := &config.Config{
-		Vault: t.TempDir(),
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: t.TempDir()}},
 		Naming: config.Naming{
 			DecisionFile: "{domain}-decision-{slug}-{date}.md",
 			DecisionsDir: "{project}/decisions",

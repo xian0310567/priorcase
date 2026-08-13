@@ -125,7 +125,7 @@ func TestRealVault(t *testing.T) {
 func realVaultConfig(t *testing.T, vault string) *config.Config {
 	t.Helper()
 	c := &config.Config{
-		Vault: vault,
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: vault}},
 		Naming: config.Naming{
 			DecisionFile: "{domain}-결정-{slug}-{date}.md",
 			DecisionsDir: "{project}/decisions",

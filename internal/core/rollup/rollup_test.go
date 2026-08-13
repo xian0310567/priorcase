@@ -18,7 +18,7 @@ func layout(t *testing.T) (*store.Layout, string) {
 	t.Helper()
 	c := testutil.VaultConfig(t)
 	c.Naming.Rollup = "98-{project}-작업-로그-요약.md"
-	return store.NewLayout(c), c.Vault
+	return store.NewLayout(c), c.DefaultVaultPath()
 }
 
 func writeLog(t *testing.T, vault, folder, body string) {

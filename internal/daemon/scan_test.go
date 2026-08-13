@@ -17,7 +17,7 @@ import (
 
 func scanCfg() *config.Config {
 	return &config.Config{
-		Vault:   "/tmp/vault",
+		Vaults:  []config.Vault{{Name: config.DefaultVaultName, Path: "/tmp/vault"}},
 		Exclude: []string{"/tmp/proj/secret"},
 		Capture: config.Capture{
 			Signals:        []string{"결정", "채택"},
@@ -339,7 +339,7 @@ func TestOtherDomainRecordDoesNotSuppress(t *testing.T) {
 // 볼트를 못 읽으면 표시하는 쪽으로 기운다 — 대조 실패로 안전망이 조용히 꺼지면 안 된다.
 func TestVaultReadFailureStillFlags(t *testing.T) {
 	vc := testutil.VaultConfig(t)
-	vc.Vault = filepath.Join(t.TempDir(), "없는볼트")
+	vc.Vaults = []config.Vault{{Name: config.DefaultVaultName, Path: filepath.Join(t.TempDir(), "없는볼트")}}
 	vc.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 6}
 	l := store.NewLayout(vc)
 
@@ -365,7 +365,7 @@ func TestSessionMatchSuppressesAcrossDays(t *testing.T) {
 	l := store.NewLayout(vc)
 
 	// 픽스처에 없는 날짜(2026-08-07)의 대화인데, 그 세션으로 기록된 노트를 심는다.
-	note := filepath.Join(vc.Vault, "alpha", "decisions", "alpha-결정-세션기록-2026-01-01.md")
+	note := filepath.Join(vc.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-세션기록-2026-01-01.md")
 	body := "---\ntype: decision\ndate: 2026-01-01\ndomain: [alpha]\nsummary: \"x\"\n" +
 		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
 		"source_session: \"S1\"\n---\n\n## 결정\n\nx\n"

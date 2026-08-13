@@ -38,7 +38,7 @@ func TestCaptureCmdWritesNoteAndShowsRelated(t *testing.T) {
 		t.Errorf("출력에 편승된 관련 과거 결정이 없다:\n%s", got)
 	}
 
-	notePath := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장-엔진-재검토-2026-08-07.md")
+	notePath := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장-엔진-재검토-2026-08-07.md")
 	data, err := os.ReadFile(notePath)
 	if err != nil {
 		t.Fatalf("결정 노트 파일이 생기지 않았다 (%s): %v", notePath, err)
@@ -83,7 +83,7 @@ func TestCaptureCmdRequiresFlags(t *testing.T) {
 // 내 기록이 실패하면 안 된다.
 func TestCaptureCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
+	rel := plantLegacyNote(t, c.DefaultVaultPath()) // index_test.go 의 헬퍼
 
 	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}

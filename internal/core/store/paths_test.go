@@ -12,7 +12,7 @@ func testLayout(t *testing.T) (*Layout, string) {
 	t.Helper()
 	vault := t.TempDir()
 	c := &config.Config{
-		Vault: vault,
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: vault}},
 		Naming: config.Naming{
 			DecisionFile: "{domain}-결정-{slug}-{date}.md",
 			DecisionsDir: "{project}/decisions",

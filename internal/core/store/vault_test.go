@@ -55,7 +55,7 @@ func TestDecisionStems(t *testing.T) {
 		}
 	}
 	// common 도메인은 픽스처에 폴더가 있지만, 존재하지 않는 폴더도 빈 목록이어야 한다.
-	if err := os.RemoveAll(filepath.Join(l.c.Vault, "common", "decisions")); err != nil {
+	if err := os.RemoveAll(filepath.Join(l.c.DefaultVaultPath(), "common", "decisions")); err != nil {
 		t.Fatal(err)
 	}
 	empty, err := l.DecisionStems("common")

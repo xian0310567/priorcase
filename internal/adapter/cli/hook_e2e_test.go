@@ -78,7 +78,7 @@ func TestHookNeverLeaksErrorsToStdout(t *testing.T) {
 func TestHookRecallStdoutIsOnlyTheBlock(t *testing.T) {
 	bin := buildCB(t)
 	cfgPath, c := testutil.VaultConfigFile(t)
-	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
+	broken := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
 	if err := os.WriteFile(broken, []byte("---\ntitle: 구 스키마\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

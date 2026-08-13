@@ -38,7 +38,7 @@ func TestReviewCmdUpdatesOutcomeAndRetro(t *testing.T) {
 		t.Errorf("출력에 대상 stem 이 없다:\n%s", got)
 	}
 
-	notePath := filepath.Join(c.Vault, "alpha", "decisions", fixtureStem+".md")
+	notePath := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", fixtureStem+".md")
 	data, err := os.ReadFile(notePath)
 	if err != nil {
 		t.Fatalf("노트 파일을 읽을 수 없다: %v", err)
@@ -73,7 +73,7 @@ func TestReviewCmdRejectsMissingStem(t *testing.T) {
 // 알리는지 본다 — review 역시 갱신 뒤 내부적으로 색인을 다시 쓴다.
 func TestReviewCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
+	rel := plantLegacyNote(t, c.DefaultVaultPath()) // index_test.go 의 헬퍼
 
 	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}

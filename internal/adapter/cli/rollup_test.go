@@ -20,7 +20,7 @@ func listOut(t *testing.T, body string, now time.Time) string {
 	t.Helper()
 	c := testutil.VaultConfig(t)
 	c.Naming.Rollup = "98-{project}-요약.md"
-	writeWorklog(t, c.Vault, "alpha", body)
+	writeWorklog(t, c.DefaultVaultPath(), "alpha", body)
 
 	var b strings.Builder
 	if err := listWeeks(&b, store.NewLayout(c), now); err != nil {

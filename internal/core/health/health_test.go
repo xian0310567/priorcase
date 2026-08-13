@@ -58,7 +58,7 @@ func TestHealthyVault(t *testing.T) {
 // 그래서 이건 Warn 이 아니라 Fail 이다.
 func TestUndeclaredDomainIsFail(t *testing.T) {
 	c := testutil.VaultConfig(t)
-	dir := filepath.Join(c.Vault, "감마", "decisions")
+	dir := filepath.Join(c.DefaultVaultPath(), "감마", "decisions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestUndeclaredDomainIsFail(t *testing.T) {
 // 빈 폴더는 알리지 않는다. 결정이 없으면 잃을 것도 없고, 소음만 는다.
 func TestEmptyUndeclaredFolderIsNotReported(t *testing.T) {
 	c := testutil.VaultConfig(t)
-	if err := os.MkdirAll(filepath.Join(c.Vault, "감마", "decisions"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(c.DefaultVaultPath(), "감마", "decisions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if got := find(t, Vault(c, store.NewLayout(c)), "미선언 도메인"); got.Level != OK {
@@ -100,7 +100,7 @@ func TestStaleIndexIsDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 노트를 하나 더 넣는다 — 색인은 그대로다.
-	dir := filepath.Join(c.Vault, "alpha", "decisions")
+	dir := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions")
 	note := "---\ntype: decision\ndate: 2026-08-08\ndomain: [alpha]\nsummary: \"새 결정\"\n" +
 		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
 		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
@@ -120,7 +120,7 @@ func TestStaleIndexIsDetected(t *testing.T) {
 // 읽지 못한 노트는 Fail 이다 — 회수에서 빠지는 것은 조용한 손실이다.
 func TestUnreadableNoteIsFail(t *testing.T) {
 	c := testutil.VaultConfig(t)
-	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
+	broken := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-01-01.md")
 	if err := os.WriteFile(broken, []byte("---\ntitle: 구 스키마\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestUnreadableNoteIsFail(t *testing.T) {
 // 볼트가 없으면 나머지를 볼 것도 없다.
 func TestMissingVaultIsFail(t *testing.T) {
 	c := &config.Config{
-		Vault:  filepath.Join(t.TempDir(), "없는볼트"),
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: filepath.Join(t.TempDir(), "없는볼트")}},
 		Naming: testutil.VaultConfig(t).Naming,
 		Domain: []config.Domain{{Prefix: "alpha", Folder: "alpha"}},
 	}
@@ -155,7 +155,7 @@ func TestMissingVaultIsFail(t *testing.T) {
 func TestSchemaViolationIsCaught(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	// 접두어(alpha)와 domain 첫 값(beta)이 어긋난 노트를 손으로 심는다.
-	bad := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-어긋남-2026-08-08.md")
+	bad := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-어긋남-2026-08-08.md")
 	body := "---\ntype: decision\ndate: 2026-08-08\ndomain: [beta]\nsummary: \"x\"\n" +
 		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
 		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
@@ -179,7 +179,7 @@ func TestSchemaViolationIsCaught(t *testing.T) {
 // 감사 결함 4 — 하이픈·대소문자만 다른 중복. prior capture 는 거부하지만 손으로 쓰면 우회된다.
 func TestSimilarSlugIsCaught(t *testing.T) {
 	c := testutil.VaultConfig(t)
-	dup := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장-엔진-2026-08-01.md")
+	dup := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장-엔진-2026-08-01.md")
 	body := "---\ntype: decision\ndate: 2026-08-01\ndomain: [alpha]\nsummary: \"x\"\n" +
 		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
 		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
@@ -220,7 +220,7 @@ func TestRecentDecisionsCounts(t *testing.T) {
 func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
 	pathOnly := func(vault string) *config.Config {
 		return &config.Config{
-			Vault: vault, DefaultDomain: "common",
+			Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: vault}}, DefaultDomain: "common",
 			Domain: []config.Domain{
 				// **폴백에도 paths 를 준다.** 없으면 "폴백은 지적하지 않는다" 는
 				// 분기를 테스트가 아예 안 타서, 그 규칙이 사라져도 통과한다.
@@ -241,7 +241,7 @@ func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
 	// 혼자 쓰는 볼트 — 조용해야 한다.
 	solo := t.TempDir()
 	r := &Report{}
-	checkTeamPortability(r, pathOnly(solo))
+	checkTeamPortability(r, pathOnly(solo), store.NewLayout(pathOnly(solo)))
 	if c := find(r); c != nil {
 		t.Errorf("혼자 쓰는 볼트에 경고를 냈다 (소음): %s", c.Detail)
 	}
@@ -252,7 +252,7 @@ func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = &Report{}
-	checkTeamPortability(r, pathOnly(shared))
+	checkTeamPortability(r, pathOnly(shared), store.NewLayout(pathOnly(shared)))
 	c := find(r)
 	if c == nil {
 		t.Fatal("공유되는 볼트인데 침묵했다 — 새 팀원의 기록이 조용히 폴백으로 샌다")
@@ -274,7 +274,7 @@ func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
 	withRepos := pathOnly(shared)
 	withRepos.Domain[1].Repos = []string{"org/alpha"}
 	r = &Report{}
-	checkTeamPortability(r, withRepos)
+	checkTeamPortability(r, withRepos, store.NewLayout(withRepos))
 	if c := find(r); c == nil || c.Level != OK {
 		t.Errorf("repos 를 채웠는데 해소되지 않았다: %+v", c)
 	}
@@ -303,12 +303,12 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 		t.Helper()
 		c := testutil.VaultConfig(t)
 		if git {
-			if err := os.MkdirAll(filepath.Join(c.Vault, ".git"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(c.DefaultVaultPath(), ".git"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if ignore != "" {
-			if err := os.WriteFile(filepath.Join(c.Vault, ".gitignore"), []byte(ignore), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(c.DefaultVaultPath(), ".gitignore"), []byte(ignore), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -318,7 +318,7 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 	// git 이 아니면 조용해야 한다.
 	c, l := setup(t, false, "")
 	r := &Report{}
-	checkIndexInGit(r, c, l)
+	checkIndexInGit(r, l)
 	if ck := find(r); ck != nil {
 		t.Errorf("git 이 아닌 볼트에 경고를 냈다 (소음): %s", ck.Detail)
 	}
@@ -326,7 +326,7 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 	// git 인데 무시 목록에 없으면 경고 + 고치는 법.
 	c, l = setup(t, true, "")
 	r = &Report{}
-	checkIndexInGit(r, c, l)
+	checkIndexInGit(r, l)
 	ck := find(r)
 	if ck == nil || ck.Level != Warn {
 		t.Fatalf("공유되는 볼트에서 색인이 추적 중인데 경고가 없다: %+v", ck)
@@ -340,7 +340,7 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 	for _, line := range []string{rel, "/" + rel, "# 주석\n" + rel + "\n"} {
 		c, l = setup(t, true, line)
 		r = &Report{}
-		checkIndexInGit(r, c, l)
+		checkIndexInGit(r, l)
 		if ck := find(r); ck == nil || ck.Level != OK {
 			t.Errorf("무시 목록 %q 인데 해소되지 않았다: %+v", line, ck)
 		}
@@ -348,15 +348,15 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 
 	// .git/info/exclude 도 무시 목록이다.
 	c, l = setup(t, true, "")
-	if err := os.MkdirAll(filepath.Join(c.Vault, ".git", "info"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(c.DefaultVaultPath(), ".git", "info"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(c.Vault, ".git", "info", "exclude"),
+	if err := os.WriteFile(filepath.Join(c.DefaultVaultPath(), ".git", "info", "exclude"),
 		[]byte(rel+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r = &Report{}
-	checkIndexInGit(r, c, l)
+	checkIndexInGit(r, l)
 	if ck := find(r); ck == nil || ck.Level != OK {
 		t.Errorf(".git/info/exclude 를 안 본다: %+v", ck)
 	}

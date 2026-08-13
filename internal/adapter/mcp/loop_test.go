@@ -106,7 +106,7 @@ func TestSafetyNetFullLoop(t *testing.T) {
 	if !strings.Contains(capOut, "기록됨") {
 		t.Fatalf("기록에 실패했다:\n%s", capOut)
 	}
-	notePath := filepath.Join(vaultCfg.Vault, "alpha", "decisions", "alpha-결정-캐시계층-2026-08-07.md")
+	notePath := filepath.Join(vaultCfg.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-캐시계층-2026-08-07.md")
 	if _, err := os.Stat(notePath); err != nil {
 		t.Fatalf("결정 노트가 디스크에 없다: %v", err)
 	}

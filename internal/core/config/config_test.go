@@ -47,8 +47,8 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if c.Vault != "/tmp/vault" {
-		t.Errorf("Vault = %q", c.Vault)
+	if c.DefaultVaultPath() != "/tmp/vault" {
+		t.Errorf("Vault = %q", c.DefaultVaultPath())
 	}
 	// exclude 가 top-level 로 붙었는지 — [[domain]] 뒤에 두면 조용히 domain 필드가 된다
 	if len(c.Exclude) != 1 || c.Exclude[0] != "/home/t/project/NOI" {
@@ -143,8 +143,8 @@ func TestLoadVaultEnvOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Vault != "/override" {
-		t.Errorf("Vault = %q, want PRIORCASE_VAULT 오버라이드 값 %q", c.Vault, "/override")
+	if c.DefaultVaultPath() != "/override" {
+		t.Errorf("Vault = %q, want PRIORCASE_VAULT 오버라이드 값 %q", c.DefaultVaultPath(), "/override")
 	}
 }
 
@@ -158,8 +158,8 @@ func TestLoadUsesConfigEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PRIORCASE_CONFIG 를 무시했다: %v", err)
 	}
-	if c.Vault != "/tmp/vault" {
-		t.Errorf("Vault = %q, want %q", c.Vault, "/tmp/vault")
+	if c.DefaultVaultPath() != "/tmp/vault" {
+		t.Errorf("Vault = %q, want %q", c.DefaultVaultPath(), "/tmp/vault")
 	}
 }
 
@@ -172,8 +172,8 @@ func TestLoadFlagBeatsConfigEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("플래그가 환경변수에 밀렸다: %v", err)
 	}
-	if c.Vault != "/tmp/vault" {
-		t.Errorf("Vault = %q, want %q", c.Vault, "/tmp/vault")
+	if c.DefaultVaultPath() != "/tmp/vault" {
+		t.Errorf("Vault = %q, want %q", c.DefaultVaultPath(), "/tmp/vault")
 	}
 }
 
@@ -347,7 +347,7 @@ func TestLoadTestdataFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(testdata/valid.toml) error = %v", err)
 	}
-	if c.Vault == "" {
+	if c.DefaultVaultPath() == "" {
 		t.Error("testdata/valid.toml 의 vault 가 비어 있다")
 	}
 }
@@ -386,7 +386,7 @@ func TestLoadNoTildeSucceedsWithoutHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HOME 이 없어도 ~ 없는 설정은 성공해야 하는데 실패했다: %v", err)
 	}
-	if c.Vault != "/tmp/vault" {
-		t.Errorf("Vault = %q", c.Vault)
+	if c.DefaultVaultPath() != "/tmp/vault" {
+		t.Errorf("Vault = %q", c.DefaultVaultPath())
 	}
 }

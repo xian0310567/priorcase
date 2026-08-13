@@ -86,7 +86,7 @@ func TestSimilarRespectsLimit(t *testing.T) {
 
 	// **상한보다 많이 걸려야 상한을 시험할 수 있다.** 픽스처만으로는 3건이 걸리는데
 	// 상한도 3이라 어떤 위반도 안 보인다 — 변형 테스트가 그 공허함을 잡았다.
-	dir := filepath.Join(c.Vault, "alpha", "decisions")
+	dir := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions")
 	for i := 0; i < 5; i++ {
 		name := fmt.Sprintf("alpha-결정-저장엔진후보%d-2026-08-0%d.md", i, i+1)
 		body := fmt.Sprintf("---\ntype: decision\ndate: 2026-08-0%d\ndomain: [alpha]\n"+

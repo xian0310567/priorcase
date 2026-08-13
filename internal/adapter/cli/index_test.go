@@ -39,7 +39,7 @@ func TestIndexCmd(t *testing.T) {
 		t.Errorf("건너뛴 게 없는데 stderr 에 출력이 있다: %q", got)
 	}
 
-	idxPath := filepath.Join(c.Vault, c.Naming.Index)
+	idxPath := filepath.Join(c.DefaultVaultPath(), c.Naming.Index)
 	data, err := os.ReadFile(idxPath)
 	if err != nil {
 		t.Fatalf("색인 파일이 생기지 않았다 (%s): %v", idxPath, err)
@@ -89,7 +89,7 @@ func plantLegacyNote(t *testing.T, vault string) string {
 // (2) stderr 에 어느 파일이 왜 빠졌는지가 나온다.
 func TestIndexCmdRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.Vault)
+	rel := plantLegacyNote(t, c.DefaultVaultPath())
 
 	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
@@ -121,7 +121,7 @@ func TestIndexCmdRevealsSkippedNotes(t *testing.T) {
 	}
 	// 경로는 볼트 상대로 한 번만 나와야 한다 — 절대 경로가 함께 찍히면
 	// 긴 경로 두 개가 한 줄에 겹쳐 읽기 어려워진다.
-	if strings.Contains(warn, c.Vault) {
+	if strings.Contains(warn, c.DefaultVaultPath()) {
 		t.Errorf("경고에 절대 경로가 중복으로 들어 있다:\n%s", warn)
 	}
 }

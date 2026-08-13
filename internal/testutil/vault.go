@@ -3,6 +3,8 @@
 package testutil
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +23,7 @@ func VaultConfig(t *testing.T) *config.Config {
 		t.Fatal(err)
 	}
 	return &config.Config{
-		Vault: dst,
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: dst}},
 		// 폴백 도메인 — 실제 설정과 같은 모양으로 둔다. 없으면 어느 paths 에도
 		// 안 걸리는 cwd 에서 기록이 막히는데, 그건 픽스처의 의도가 아니다.
 		DefaultDomain: "common",
@@ -59,6 +61,17 @@ func VaultConfigFile(t *testing.T) (cfgPath string, c *config.Config) {
 	if err != nil {
 		t.Fatalf("픽스처 설정을 TOML 로 쓸 수 없다: %v", err)
 	}
+	// **볼트는 손으로 붙인다.** Config.Vaults 는 `toml:"-"` 다 — TOML 이 같은 키를
+	// 문자열과 테이블 배열로 겸할 수 없어서 Load 가 2패스로 읽기 때문이다.
+	// 그래서 Config 를 마샬하면 볼트가 빠진다. 조용히 빠지면 여기서 만든 설정 파일이
+	// "vault 가 비어 있다" 로 죽는데, 원인이 픽스처에 있다는 것이 안 드러난다.
+	// **맨 뒤에 붙인다.** TOML 은 [[vault]] 를 연 뒤의 맨 키를 전부 그 테이블의
+	// 것으로 읽는다 — 앞에 붙이면 exclude·lang 이 볼트 안으로 빨려 들어간다.
+	var tail bytes.Buffer
+	for _, v := range c.Vaults {
+		fmt.Fprintf(&tail, "\n[[vault]]\nname = %q\npath = %q\n", v.Name, v.Path)
+	}
+	body = append(body, tail.Bytes()...)
 	cfgPath = filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(cfgPath, body, 0o600); err != nil {
 		t.Fatal(err)

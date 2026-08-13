@@ -13,16 +13,45 @@ import (
 
 type Layout struct {
 	c *config.Config
+	// vault 는 이 Layout 이 다루는 볼트의 절대 경로다.
+	//
+	// **Layout 하나는 볼트 하나다.** 볼트가 쓰기와 회수의 경계이므로, 한 Layout 이
+	// 여러 볼트를 오가면 그 경계가 흐려진다 — 어느 볼트에 쓸지가 호출부마다
+	// 달라지고, 그 차이는 파일이 엉뚱한 자리에 생긴 뒤에야 드러난다.
+	vault string
 	// marker 는 파일명이 결정 노트임을 나타내는 표식이다. 설정의 decision_file
 	// 템플릿에서 유도한 값(config.DecisionMarker)을 NFC 로 접어 캐시한다 —
 	// 설정 파일이 NFD 로 저장돼 있어도 ReadDir 이 준 NFC 이름과 비교되게.
 	marker string
 }
 
-// NewLayout 은 Layout 을 만든다.
+// NewLayout 은 **기본 볼트**의 Layout 을 만든다.
+//
+// 볼트가 하나인 설정에서는 그것이고, 여럿이면 이름이 "default" 인 것 또는 첫 번째다.
+// 프로젝트별 볼트가 필요하면 NewLayoutFor 를 쓴다.
 func NewLayout(c *config.Config) *Layout {
-	return &Layout{c: c, marker: NFC(c.DecisionMarker())}
+	v, _ := c.DefaultVault() // 볼트가 없으면 빈 경로 — 경로 연산이 시끄럽게 실패한다
+	return NewLayoutFor(c, v)
 }
+
+// NewLayoutFor 는 지정한 볼트의 Layout 을 만든다.
+func NewLayoutFor(c *config.Config, v config.Vault) *Layout {
+	return &Layout{c: c, vault: v.Path, marker: NFC(c.DecisionMarker())}
+}
+
+// LayoutForCwd 는 그 자리에서 일할 때 쓸 Layout 을 준다 (cwd → 도메인 → 볼트).
+//
+// **이것이 "A 프로젝트에서 일하면 A 의 볼트에 쓴다" 를 실현하는 자리다.**
+func LayoutForCwd(c *config.Config, dir string) (*Layout, error) {
+	v, err := c.VaultForCwd(dir)
+	if err != nil {
+		return nil, err
+	}
+	return NewLayoutFor(c, v), nil
+}
+
+// Vault 는 이 Layout 이 다루는 볼트의 절대 경로다.
+func (l *Layout) Vault() string { return l.vault }
 
 // DecisionMarker 는 결정 노트 파일명의 표식을 준다. 정본은 설정의 decision_file
 // 템플릿이고, 여기서는 그걸 유도한 값을 그대로 내보낸다 — schema 는 config 를
@@ -36,7 +65,7 @@ func (l *Layout) decisionsDir(prefix string) (string, error) {
 		return "", fmt.Errorf("알 수 없는 도메인 접두어: %q", prefix)
 	}
 	rel := strings.ReplaceAll(l.c.Naming.DecisionsDir, "{project}", folder)
-	return filepath.Join(l.c.Vault, rel), nil
+	return filepath.Join(l.vault, rel), nil
 }
 
 // DecisionPath 는 새 결정 노트가 놓일 절대 경로를 만든다.
@@ -100,7 +129,7 @@ func (l *Layout) ResolveStem(stem string) (string, error) {
 
 // IndexPath 는 색인 파일의 절대 경로다.
 func (l *Layout) IndexPath() string {
-	return filepath.Join(l.c.Vault, l.c.Naming.Index)
+	return filepath.Join(l.vault, l.c.Naming.Index)
 }
 
 // DecisionDirs 는 **설정에 선언된** 결정 폴더의 경로를 전부 준다.
@@ -119,7 +148,7 @@ func (l *Layout) DecisionDirs() []string {
 
 // RelPath 는 절대 경로를 볼트 상대 경로로 바꾼다.
 func (l *Layout) RelPath(p string) string {
-	if rel, err := filepath.Rel(l.c.Vault, p); err == nil {
+	if rel, err := filepath.Rel(l.vault, p); err == nil {
 		return rel
 	}
 	return p
@@ -135,7 +164,7 @@ func (l *Layout) RelPath(p string) string {
 // 템플릿을 바꿔 써도 따라온다.
 func (l *Layout) UndeclaredDecisionDirs() ([]string, error) {
 	pattern := strings.ReplaceAll(l.c.Naming.DecisionsDir, "{project}", "*")
-	matches, err := filepath.Glob(filepath.Join(l.c.Vault, pattern))
+	matches, err := filepath.Glob(filepath.Join(l.vault, pattern))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +222,7 @@ func (l *Layout) projectFile(prefix, template string) (string, error) {
 		return "", fmt.Errorf("알 수 없는 도메인 접두어: %q", prefix)
 	}
 	name := strings.ReplaceAll(template, "{project}", folder)
-	return filepath.Join(l.c.Vault, folder, name), nil
+	return filepath.Join(l.vault, folder, name), nil
 }
 
 // Prefixes 는 설정에 선언된 도메인 접두어를 순서대로 준다.
@@ -207,3 +236,21 @@ func (l *Layout) Prefixes() []string {
 
 // Lang 은 볼트 산출물의 언어다. index·search 가 Config 를 직접 못 보므로 여기서 준다.
 func (l *Layout) Lang() i18n.Lang { return i18n.Of(l.c.Lang) }
+
+// For 는 그 도메인의 볼트를 다루는 Layout 을 준다.
+//
+// **쓰기 경로는 이것을 스스로 부른다.** 호출부가 볼트를 고르게 하면 어댑터마다
+// 다른 답을 얻는다 — 훅은 훅의 cwd, CLI 는 셸의 cwd, MCP 는 또 다른 것. 도메인이
+// 볼트를 정하는 규칙이 하나면 어디서 불러도 같은 자리에 쓴다.
+//
+// 이미 그 볼트면 자기 자신을 준다 (흔한 경우라 할당을 아낀다).
+func (l *Layout) For(prefix string) (*Layout, error) {
+	v, err := l.c.VaultFor(prefix)
+	if err != nil {
+		return nil, err
+	}
+	if v.Path == l.vault {
+		return l, nil
+	}
+	return NewLayoutFor(l.c, v), nil
+}

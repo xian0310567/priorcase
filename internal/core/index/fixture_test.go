@@ -18,5 +18,5 @@ func fixtureLayout(t *testing.T) *store.Layout {
 func fixtureLayoutVault(t *testing.T) (*store.Layout, string) {
 	t.Helper()
 	c := testutil.VaultConfig(t)
-	return store.NewLayout(c), c.Vault
+	return store.NewLayout(c), c.DefaultVaultPath()
 }

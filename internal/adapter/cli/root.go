@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -53,7 +54,20 @@ func loadFrom(cmd *cobra.Command) (*config.Config, *store.Layout, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return c, store.NewLayout(c), nil
+	// **cwd 의 볼트를 쓴다.** 프로젝트가 볼트를 정하므로, 어느 디렉토리에서 명령을
+	// 쳤는지가 곧 어느 볼트를 볼지다. 이걸 기본 볼트로 두면 다른 프로젝트에서
+	// `prior recall` 을 쳤을 때 남의 볼트를 뒤진다.
+	//
+	// cwd 를 못 얻으면 기본 볼트로 간다 — 그건 드물고, 그때도 명령이 돌아야 한다.
+	wd, werr := os.Getwd()
+	if werr != nil {
+		return c, store.NewLayout(c), nil
+	}
+	l, err := store.LayoutForCwd(c, wd)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, l, nil
 }
 
 // warnSkipped 는 읽지 못해 건너뛴 결정 노트를 알린다. 없으면 아무것도 안 낸다.

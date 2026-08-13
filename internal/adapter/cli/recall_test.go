@@ -41,7 +41,7 @@ func TestRecallCmdReportsUnreadableVault(t *testing.T) {
 		t.Skip("root 는 디렉토리 퍼미션을 무시하므로 이 테스트가 성립하지 않는다")
 	}
 	cfgPath, c := testutil.VaultConfigFile(t)
-	dir := filepath.Join(c.Vault, "alpha", "decisions")
+	dir := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions")
 	if err := os.Chmod(dir, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestRecallCmdNoMatch(t *testing.T) {
 // "경고를 아예 안 낸다" 와 "stdout 을 깨끗이 지킨다" 가 구별되지 않는다.
 func TestRecallCmdInjectStaysCleanWhenNotesSkipped(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.Vault) // index_test.go 의 헬퍼
+	rel := plantLegacyNote(t, c.DefaultVaultPath()) // index_test.go 의 헬퍼
 
 	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
@@ -130,7 +130,7 @@ func TestRecallCmdInjectStaysCleanWhenNotesSkipped(t *testing.T) {
 // 사용자가 오히려 못 보게 된다.
 func TestRecallCmdHumanRevealsSkippedNotes(t *testing.T) {
 	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.Vault)
+	rel := plantLegacyNote(t, c.DefaultVaultPath())
 
 	root := NewRootCmd()
 	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}

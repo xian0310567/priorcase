@@ -123,7 +123,7 @@ func TestRenderInjectWarnsOnRegrettedAlone(t *testing.T) {
 	hits := []Hit{{
 		Score: 9,
 		Note: store.Note{
-			Path: filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-후회한선택-2026-08-05.md"),
+			Path: filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-후회한선택-2026-08-05.md"),
 			Stem: "alpha-결정-후회한선택-2026-08-05",
 			Meta: store.Meta{
 				Type: "decision", Date: "2026-08-05", Domain: []string{"alpha"},
@@ -210,7 +210,7 @@ func TestRecallReportsVaultReadFailure(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
 
 	// 픽스처의 alpha 결정 폴더에서 읽기 권한을 뺏는다.
-	dir := filepath.Join(c.Vault, "alpha", "decisions")
+	dir := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions")
 	if err := os.Chmod(dir, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestRecallReportsSkippedNotes(t *testing.T) {
 	l, c := fixtureLayoutConfig(t)
 
 	// 검색어에 걸릴 법한 이름을 가진 구 스키마 노트를 심는다.
-	broken := filepath.Join(c.Vault, "alpha", "decisions", "alpha-결정-저장엔진구형-2026-01-02.md")
+	broken := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장엔진구형-2026-01-02.md")
 	body := "---\ntitle: 구 스키마\nproject: alpha\ncreated: 2026-01-02\n---\n\n## 결정\n\n저장 엔진.\n"
 	if err := os.WriteFile(broken, []byte(body), 0o644); err != nil {
 		t.Fatal(err)

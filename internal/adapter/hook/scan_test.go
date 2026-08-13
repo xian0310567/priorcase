@@ -207,7 +207,7 @@ func TestStopDoesNotPromote(t *testing.T) {
 		t.Errorf("표시가 %d건, 1건이어야 한다 — Stop 이 승격해 지웠다", len(items))
 	}
 	// 노트도 안 생겼어야 한다.
-	m, _ := filepath.Glob(filepath.Join(c.Vault, "alpha", "decisions", "*저장엔진-2026-08-07*"))
+	m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*저장엔진-2026-08-07*"))
 	if len(m) != 0 {
 		t.Errorf("Stop 이 노트를 만들었다: %v", m)
 	}
@@ -251,7 +251,7 @@ func TestSessionEndPromotes(t *testing.T) {
 			}
 			// 노트가 실제로 생겼나 — capture.Do 를 거쳤으므로 정본형이어야 한다.
 			// writeTranscript 의 타임스탬프가 2026-08-07 이라 그 날짜로 만들어진다.
-			got, err := os.ReadFile(filepath.Join(c.Vault, "alpha", "decisions",
+			got, err := os.ReadFile(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions",
 				"alpha-결정-저장엔진-2026-08-07.md"))
 			if err != nil {
 				t.Fatalf("노트가 없다: %v", err)

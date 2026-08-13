@@ -58,7 +58,18 @@ func NewCommand() *cobra.Command {
 				warn(err)
 				return
 			}
-			o.Config, o.Layout = c, store.NewLayout(c)
+			// **그 세션의 cwd 가 볼트를 정한다.** 훅은 호스트가 준 cwd 를 알고,
+			// 그게 곧 어느 프로젝트에서 일하는지다 — 기본 볼트로 두면 A 프로젝트의
+			// 결정이 B 볼트에 주입되고 B 볼트에 기록된다.
+			o.Config = c
+			if l, lerr := store.LayoutForCwd(c, o.Input.Cwd); lerr == nil {
+				o.Layout = l
+			} else {
+				// 설정이 없는 볼트를 가리키는 등. 조용히 멈추지 않고 이유를 남긴 뒤
+				// 기본 볼트로 간다 — 훅이 아무것도 안 하는 것보다 낫다.
+				warn(lerr)
+				o.Layout = store.NewLayout(c)
+			}
 			warn(Run(cmd.Context(), o))
 		},
 	}
