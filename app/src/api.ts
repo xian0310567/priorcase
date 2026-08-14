@@ -56,8 +56,12 @@ export async function setHost(name: string, enabled: boolean): Promise<void> {
   await call<void>("set_host", { name, enabled });
 }
 
-export async function addVault(name: string, path: string): Promise<void> {
-  await call<void>("add_vault", { name, path });
+/** addVault 는 볼트를 만든다.
+ *
+ * **경로를 넘기지 않는다.** 어디에 만들지는 답이 이미 정해져 있는 질문이다 —
+ * 지금 볼트 옆이다. 그 규칙은 CLI 에만 산다. */
+export async function addVault(name: string): Promise<void> {
+  await call<void>("add_vault", { name });
 }
 
 /** bindDomain 은 프로젝트가 쓸 볼트를 정한다.

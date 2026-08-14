@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const SETTINGS: Settings = {
   config_path: "/home/x/.config/priorcase/config.toml",
+  vault_parent: "/v",
   vaults: [
     { name: "default", path: "/v/기본 볼트", exists: true, decisions: 12, domains: ["proj"] },
     { name: "work", path: "/v/work", exists: false, decisions: 0, domains: [] },
@@ -149,23 +150,32 @@ describe("조립", () => {
     expect(btns[1].disabled, "자리가 없는데 열기가 눌린다").toBe(true);
   });
 
-  it("볼트 만들기가 add_vault 를 부른다", async () => {
+  // ★★★ **경로를 묻지 않는다. 대신 어디에 생기는지 보여 준다.**
+  //
+  // 경로를 안 물어봤으므로 그 줄이 없으면 사람은 어디에 만들어졌는지 모르는
+  // 폴더를 갖게 된다 — 그건 묻는 것보다 나쁘다.
+  it("볼트 만들기가 이름만으로 add_vault 를 부르고 자리를 미리 보여 준다", async () => {
     tabButton("볼트").click();
     await settle();
+    expect(
+      document.querySelector(".vault-add-path"),
+      "경로 입력이 아직 있다",
+    ).toBeNull();
+
     const name = document.querySelector<HTMLInputElement>(".vault-add-name")!;
-    const path = document.querySelector<HTMLInputElement>(".vault-add-path")!;
     const btn = document.querySelector<HTMLButtonElement>(".vault-add button")!;
+    const where = document.querySelector<HTMLElement>(".vault-add-where")!;
     expect(btn.disabled, "빈 칸인데 만들기가 눌린다").toBe(true);
+    expect(where.textContent, "빈 칸인데 자리를 말한다").toBe("");
 
     name.value = "회사";
     name.dispatchEvent(new Event("input"));
-    path.value = "~/볼트/회사";
-    path.dispatchEvent(new Event("input"));
     expect(btn.disabled).toBe(false);
+    expect(where.textContent, "어디에 생기는지 안 보여 준다").toBe("/v/회사");
 
     btn.click();
     await settle();
-    expect(lastWrite()).toEqual(["add_vault", { name: "회사", path: "~/볼트/회사" }]);
+    expect(lastWrite()).toEqual(["add_vault", { name: "회사" }]);
   });
 
   // ★★★ **밀린 구간은 상태의 진단 한 줄이지 할 일 목록이 아니다.**

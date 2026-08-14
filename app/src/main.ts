@@ -104,7 +104,7 @@ function start(app: HTMLElement): void {
       case "vaults":
         renderVaults(body, s, {
           open: (name) => void act(() => openVault(name)),
-          add: (name, path) => void act(() => addVault(name, path)),
+          add: (name) => void act(() => addVault(name)),
           bind: (prefix, vault) => void act(() => bindDomain(prefix, vault)),
         });
         break;

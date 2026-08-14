@@ -111,10 +111,14 @@ describe("설정을 고치는 명령", () => {
     expect(invoke).toHaveBeenCalledWith("set_host", { name: "Codex CLI", enabled: false });
   });
 
-  it("addVault 는 이름과 경로를 넘긴다", async () => {
+  // ★★★ **경로를 안 넘긴다.**
+  //
+  // 어디에 만들지는 답이 이미 정해져 있는 질문이다 — 지금 볼트 옆이다.
+  // 그 규칙이 앱에도 살면 CLI 와 어긋날 때 앱이 엉뚱한 자리를 보여 준다.
+  it("addVault 는 이름만 넘긴다", async () => {
     invoke.mockResolvedValue(undefined);
-    await addVault("회사", "~/볼트/회사");
-    expect(invoke).toHaveBeenCalledWith("add_vault", { name: "회사", path: "~/볼트/회사" });
+    await addVault("회사");
+    expect(invoke).toHaveBeenCalledWith("add_vault", { name: "회사" });
   });
 
   // ★★★ **빈 볼트는 "기본 볼트로 되돌린다" 는 뜻이고 그대로 넘어가야 한다.**

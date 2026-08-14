@@ -32,11 +32,17 @@ import (
 // settingsOut 은 `prior settings --json` 의 출력이다. 앱의 계약이므로 필드를
 // 뺄 때는 앱을 같이 고쳐야 한다.
 type settingsOut struct {
-	ConfigPath string      `json:"config_path"`
-	Vaults     []vaultOut  `json:"vaults"`
-	Domains    []domainOut `json:"domains"`
-	Hosts      []hostOut   `json:"hosts"`
-	Warnings   []string    `json:"warnings,omitempty"`
+	ConfigPath string `json:"config_path"`
+	// VaultParent 는 **새 볼트를 만들면 들어갈 부모 디렉토리**다.
+	//
+	// 앱이 이걸 알아야 "만들면 어디에 생기는지" 를 누르기 전에 보여 줄 수 있다.
+	// 경로를 사람에게 묻지 않기로 했으므로(2026-08-14), 대신 어디에 생기는지는
+	// 반드시 보여 줘야 한다 — 안 그러면 어디에 만들어졌는지 모르는 폴더가 생긴다.
+	VaultParent string      `json:"vault_parent"`
+	Vaults      []vaultOut  `json:"vaults"`
+	Domains     []domainOut `json:"domains"`
+	Hosts       []hostOut   `json:"hosts"`
+	Warnings    []string    `json:"warnings,omitempty"`
 }
 
 type vaultOut struct {
@@ -146,6 +152,9 @@ func collectSettings(cmd *cobra.Command) (settingsOut, error) {
 		return settingsOut{}, err
 	}
 	out := settingsOut{ConfigPath: path}
+	if parent, perr := c.VaultParent(); perr == nil {
+		out.VaultParent = parent
+	}
 
 	// 도메인 → 볼트. 볼트 줄에 "누가 이 볼트를 쓰는가" 를 달아 주면 사람이
 	// 볼트를 지우기 전에 무엇이 딸려 가는지 안다.
@@ -273,16 +282,35 @@ func newVaultCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	add := &cobra.Command{
-		Use:   "add <이름> <경로>",
-		Short: "볼트를 하나 더한다",
+		Use:   "add <이름> [경로]",
+		Short: "볼트를 하나 더한다 (경로를 안 주면 지금 볼트 옆에 만든다)",
 		Long: "볼트를 더한다. 자리가 없으면 만든다.\n\n" +
+			"**경로는 안 줘도 된다.** 안 주면 지금 기본 볼트 옆에 이름 그대로 만든다\n" +
+			"(볼트가 하나도 없으면 ~/Documents). 볼트를 여럿 두는 이유가 공유를 위한\n" +
+			"분리라, 새 볼트도 사람이 Finder 에서 보고 다룰 수 있는 자리여야 한다.\n\n" +
 			"설정이 아직 `vault = \"...\"` 한 줄짜리면 [[vault]] 두 벌로 바꾼다 —\n" +
 			"옛 볼트의 이름은 " + config.DefaultVaultName + " 이 된다.",
-		Args:          cobra.ExactArgs(2),
+		Args:          cobra.RangeArgs(1, 2),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, path := args[0], args[1]
+			name := args[0]
+			c, _, err := loadFrom(cmd)
+			if err != nil {
+				return err
+			}
+			// **경로를 안 주면 우리가 정한다.** 사람에게 경로를 묻는 것은
+			// 답이 이미 정해져 있는 질문이다 — 지금 볼트 옆이다.
+			path := ""
+			if len(args) == 2 {
+				path = args[1]
+			} else {
+				p, perr := c.NewVaultPath(name)
+				if perr != nil {
+					return perr
+				}
+				path = p
+			}
 			abs, err := expandPath(path)
 			if err != nil {
 				return err
@@ -292,9 +320,15 @@ func newVaultCmd() *cobra.Command {
 			if err := os.MkdirAll(abs, 0o755); err != nil {
 				return fmt.Errorf("볼트 자리를 만들 수 없다 (%s): %w", abs, err)
 			}
-			return applyEdit(cmd, func(src []byte) ([]byte, error) {
+			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
 				return config.AddVault(src, name, path)
-			})
+			}); err != nil {
+				return err
+			}
+			// **어디에 만들었는지 반드시 말한다.** 경로를 안 물어봤으므로
+			// 이 줄이 없으면 어디에 생겼는지 모르는 폴더가 남는다.
+			fmt.Fprintf(cmd.ErrOrStderr(), "볼트 %s → %s\n", name, abs)
+			return nil
 		},
 	}
 	list := &cobra.Command{

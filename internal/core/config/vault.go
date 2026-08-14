@@ -2,8 +2,17 @@ package config
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
+)
+
+// userHome·osStat 은 시험이 갈아 끼울 수 있게 변수로 둔다. 홈 디렉토리를 실제로
+// 건드리는 시험은 기계마다 다른 결과를 내고, 그런 시험은 신호를 잃는다.
+var (
+	userHome = os.UserHomeDir
+	osStat   = func(p string) (fs.FileInfo, error) { return os.Stat(p) }
 )
 
 // DefaultVaultName 은 이름 없는 볼트에 붙는 이름이다.
@@ -129,4 +138,65 @@ func (c *Config) DefaultVaultPath() string {
 		return ""
 	}
 	return v.Path
+}
+
+// folderBad 는 볼트 폴더 이름에 쓸 수 없는 문자다.
+//
+// **store.Slugify 의 목록과 일부러 따로 둔다.** 그쪽은 파일명 slug 라 공백을
+// `-` 로 바꾸지만, 볼트 폴더는 사람이 Finder 에서 보는 이름이라 공백이 정상이다
+// (실측: `Obsidian Vault`). 규칙이 같아 보여도 다른 규칙이므로 한 곳으로 묶으면
+// 한쪽을 고칠 때 다른 쪽이 조용히 따라 바뀐다.
+const folderBad = `/\:*?"<>|`
+
+// VaultParent 는 **새 볼트를 만들 부모 디렉토리**다.
+//
+// 지금 기본 볼트가 있는 자리 옆이다. 볼트를 여럿 두는 이유가 공유를 위한 분리이므로
+// (프로젝트 폴더 단위로 git 에 올리거나 동기화한다), 새 볼트도 **사람이 Finder 에서
+// 보고 다룰 수 있는 자리**여야 한다. `~/.local/share` 같은 데 숨기면 그 목적을 못 갚는다.
+//
+// 볼트가 하나도 없으면 `~/Documents` 다 — Obsidian 이 기본으로 여는 자리다.
+// 그것도 없으면 홈이다.
+func (c *Config) VaultParent() (string, error) {
+	if v, err := c.DefaultVault(); err == nil && filepath.IsAbs(v.Path) {
+		return filepath.Dir(v.Path), nil
+	}
+	home, err := userHome()
+	if err != nil {
+		return "", err
+	}
+	docs := filepath.Join(home, "Documents")
+	if fi, serr := osStat(docs); serr == nil && fi.IsDir() {
+		return docs, nil
+	}
+	return home, nil
+}
+
+// NewVaultPath 는 이름만 받았을 때 볼트를 만들 자리다.
+//
+// **이름을 조용히 고치지 않는다.** 못 쓰는 문자가 있으면 거부한다 — 슬그머니
+// 바꾸면 사람이 자기가 적은 이름으로 폴더를 찾다가 못 찾는다.
+//
+// 경로 구분자와 `..` 를 막는 것은 **부모 디렉토리 밖으로 나가지 못하게** 하기
+// 위해서다. 이 값은 그대로 os.MkdirAll 로 간다.
+func (c *Config) NewVaultPath(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("볼트 이름이 비었다")
+	}
+	if strings.ContainsAny(name, folderBad) {
+		return "", fmt.Errorf("볼트 이름에 쓸 수 없는 문자가 있다 (%s): %q", folderBad, name)
+	}
+	if name == "." || name == ".." || strings.HasPrefix(name, ".") {
+		return "", fmt.Errorf("볼트 이름은 점으로 시작할 수 없다: %q", name)
+	}
+	parent, err := c.VaultParent()
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(parent, name)
+	// 조합한 뒤에도 확인한다 — 위 검사를 빠져나가는 조합이 있으면 여기서 걸린다.
+	if filepath.Dir(p) != parent {
+		return "", fmt.Errorf("볼트 이름이 폴더를 벗어난다: %q", name)
+	}
+	return p, nil
 }

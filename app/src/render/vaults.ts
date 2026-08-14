@@ -4,7 +4,7 @@ import { el } from "./shell";
 
 export interface VaultActions {
   open: (name: string) => void;
-  add: (name: string, path: string) => void;
+  add: (name: string) => void;
   bind: (prefix: string, vault: string) => void;
 }
 
@@ -48,7 +48,7 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
     root.append(row);
   }
 
-  root.append(addVaultForm(on));
+  root.append(addVaultForm(s.vault_parent, on));
 
   root.append(el("h3", "section-title", "프로젝트 → 볼트"));
   if (s.domains.length === 0) {
@@ -91,37 +91,38 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
 
 /** addVaultForm 은 볼트를 만드는 자리다.
  *
- * **경로를 손으로 적게 한다.** 네이티브 폴더 선택기를 쓰려면 tauri-plugin-dialog
- * 가 필요하고, 그것은 앱이 파일 시스템에 직접 손대는 첫 자리가 된다 — 지금
- * 규칙은 "앱은 prior 명령만 부른다" 이다. 경로 오타는 CLI 가 폴더를 만들어
- * 주므로 조용히 실패하지 않는다. */
-function addVaultForm(on: VaultActions): HTMLElement {
+ * **경로를 묻지 않는다.** 어디에 만들지는 답이 이미 정해져 있는 질문이다 —
+ * 지금 볼트 옆이다. 그 규칙은 CLI 에만 살고(`config.NewVaultPath`), 앱은
+ * `vault_parent` 로 결과를 미리 보여 주기만 한다.
+ *
+ * **어디에 생기는지는 반드시 보여 준다.** 경로를 안 물어봤으므로 이 줄이 없으면
+ * 사람은 어디에 만들어졌는지 모르는 폴더를 갖게 된다. 그건 묻는 것보다 나쁘다. */
+function addVaultForm(parent: string, on: VaultActions): HTMLElement {
   const box = el("div", "vault-add");
   const name = document.createElement("input");
   name.className = "vault-add-name";
-  name.placeholder = "이름 (예: 회사)";
+  name.placeholder = "새 볼트 이름 (예: 회사)";
   name.setAttribute("aria-label", "새 볼트 이름");
-  const path = document.createElement("input");
-  path.className = "vault-add-path";
-  path.placeholder = "경로 (예: ~/Documents/회사 볼트)";
-  path.setAttribute("aria-label", "새 볼트 경로");
 
   const btn = document.createElement("button");
   btn.className = "btn";
-  btn.textContent = "볼트 만들기";
+  btn.textContent = "만들기";
+
+  const where = el("div", "vault-add-where");
   const sync = (): void => {
-    // 둘 다 있어야 누를 수 있다. 빈 값으로 부르면 CLI 가 거부하는데, 그 오류를
-    // 보게 하느니 못 누르게 하는 편이 낫다.
-    btn.disabled = name.value.trim() === "" || path.value.trim() === "";
+    const v = name.value.trim();
+    // 이름이 없으면 만들 수 없다. 빈 값으로 부르면 CLI 가 거부하는데,
+    // 그 오류를 보게 하느니 못 누르게 하는 편이 낫다.
+    btn.disabled = v === "";
+    where.textContent = v === "" ? "" : `${parent}/${v}`;
   };
   sync();
   name.addEventListener("input", sync);
-  path.addEventListener("input", sync);
   btn.addEventListener("click", () => {
     btn.disabled = true;
-    on.add(name.value.trim(), path.value.trim());
+    on.add(name.value.trim());
   });
 
-  box.append(name, path, btn);
+  box.append(name, btn, where);
   return box;
 }

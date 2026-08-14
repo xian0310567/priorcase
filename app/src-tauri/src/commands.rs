@@ -101,9 +101,13 @@ pub fn set_host(name: String, enabled: bool) -> Result<(), CmdError> {
 }
 
 /// add_vault 는 볼트를 하나 만든다. CLI 가 자리(폴더)까지 만든다.
+///
+/// **경로를 받지 않는다.** 어디에 만들지는 답이 이미 정해져 있는 질문이다 —
+/// 지금 볼트 옆이다. CLI 가 그것을 정하므로 규칙이 한 곳에만 산다.
+/// 앱은 `prior settings` 의 vault_parent 로 어디에 생길지 미리 보여 준다.
 #[tauri::command]
-pub fn add_vault(name: String, path: String) -> Result<(), CmdError> {
-    run(&prior_bin(), &["vault", "add", &name, &path], WRITE_TIMEOUT)
+pub fn add_vault(name: String) -> Result<(), CmdError> {
+    run(&prior_bin(), &["vault", "add", &name], WRITE_TIMEOUT)
         .map(|_| ())
         .map_err(to_cmd_error)
 }
@@ -325,13 +329,11 @@ mod tests {
         assert!(out.contains("disable"), "out={out}");
         assert!(out.contains("Codex CLI"), "공백 있는 이름이 쪼개졌다: {out}");
 
-        let out = crate::prior::run(
-            &echo,
-            &["vault", "add", "회사", "/경로 with space/볼트"],
-            READ_TIMEOUT,
-        )
-        .expect("성공해야 한다");
-        assert!(out.contains("/경로 with space/볼트"), "인자가 쪼개졌다: {out}");
+        // 볼트는 **이름만** 넘긴다 — 자리는 CLI 가 정한다.
+        let out = crate::prior::run(&echo, &["vault", "add", "우리 회사"], READ_TIMEOUT)
+            .expect("성공해야 한다");
+        assert!(out.contains("우리 회사"), "공백 있는 이름이 쪼개졌다: {out}");
+        assert!(!out.contains('/'), "경로를 넘기고 있다: {out}");
     }
 
     // ★★★ **볼트를 안 주면 인자에서 빠져야 한다.**

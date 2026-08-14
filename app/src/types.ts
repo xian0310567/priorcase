@@ -63,6 +63,11 @@ export interface HostInfo {
 /** Settings 는 `prior settings --json` 이다. */
 export interface Settings {
   config_path: string;
+  /** 새 볼트를 만들면 들어갈 부모 디렉토리.
+   *
+   * **경로를 사람에게 묻지 않기로 했으므로**(2026-08-14) 어디에 생기는지는
+   * 누르기 전에 보여 줘야 한다 — 안 그러면 어디에 만들어졌는지 모르는 폴더가 생긴다. */
+  vault_parent: string;
   vaults: VaultInfo[];
   domains: DomainInfo[];
   hosts: HostInfo[];
