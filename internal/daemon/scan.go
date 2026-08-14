@@ -122,7 +122,7 @@ func Scan(s *Store, c *config.Config, l *store.Layout, path string, judgeAvailab
 	if len(hs) == 0 {
 		// 호출부가 안 넘겼으면 기본 목록으로 푼다. 실패해도 계속 간다 — 그러면
 		// 아래에서 "어느 호스트인지 모르겠다" 로 걸려 조용히 넘어가지 않는다.
-		hs, _ = hosts.Resolve("")
+		hs, _ = ResolveHosts(c, "")
 	}
 	h := hosts.For(path, hs)
 	if h == nil {

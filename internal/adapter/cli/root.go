@@ -36,6 +36,10 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newPathCmd())
 	root.AddCommand(newReviewedCmd())
+	root.AddCommand(newSettingsCmd())
+	root.AddCommand(newVaultCmd())
+	root.AddCommand(newDomainCmd())
+	root.AddCommand(newHostsCmd())
 	return root
 }
 

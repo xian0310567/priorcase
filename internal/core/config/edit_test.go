@@ -289,3 +289,26 @@ func TestEditRefusesBrokenResult(t *testing.T) {
 		t.Errorf("안 썼다는 사실을 안 말한다: %v", err)
 	}
 }
+
+// ★★ **파일은 개행으로 끝나야 한다.** 블록을 끝에 붙이면 마지막 줄의 개행이
+// 사라지고, 다음 편집이 그 줄에 이어 붙어 두 키가 한 줄이 된다.
+func TestEditKeepsTrailingNewline(t *testing.T) {
+	out, err := AddVault([]byte(liveish), "work", "~/w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(out); n == 0 || out[n-1] != '\n' {
+		t.Errorf("개행으로 안 끝난다: %q", string(out[max(0, len(out)-20):]))
+	}
+	// 이어서 또 고쳐도 줄이 뭉치지 않는다.
+	out2, err := SetHost(out, "Codex CLI", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out2), `path = "~/w"[[host]]`) {
+		t.Errorf("줄이 뭉쳤다:\n%s", out2)
+	}
+	if n := len(out2); out2[n-1] != '\n' {
+		t.Error("두 번째 편집 뒤에도 개행이 없다")
+	}
+}

@@ -184,7 +184,7 @@ func SweepOnce(o SweepOptions) (SweepResult, bool, error) {
 	if err := st.Load(); err != nil {
 		return r, true, err
 	}
-	rs, err := hosts.Resolve("")
+	rs, err := ResolveHosts(o.Config, "")
 	if err != nil {
 		return r, true, err
 	}

@@ -56,7 +56,13 @@ func edit(src []byte, mutate func([]string) ([]string, error), want func(*Config
 	if err != nil {
 		return nil, err
 	}
+	// **끝 개행을 지킨다.** 블록을 파일 끝에 붙이면 마지막 줄에 개행이 없어지고,
+	// 그 다음 편집이 그 줄에 이어 붙어 두 키가 한 줄이 된다 — 그때는 파싱이
+	// 깨지므로 그물에 걸리지만, 사람이 손으로 열었을 때도 어색하다.
 	out := []byte(strings.Join(lines, "\n"))
+	if n := len(out); n > 0 && out[n-1] != '\n' {
+		out = append(out, '\n')
+	}
 
 	after, err := parseBytes(out)
 	if err != nil {

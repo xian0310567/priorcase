@@ -136,7 +136,7 @@ func (d *watcher) run(ctx context.Context) error {
 
 	// **호스트마다 루트가 따로다.** 하나만 감시하면 나머지 호스트의 대화는
 	// 파서가 있어도 영영 안 읽힌다.
-	rs, err := hosts.Resolve(d.o.TranscriptRoot)
+	rs, err := ResolveHosts(d.o.Config, d.o.TranscriptRoot)
 	if err != nil {
 		return err
 	}

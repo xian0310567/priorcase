@@ -347,6 +347,13 @@ func (c *Config) expand() error {
 			}
 		}
 	}
+	// **호스트 루트도 편다.** 안 펴면 "~/.codex/sessions" 라는 이름의 폴더를
+	// 현재 디렉토리 밑에서 찾게 되고, 없으니 그 호스트는 조용히 빠진다.
+	for i := range c.Host {
+		if c.Host[i].Root, err = tilde(c.Host[i].Root); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

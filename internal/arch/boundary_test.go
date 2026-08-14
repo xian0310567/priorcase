@@ -172,3 +172,39 @@ func TestOnlyDaemonWritesState(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ★★★ **호스트 목록을 푸는 통로는 하나여야 한다.**
+//
+// 설정에서 호스트를 껐을 때 그것을 읽는 자리가 셋이다 — 데몬의 감시 목록,
+// 훑기, 스캔의 폴백. 하나라도 hosts.Resolve 를 직접 부르면 **그 경로로만 끈
+// 호스트가 계속 읽힌다.** 사람은 껐다고 믿고 대화는 계속 훑힌다 — 조용하다.
+//
+// daemon.ResolveHosts 가 그 통로다. hosts.All() 은 막지 않는다 — 설정 화면은
+// 꺼진 것까지 보여 줘야 사람이 다시 켤 수 있다.
+func TestHostResolutionGoesThroughOneDoor(t *testing.T) {
+	err := filepath.WalkDir("..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		s := filepath.ToSlash(p)
+		// 통로 자신과, 통로가 사는 패키지의 레지스트리 구현은 예외다.
+		if strings.HasSuffix(s, "/daemon/hostsel.go") || strings.Contains(s, "/transcript/hosts/") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		if strings.Contains(string(b), "hosts.Resolve(") {
+			t.Errorf("%s 가 hosts.Resolve 를 직접 부른다 — 설정의 호스트 켜기/끄기를 건너뛴다. "+
+				"daemon.ResolveHosts 를 써라", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
