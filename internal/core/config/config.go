@@ -101,6 +101,51 @@ type Config struct {
 	Naming  Naming   `toml:"naming"`
 	Capture Capture  `toml:"capture"`
 	Domain  []Domain `toml:"domain"`
+	// Host 는 어느 도구의 대화 기록을 훑을지다. 비면 **전부 훑는다** —
+	// 설정을 한 줄도 안 적은 상태가 정상 출발점이고, 그때 아무 호스트도 안 보면
+	// 이 도구는 아무것도 못 한다.
+	//
+	// 여기에는 이름만 산다. 어떤 호스트가 존재하는지는 transcript/hosts 의
+	// 레지스트리가 알고, core 는 그것을 모른다 (§4.1).
+	Host []Host `toml:"host"`
+}
+
+// Host 는 감시 대상 호스트 하나의 설정이다.
+type Host struct {
+	// Name 은 레지스트리의 이름과 정확히 같아야 한다 ("Claude Code", "Codex CLI").
+	Name string `toml:"name"`
+	// Enabled 가 nil 이면 **켜진 것이다.** 안 적은 것과 false 를 구별해야
+	// "설정에 없는 호스트는 기본값으로 돈다" 를 표현할 수 있다.
+	Enabled *bool `toml:"enabled"`
+	// Root 는 기록이 쌓이는 자리를 덮어쓴다. 비면 호스트의 기본 자리.
+	Root string `toml:"root"`
+}
+
+// On 은 이 호스트를 훑어야 하는지 준다.
+func (h Host) On() bool { return h.Enabled == nil || *h.Enabled }
+
+// HostOn 은 이름으로 호스트가 켜져 있는지 본다.
+//
+// **설정에 없는 호스트는 켜진 것이다.** 새 호스트 파서를 더했을 때 기존
+// 사용자의 설정에 그 이름이 없다고 꺼져 있으면, 그 사람은 새 기능이 있는 줄도
+// 모른 채 안 돈다 — 조용한 실패다.
+func (c *Config) HostOn(name string) bool {
+	for _, h := range c.Host {
+		if h.Name == name {
+			return h.On()
+		}
+	}
+	return true
+}
+
+// HostRoot 는 이름으로 덮어쓴 기록 자리를 준다. 없으면 빈 문자열.
+func (c *Config) HostRoot(name string) string {
+	for _, h := range c.Host {
+		if h.Name == name {
+			return h.Root
+		}
+	}
+	return ""
 }
 
 // DefaultPath 는 XDG 기준 설정 파일 경로다.
@@ -162,26 +207,23 @@ type tomlBase struct {
 	Naming        Naming   `toml:"naming"`
 	Capture       Capture  `toml:"capture"`
 	Domain        []Domain `toml:"domain"`
+	Host          []Host   `toml:"host"`
 }
 
 func (b tomlBase) into(c *Config) {
 	c.Exclude, c.DefaultDomain, c.Lang, c.Author = b.Exclude, b.DefaultDomain, b.Lang, b.Author
-	c.Naming, c.Capture, c.Domain = b.Naming, b.Capture, b.Domain
+	c.Naming, c.Capture, c.Domain, c.Host = b.Naming, b.Capture, b.Domain, b.Host
 }
 
-func Load(path string) (*Config, error) {
-	path, err := ResolvePath(path)
-	if err != nil {
-		return nil, err
-	}
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("설정 파일을 열 수 없다 (%s): %w", path, err)
-	}
-
+// parseBytes 는 설정 원문을 구조체로 읽는다. 경로 확장도 검증도 하지 않는다.
+//
+// **Load 와 편집(edit.go)이 같은 파서를 써야 한다.** 편집은 "고친 결과가 의도와
+// 같은가" 를 이 함수로 판정하는데, 그 판정이 실제로 읽히는 방식과 다르면 그물이
+// 헛것을 잡는다.
+func parseBytes(src []byte) (*Config, error) {
 	table, err := vaultIsTable(src)
 	if err != nil {
-		return nil, fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
+		return nil, fmt.Errorf("설정 파싱 실패: %w", err)
 	}
 
 	var c Config
@@ -191,9 +233,9 @@ func Load(path string) (*Config, error) {
 		if err := dec.Decode(v); err != nil {
 			var se *toml.StrictMissingError
 			if errors.As(err, &se) {
-				return fmt.Errorf("설정에 알 수 없는 키가 있다 (%s):\n%s", path, se.String())
+				return fmt.Errorf("설정에 알 수 없는 키가 있다:\n%s", se.String())
 			}
-			return fmt.Errorf("설정 파싱 실패 (%s): %w", path, err)
+			return fmt.Errorf("설정 파싱 실패: %w", err)
 		}
 		return nil
 	}
@@ -223,6 +265,24 @@ func Load(path string) (*Config, error) {
 			c.Vaults = []Vault{{Name: DefaultVaultName, Path: f.Vault}}
 		}
 	}
+	return &c, nil
+}
+
+func Load(path string) (*Config, error) {
+	path, err := ResolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("설정 파일을 열 수 없다 (%s): %w", path, err)
+	}
+
+	parsed, err := parseBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	c := *parsed
 
 	// **환경변수는 기본 볼트만 덮는다.** 여러 볼트를 환경변수 하나로 표현할 방법이
 	// 없고, 이건 테스트와 특수 배치를 위한 문이다.
