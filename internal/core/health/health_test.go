@@ -361,3 +361,84 @@ func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
 		t.Errorf(".git/info/exclude 를 안 본다: %+v", ck)
 	}
 }
+
+// ★★★ **고칠 수 없는 것을 권하면 그 경고는 영영 떠 있는다.**
+//
+// 실측(2026-08-14): 도메인 여덟에 repos 를 채우자 둘이 남았는데, 하나는 git
+// 저장소가 아니고(`create`) 하나는 origin 이 없었다(`synth`). 둘 다 `repos` 를
+// 적을 방법이 없다 — 그런데 doctor 는 계속 "repos 를 더해라" 고 말했다.
+//
+// **늘 뜨는 경고는 무시하는 법을 가르친다.** 그러면 정작 고칠 수 있는 도메인이
+// 하나 늘어도 같이 묻힌다.
+//
+// 다만 **모르는 것을 침묵으로 바꾸지는 않는다.** 경로가 이 기계에 없으면
+// (팀원의 체크아웃 자리) 판정할 수 없으므로 경고를 유지한다 — 침묵하면 새
+// 팀원의 기록이 조용히 폴백으로 샌다. 침묵은 **불가능함을 증명했을 때만**이다.
+func TestTeamPortabilitySkipsWhatCannotBeFixed(t *testing.T) {
+	shared := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shared, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 이 기계에 있고 git 이 아닌 프로젝트 — repos 를 적을 수 없다.
+	local := t.TempDir()
+
+	cfg := &config.Config{
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: shared}}, DefaultDomain: "common",
+		Domain: []config.Domain{
+			{Prefix: "common", Folder: "common", Paths: []string{"/home/me/misc"}},
+			{Prefix: "nogit", Folder: "nogit", Paths: []string{local}},
+		},
+	}
+	r := &Report{}
+	checkTeamPortability(r, cfg, store.NewLayout(cfg))
+	for i := range r.Checks {
+		if r.Checks[i].Name != "팀 이식성" {
+			continue
+		}
+		if r.Checks[i].Level == Warn {
+			t.Errorf("고칠 수 없는 도메인에 경고했다: %s", r.Checks[i].Detail)
+		}
+	}
+}
+
+// ★★ **고칠 수 있으면 무엇을 적을지까지 말한다.**
+//
+// "repos 를 더해라" 만으로는 사람이 `git remote -v` 를 치고 형식을 맞춰야 한다.
+// 우리가 이미 아는 값이면 그대로 준다 — 진단은 다음 행동을 짧게 만드는 것이 일이다.
+func TestTeamPortabilityNamesTheRepo(t *testing.T) {
+	shared := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shared, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitCfg := "[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n"
+	if err := os.WriteFile(filepath.Join(proj, ".git", "config"), []byte(gitCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Vaults: []config.Vault{{Name: config.DefaultVaultName, Path: shared}}, DefaultDomain: "common",
+		Domain: []config.Domain{
+			{Prefix: "common", Folder: "common", Paths: []string{"/home/me/misc"}},
+			{Prefix: "widget", Folder: "widget", Paths: []string{proj}},
+		},
+	}
+	r := &Report{}
+	checkTeamPortability(r, cfg, store.NewLayout(cfg))
+	for i := range r.Checks {
+		if r.Checks[i].Name != "팀 이식성" {
+			continue
+		}
+		if r.Checks[i].Level != Warn {
+			t.Fatalf("경고해야 한다 (등급 %v)", r.Checks[i].Level)
+		}
+		if !strings.Contains(r.Checks[i].Fix, "acme/widget") {
+			t.Errorf("무엇을 적을지 안 알려 준다: %s", r.Checks[i].Fix)
+		}
+		return
+	}
+	t.Fatal("검사가 아예 없다")
+}

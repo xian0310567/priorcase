@@ -357,6 +357,7 @@ func checkTeamPortability(r *Report, c *config.Config, l *store.Layout) {
 		return
 	}
 	var pathOnly []string
+	suggest := map[string]string{}
 	withRepo := 0
 	for _, d := range c.Domain {
 		switch {
@@ -364,8 +365,24 @@ func checkTeamPortability(r *Report, c *config.Config, l *store.Layout) {
 			withRepo++
 		case len(d.Paths) > 0:
 			// 폴백 도메인은 원래 경로가 없어도 되는 자리라 세지 않는다.
-			if d.Prefix != c.DefaultDomain {
-				pathOnly = append(pathOnly, d.Prefix)
+			if d.Prefix == c.DefaultDomain {
+				continue
+			}
+			repo, known := repoHint(d.Paths)
+			// **고칠 수 없는 것은 말하지 않는다.** 경로가 이 기계에 다 있는데
+			// 어느 것도 origin 이 없으면 repos 를 적을 방법이 없다 — 그런데도
+			// "repos 를 더해라" 고 하면 그 경고는 영영 떠 있고, 늘 뜨는 경고는
+			// 무시하는 법을 가르친다. 그러면 고칠 수 있는 도메인이 하나 늘어도
+			// 같이 묻힌다.
+			//
+			// **모르는 것을 침묵으로 바꾸지는 않는다.** 경로가 없으면(팀원의
+			// 체크아웃 자리) 판정할 수 없으므로 경고를 유지한다.
+			if known && repo == "" {
+				continue
+			}
+			pathOnly = append(pathOnly, d.Prefix)
+			if repo != "" {
+				suggest[d.Prefix] = repo
 			}
 		}
 	}
@@ -377,10 +394,43 @@ func checkTeamPortability(r *Report, c *config.Config, l *store.Layout) {
 		return
 	}
 	sort.Strings(pathOnly)
+	// **무엇을 적을지까지 준다.** "repos 를 더해라" 만으로는 사람이 git remote 를
+	// 치고 형식을 맞춰야 한다. 우리가 이미 아는 값이면 그대로 준다 — 진단은
+	// 다음 행동을 짧게 만드는 것이 일이다.
+	fix := `각 [[domain]] 에 repos = ["owner/repo"] 를 더해라 (paths 는 그대로 둬도 된다)`
+	if len(suggest) > 0 {
+		var parts []string
+		for _, p := range pathOnly {
+			if rp := suggest[p]; rp != "" {
+				parts = append(parts, fmt.Sprintf("%s → repos = [%q]", p, rp))
+			}
+		}
+		if len(parts) > 0 {
+			fix = strings.Join(parts, " · ") + " (paths 는 그대로 둬도 된다)"
+		}
+	}
 	r.add("팀 이식성", Warn,
 		fmt.Sprintf("%d개 도메인이 paths 로만 잡힌다 %v — 볼트를 팀과 공유하면 그 사람들에게는 안 걸린다",
 			len(pathOnly), pathOnly),
-		`각 [[domain]] 에 repos = ["owner/repo"] 를 더해라 (paths 는 그대로 둬도 된다)`)
+		fix)
+}
+
+// repoHint 는 이 경로들에서 알아낼 수 있는 저장소 이름과, **판정할 수 있었는지**를 준다.
+//
+// known 이 false 면 경로가 이 기계에 없어서 모르는 것이다 — 그건 침묵의 근거가
+// 못 된다. known 이 true 이고 repo 가 비면 **repos 를 적을 방법이 없다**는 뜻이다.
+func repoHint(paths []string) (repo string, known bool) {
+	known = true
+	for _, p := range paths {
+		if _, err := os.Stat(p); err != nil {
+			known = false
+			continue
+		}
+		if r := config.RepoFor(p); r != "" {
+			return r, true
+		}
+	}
+	return "", known
 }
 
 // isGitDir 는 볼트 자체가 git 저장소인지 본다 (remote 가 없어도 된다).
