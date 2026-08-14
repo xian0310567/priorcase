@@ -3,7 +3,9 @@ package hook
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/xian0310567/priorcase/internal/core/retro"
 	"github.com/xian0310567/priorcase/internal/core/search"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/daemon"
@@ -53,8 +55,54 @@ func (o Options) userPromptSubmit() error {
 	if s := search.RenderInject(o.Layout, hits); s != "" {
 		fmt.Fprint(o.Out, s)
 	}
+	fmt.Fprint(o.Out, o.askOutcome(hits))
 	fmt.Fprint(o.Out, o.nudge())
 	return nil
+}
+
+// askOutcome 은 **방금 꺼낸 결정의 결과를 그 자리에서 묻는다.**
+//
+// 실측(2026-08-14): 결정 157건 중 결과가 적힌 것이 2건(1.3%)이다. 회고 큐에는
+// 52건이 쌓여 있는데 아무도 안 본다 — 목록을 보러 가는 일은 따로 시간을 내는
+// 일이고, 따로 시간을 내는 일은 안 일어난다.
+//
+// 결과를 아는 순간은 그 주제를 다시 다룰 때다. 회수가 그 결정을 이미 눈앞에
+// 꺼내 놓은 자리에서 물으면 답하는 비용이 한 줄이다.
+//
+// 고를 것이 없으면 **아무것도 안 낸다.** 매 프롬프트마다 무언가를 묻는 것이
+// 이 물음을 죽이는 가장 빠른 길이다 (판정은 retro.Ask 가 한다).
+func (o Options) askOutcome(hits []search.Hit) string {
+	notes := make([]store.Note, 0, len(hits))
+	for _, h := range hits {
+		notes = append(notes, h.Note)
+	}
+	n, ok := retro.Ask(notes, time.Now())
+	if !ok {
+		return ""
+	}
+	summary := strings.TrimSpace(n.Meta.Summary)
+	if summary == "" {
+		summary = n.Stem
+	}
+	lang := o.Layout.Lang()
+	var b strings.Builder
+	b.WriteString("\n" + lang.T("[결과를 아직 모르는 결정]", "[Decision with unknown outcome]") + "\n")
+	if n.Meta.Status == "superseded" {
+		fmt.Fprintf(&b, lang.T(
+			"방금 꺼낸 %s 는 **뒤집힌 결정**인데 결과가 안 적혀 있다.\n  %s\n",
+			"%s, just recalled, was **superseded** but has no recorded outcome.\n  %s\n"),
+			n.Stem, summary)
+	} else {
+		fmt.Fprintf(&b, lang.T(
+			"방금 꺼낸 %s (%s) 는 결과가 안 적혀 있다.\n  %s\n",
+			"%s (%s), just recalled, has no recorded outcome.\n  %s\n"),
+			n.Stem, n.Meta.Date, summary)
+	}
+	fmt.Fprintf(&b, lang.T(
+		"**지금 대화에서 그 결과를 알 수 있으면** `prior review %s --outcome good|bad --retro \"...\"` 로 남겨라. 모르면 넘어가라.\n",
+		"**If this conversation reveals how it turned out**, record it with `prior review %s --outcome good|bad --retro \"...\"`. If you cannot tell, skip it.\n"),
+		n.Stem)
+	return b.String()
 }
 
 // nudgeExcerpt 는 주입에 실을 발췌의 상한이다. 매 프롬프트에 들어가므로 짧아야 한다 —
