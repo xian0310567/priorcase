@@ -1,61 +1,60 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Queue, Settings, CmdError } from "./types";
 import {
   fetchQueue,
-  resolvePending,
-  promote,
-  review,
-  markReviewed,
-  openNote,
+  fetchSettings,
+  setHost,
+  addVault,
+  bindDomain,
+  openVault,
 } from "./api";
-import type { Queue, CmdError } from "./types";
-import { renderConfirm } from "./render/confirm";
-import { renderReview } from "./render/review";
-import { renderRetro } from "./render/retro";
+import { renderHosts } from "./render/hosts";
+import { renderVaults } from "./render/vaults";
 import { renderHealth } from "./render/health";
 import { renderError, renderWarnings } from "./render/shell";
+import { backlogLine } from "./format";
 
-type Tab = "confirm" | "review" | "retro" | "health";
+// 앱은 **설정 콘솔**이다 (2026-08-14 전환).
+//
+// 예전에는 확인·검토·회고 큐를 사람에게 보여 주고 승인·판정을 받았다. 그런데
+// 이 도구의 근간은 자동 기록이다 — 사람이 "이걸 기록할까요" 를 누르는 순간 그
+// 전제를 사람이 대신 갚는다. 승격 원장 실측(136건 중 기록 3건)이 그 큐가
+// 기능이 아니라 자동 층이 못 따라잡은 잔해임을 보여 줬다.
+//
+// 대신 앱은 지금 아무 데서도 못 하는 일을 맡는다: 어느 도구의 대화를 훑을지,
+// 프로젝트를 어느 볼트에 엮을지, 볼트를 어디에 만들지.
 
-const TABS: Tab[] = ["confirm", "review", "retro", "health"];
+type Tab = "hosts" | "vaults" | "health";
+
+const TABS: Tab[] = ["hosts", "vaults", "health"];
 const LABEL: Record<Tab, string> = {
-  confirm: "확인",
-  review: "검토",
-  retro: "회고",
+  hosts: "호스트",
+  vaults: "볼트",
   health: "상태",
 };
 
-/** badgeText 는 메뉴바에 붙일 글자다.
+/** badgeText 는 메뉴바에 띄울 글자다.
  *
- * **할 일이 없으면 빈 문자열이다.** 늘 무언가 떠 있으면 사람이 그것을 무시하는
- * 법을 배우고, 그러면 진짜 할 일이 있을 때도 안 보인다.
+ * **고장났을 때만 말한다.** 예전에는 큐 건수를 띄웠는데, 그건 사람에게 할 일이
+ * 있다는 뜻이었다. 지금 앱에는 사람이 눌러야 할 일감이 없다 — 밀린 구간은
+ * 데몬이 소화한다.
  *
- * **합계 하나로 낸다.** 메뉴바는 폭이 좁다 — 종류별로 나열하면 실측 숫자로
- * "확인 23 · 검토 3 · 회고 50" 이 되어 다른 아이콘을 밀어낸다. 어느 큐가
- * 줄었는지는 앱을 열면 탭마다 보인다.
- *
- * **fail 만 ⚠ 를 띄운다.** warn 은 실측 10건 중 2건이 상시라(팀 이식성·색인)
- * 경고 표시가 영구히 켜진다. 모르는 등급도 fail 로 읽지 않는다 — 등급이 하나
- * 늘 때마다 배지가 경고로 굳는다. */
+ * 늘 무언가 떠 있으면 사람이 그것을 무시하는 법을 배우고, 그러면 진짜 고장이
+ * 났을 때도 안 보인다. */
 export function badgeText(q: Queue): string {
-  const n = q.confirm.length + q.review.length + q.retro.length;
-  const broken = q.health.some((h) => h.level === "fail");
-  if (broken) return n > 0 ? `⚠${n}` : "⚠";
-  return n > 0 ? String(n) : "";
+  return q.health.some((h) => h.level === "fail") ? "⚠" : "";
 }
 
-/** POLL_MS 는 폴링 주기다.
+/** POLL_MS 는 다시 읽는 주기다.
  *
- * 파일 감시(fsnotify)를 안 쓰는 이유: 볼트 여럿과 상태 디렉토리를 다 봐야 하고,
- * 그래도 회고 큐는 재계산해야 한다. 얻는 것이 적다. */
-const POLL_MS = 30_000;
+ * 설정 화면은 **사람이 바꿀 때만 바뀐다.** 예전 큐 화면은 백그라운드에서 큐가
+ * 늘어나므로 30초마다 읽었지만, 지금은 그럴 이유가 거의 없다. 그래도 폴링을
+ * 남기는 이유는 상태 검사다 — 볼트가 빠지거나 판별기 로그인이 풀리는 것은
+ * 앱 밖에서 일어난다. */
+const POLL_MS = 60_000;
 
-/** start 는 앱을 띄운다.
- *
- * **최상위에서 바로 돌지 않는다.** 그러면 이 모듈을 import 하는 것만으로 폴링이
- * 시작되고, 시험에서 `#app` 이 없어 최상위가 터진다 — 실제로 그랬다.
- * 부트스트랩을 함수 안에 두면 badgeText 만 꺼내 보는 것이 안전해진다. */
 function start(app: HTMLElement): void {
-  let tab: Tab = "confirm";
+  let tab: Tab = "hosts";
 
   function shell(): { tabs: HTMLElement; banner: HTMLElement; body: HTMLElement } {
     app.replaceChildren();
@@ -68,81 +67,71 @@ function start(app: HTMLElement): void {
     return { tabs, banner, body };
   }
 
-  function draw(q: Queue): void {
+  function draw(q: Queue, s: Settings): void {
     const { tabs, banner, body } = shell();
 
     for (const t of TABS) {
-      const n = t === "health" ? 0 : q[t].length;
       const b = document.createElement("button");
       b.className = "tab" + (t === tab ? " active" : "");
-      b.textContent = n > 0 ? `${LABEL[t]} ${n}` : LABEL[t];
+      b.textContent = LABEL[t];
       b.addEventListener("click", () => {
         tab = t;
-        draw(q);
+        draw(q, s);
       });
       tabs.append(b);
     }
 
-    renderWarnings(banner, q.warnings);
+    // 두 곳의 경고를 합친다 — 사람은 어느 명령이 낸 것인지 모르고 알 필요도 없다.
+    renderWarnings(banner, [...(q.warnings ?? []), ...(s.warnings ?? [])]);
 
     const act = async (fn: () => Promise<void>): Promise<void> => {
       try {
         await fn();
         await refresh();
       } catch (e) {
-        // **쓰기가 실패하면 조용히 넘어가지 않는다.** 큐에서 사라졌는데 볼트에
-        // 반영이 안 되면 사람은 답한 줄 안다.
+        // **쓰기가 실패하면 조용히 넘어가지 않는다.** 화면만 바뀌고 설정에
+        // 반영이 안 되면 사람은 껐다고 믿는다.
         renderError(body, e as CmdError);
       }
     };
 
     switch (tab) {
-      case "confirm":
-        renderConfirm(body, q.confirm, {
-          resolve: (id) => void act(() => resolvePending(id)),
-          promote: (id) => void act(() => promote(id)),
+      case "hosts":
+        renderHosts(body, s.hosts, {
+          toggle: (name, enabled) => void act(() => setHost(name, enabled)),
         });
         break;
-      case "review":
-        renderReview(body, q.review, {
-          // 승격 ID 로 검토 표시만 남긴다 — outcome 은 회고가 나중에 물을
-          // 다른 질문이다 (§ priorcase-결정-검토표시를-원장에-outcome과분리).
-          ok: (id) => void act(() => markReviewed(id)),
-          open: (stem) => void act(() => openNote(stem)),
-        });
-        break;
-      case "retro":
-        renderRetro(body, q.retro, {
-          judge: (stem, outcome) => void act(() => review(stem, outcome)),
-          open: (stem) => void act(() => openNote(stem)),
+      case "vaults":
+        renderVaults(body, s, {
+          open: (name) => void act(() => openVault(name)),
+          add: (name, path) => void act(() => addVault(name, path)),
+          bind: (prefix, vault) => void act(() => bindDomain(prefix, vault)),
         });
         break;
       case "health":
-        renderHealth(body, q.health);
+        renderHealth(body, q.health, backlogLine(q.confirm.length, q.retro.length));
         break;
     }
   }
 
   async function refresh(): Promise<void> {
     try {
-      const q = await fetchQueue();
+      // **둘을 같이 읽는다.** 하나만 실패해도 화면 전체가 오류다 — 설정이 안
+      // 읽히는데 상태만 그리면 사람은 앱이 멀쩡한 줄 안다.
+      const [q, s] = await Promise.all([fetchQueue(), fetchSettings()]);
       await invoke("set_tray_title", { title: badgeText(q) });
-      draw(q);
+      draw(q, s);
     } catch (e) {
-      // **빈 큐로 그리지 않는다.** 고장이 "할 일 없음" 이 되면 앱도 이 시스템의
-      // 병(고장이 정상과 구별되지 않음)에 걸린다.
-      const { banner, body } = shell();
-      renderWarnings(banner, undefined);
+      const { body } = shell();
       renderError(body, e as CmdError);
-      await invoke("set_tray_title", { title: "⚠" });
     }
   }
 
   void refresh();
   setInterval(() => void refresh(), POLL_MS);
-  // 창을 열 때도 갱신한다 — 30초를 기다리게 하면 오래된 것을 보게 된다.
-  window.addEventListener("focus", () => void refresh());
 }
 
+// **최상위에서 바로 돌지 않는다.** 그러면 이 모듈을 import 하는 것만으로 폴링이
+// 시작되고, 시험에서 `#app` 이 없어 최상위가 터진다 — 실제로 그랬다.
 const root = document.querySelector<HTMLDivElement>("#app");
 if (root) start(root);

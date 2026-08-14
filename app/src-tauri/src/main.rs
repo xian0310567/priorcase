@@ -62,12 +62,11 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::queue,
-            commands::resolve_pending,
-            commands::promote,
-            commands::review,
-            commands::mark_reviewed,
-            commands::note_path,
-            commands::open_note,
+            commands::settings,
+            commands::set_host,
+            commands::add_vault,
+            commands::bind_domain,
+            commands::open_vault,
             commands::set_tray_title,
         ])
         .setup(|app| {

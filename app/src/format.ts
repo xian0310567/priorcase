@@ -1,40 +1,46 @@
-/** vaultLabel 은 "어느 프로젝트의, 어느 볼트에" 를 한 줄로 만든다.
- *
- * **앱에는 cwd 가 없다.** 메뉴바에 상주하므로 큐가 볼트를 전부 덮는다. 줄에
- * 볼트가 안 붙으면 사람이 "이게 어디에 쓰일 건지" 를 알 수 없다.
- *
- * 볼트가 비면 **설정 오류**다 — 도메인이 설정에 없는 볼트를 가리킨다는 뜻이고,
- * 그 경우 기록 자체가 실패한다(capture 가 거부한다). 기본 볼트로 그리면 사람은
- * 거기 쌓이는 줄 알고, 보여 준 것과 실제가 어긋난다. */
-export function vaultLabel(domain: string, vault: string): string {
-  return vault ? `${domain} · ${vault} 볼트` : `${domain} · ⚠️ 볼트 미상`;
+import type { HostInfo, VaultInfo } from "./types";
+
+/** num 은 큰 수에 자릿점을 찍는다. 기록 1729개는 한눈에 안 읽힌다. */
+export function num(n: number): string {
+  return n.toLocaleString("en-US");
 }
 
-/** clip 은 긴 글을 줄 단위로 접고 **몇 줄이 숨었는지** 함께 준다.
+/** hostState 는 호스트 한 줄의 오른쪽 글이다.
  *
- * 발췌가 실측 880B~4.9KB 이고 절반이 한 화면에 안 들어간다. 숨은 줄 수를 안
- * 보여 주면 사람은 그게 전부인 줄 안다 — 결정이 잘린 뒷부분에 있으면 그대로
- * 놓친다.
- *
- * hidden 은 **실제로 안 보이는 줄 수**여야 한다. 어림수를 내면 사람은 "3줄 더"
- * 를 믿고 펼쳤다가 40줄을 만난다. */
-export function clip(text: string, lines: number): { shown: string; hidden: number } {
-  const all = text.split("\n");
-  if (all.length <= lines) return { shown: text, hidden: 0 };
-  return { shown: all.slice(0, lines).join("\n"), hidden: all.length - lines };
+ * **"자리 없음" 과 "기록 0개" 는 다른 말이다.** 앞엣것은 그 도구를 안 쓰거나
+ * 기록 자리를 옮긴 것이고, 뒤엣것은 도구는 있는데 대화가 없는 것이다. 뭉치면
+ * 사람이 무엇을 고쳐야 할지 모른다. */
+export function hostState(h: HostInfo): string {
+  if (!h.exists) return "기록 자리가 없다";
+  return `대화 ${num(h.files)}개`;
 }
 
-/** reasonLabel 은 회고 방아쇠를 사람 말로 바꾼다.
+/** vaultState 는 볼트 한 줄의 오른쪽 글이다.
  *
- * superseded 는 hits 가 0 일 수 있다 — 뒤집혔다는 사실만으로 올라오기 때문이다.
- * 그때 "재회수 0회" 로 그리면 거짓이다.
+ * 자리가 없으면 **그것부터 말한다.** 결정 0건으로 그리면 "아직 안 썼구나" 로
+ * 읽히는데, 실제로는 그 볼트로 엮인 도메인의 기록이 통째로 안 써지는 상태다. */
+export function vaultState(v: VaultInfo): string {
+  if (!v.exists) return "⚠️ 자리가 없다";
+  const d = v.domains.length;
+  return `결정 ${num(v.decisions)}건 · 프로젝트 ${d}개`;
+}
+
+/** vaultOfDomain 은 도메인이 실제로 쓰는 볼트 이름이다.
  *
- * **모르는 값은 뭉개지 않고 그대로 보인다.** 지금 Go 쪽 Reason 은 둘뿐이지만
- * 늘어날 수 있고, TS 타입은 런타임 JSON 을 검사하지 않는다. else 로 "재회수
- * N회" 를 내면 새 방아쇠가 전부 거짓말로 그려지고 아무도 눈치채지 못한다.
- * 낯선 문자열이 화면에 뜨면 시끄럽다 — 그게 낫다. */
-export function reasonLabel(reason: string, hits: number): string {
-  if (reason === "superseded") return "뒤집혔다";
-  if (reason === "recalled") return `재회수 ${hits}회`;
-  return reason;
+ * 빈 값은 "기본 볼트" 라는 뜻이다. 그것을 빈칸으로 그리면 사람은 **엮이지
+ * 않았다**고 읽는데, 실제로는 기본 볼트로 잘 가고 있다. */
+export function vaultOfDomain(vault: string, fallback: string): string {
+  return vault === "" ? fallback : vault;
+}
+
+/** backlogLine 은 밀린 구간을 진단 한 줄로 만든다. 없으면 빈 문자열이다.
+ *
+ * **할 일 목록이 아니다.** 사람이 누를 것이 없다 — 밀린 구간은 데몬이 세션
+ * 끝마다 소화한다. 여기 적는 이유는 그 처리량이 새 구간이 쌓이는 속도를 못
+ * 따라가면 사람이 그 사실을 알 자리가 아무 데도 없기 때문이다. */
+export function backlogLine(pending: number, retro: number): string {
+  const parts: string[] = [];
+  if (pending > 0) parts.push(`판정을 기다리는 구간 ${num(pending)}건`);
+  if (retro > 0) parts.push(`결과를 안 물어본 결정 ${num(retro)}건`);
+  return parts.join(" · ");
 }

@@ -1,5 +1,5 @@
 import type { Health, Level } from "../types";
-import { el } from "./excerpt";
+import { el } from "./shell";
 
 const MARK: Record<Level, string> = { ok: "✓", warn: "⚠", fail: "✗", unknown: "?" };
 
@@ -14,13 +14,20 @@ function levelOf(v: string): Level {
 
 /** renderHealth 는 상태 검사를 그린다.
  *
- * **큐가 셋 다 비었을 때 앱이 보여 줄 것이 이것뿐이다.** 비어 있어도 반드시
- * 채운다 — 빈 화면은 "고장난 것처럼" 보인다. */
-export function renderHealth(root: HTMLElement, items: Health[]): void {
+ * backlog 는 밀린 일감을 적은 **진단 한 줄**이다. 빈 문자열이면 안 그린다.
+ *
+ * **할 일 목록이 아니다.** 사람이 누를 것은 없다 — 밀린 구간은 데몬이 세션
+ * 끝마다 소화한다. 그래도 적는 이유는, 그 처리량이 새 구간이 쌓이는 속도를 못
+ * 따라가면 사람이 그 사실을 알 자리가 아무 데도 없기 때문이다. 예전에는 이것이
+ * 확인 큐라는 화면이었고, 그건 자동 기록의 전제를 사람에게 떠넘기는 것이었다. */
+export function renderHealth(root: HTMLElement, items: Health[], backlog = ""): void {
   root.replaceChildren();
   if (items.length === 0) {
     root.append(el("p", "empty", "상태 검사를 받지 못했다. prior 가 도는지 확인하라."));
     return;
+  }
+  if (backlog !== "") {
+    root.append(el("div", "backlog", backlog));
   }
   for (const it of items) {
     const lvl = levelOf(it.level);

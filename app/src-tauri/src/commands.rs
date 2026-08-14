@@ -2,17 +2,23 @@ use crate::prior::{run, PriorError};
 use serde::Serialize;
 use std::time::Duration;
 
-/// READ_TIMEOUT 은 `prior queue` 의 상한이다.
+/// READ_TIMEOUT 은 읽기 명령의 상한이다.
 ///
-/// 실측 1.0초(결정 98건 · 볼트 하나)다. 볼트가 늘면 곱해지므로 여유를 준다.
-/// 이보다 오래 걸리면 앱이 멎은 것처럼 보이므로 짧게 잡는다.
+/// 실측: `prior settings --json` 0.01초, `prior queue --json` 2.6초(결정 156건 ·
+/// 검사 10개). 볼트가 늘면 곱해지므로 여유를 준다. 이보다 오래 걸리면 앱이 멎은
+/// 것처럼 보이므로 짧게 잡는다.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// WRITE_TIMEOUT 은 쓰기 명령의 상한이다.
+/// WRITE_TIMEOUT 은 설정을 고치는 명령의 상한이다.
 ///
-/// **`prior promote` 가 판별기를 부르고 그 예산이 90초다.** 읽기 상한을 쓰면
-/// 정상 승격이 타임아웃으로 보이고, 사람은 눌렀는데 아무 일도 안 난 줄 안다.
-pub const WRITE_TIMEOUT: Duration = Duration::from_secs(120);
+/// 설정 쓰기는 파일 하나를 고치는 일이라 밀리초 단위다. 여유를 크게 주는 이유는
+/// 볼트 자리를 만드는 일(mkdir)이 네트워크 드라이브에서 느릴 수 있어서다.
+///
+/// **예전에는 120초였다.** 앱이 `prior promote` 를 부르고 그 판별기 예산이
+/// 90초였기 때문인데, 확인 큐를 들어내면서 앱은 더 이상 판별기를 부르지 않는다
+/// (판별기는 데몬이 부른다). 상한이 필요 이상으로 길면 **정말 멈춘 명령이
+/// 2분 동안 멈춘 줄 모르게 된다.**
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// ENV_LOCK 은 환경변수를 만지는 테스트를 직렬화한다.
 ///
@@ -61,60 +67,72 @@ pub fn run_queue(bin: &str) -> Result<String, CmdError> {
     run(bin, &["queue", "--json"], READ_TIMEOUT).map_err(to_cmd_error)
 }
 
+pub fn run_settings(bin: &str) -> Result<String, CmdError> {
+    run(bin, &["settings", "--json"], READ_TIMEOUT).map_err(to_cmd_error)
+}
+
+/// queue 는 **상태 화면만** 쓴다.
+///
+/// 확인·검토·회고 큐는 앱에서 들어냈다 (2026-08-14). 사람에게 "이걸 기록할까요"
+/// 를 묻는 순간 자동 기록이라는 전제를 사람이 대신 갚기 때문이다. 남은 것은
+/// health 검사와 "밀린 구간이 몇 개인가" 라는 진단 한 줄이다.
 #[tauri::command]
 pub fn queue() -> Result<String, CmdError> {
     run_queue(&prior_bin())
 }
 
+/// settings 는 볼트·도메인·호스트를 한 번에 준다.
 #[tauri::command]
-pub fn resolve_pending(id: String) -> Result<(), CmdError> {
-    run(&prior_bin(), &["pending", "--resolve", &id], WRITE_TIMEOUT)
+pub fn settings() -> Result<String, CmdError> {
+    run_settings(&prior_bin())
+}
+
+/// set_host 는 호스트 하나를 켜거나 끈다.
+///
+/// **앱이 설정 파일을 직접 쓰지 않는다.** 주석 보존·스칼라 볼트 변환·고친 뒤
+/// 검증이 두 벌이 되면 한쪽만 고쳐진 채로 남고, 그때 망가지는 것은 사람이 손으로
+/// 쓴 설정이다.
+#[tauri::command]
+pub fn set_host(name: String, enabled: bool) -> Result<(), CmdError> {
+    let sub = if enabled { "enable" } else { "disable" };
+    run(&prior_bin(), &["hosts", sub, &name], WRITE_TIMEOUT)
         .map(|_| ())
         .map_err(to_cmd_error)
 }
 
+/// add_vault 는 볼트를 하나 만든다. CLI 가 자리(폴더)까지 만든다.
 #[tauri::command]
-pub fn promote(id: String) -> Result<String, CmdError> {
-    run(&prior_bin(), &["promote", &id, "--json"], WRITE_TIMEOUT).map_err(to_cmd_error)
-}
-
-/// mark_reviewed 는 "판별기가 사실대로 썼다" 는 검증 표시다.
-///
-/// **review(outcome) 과 다른 명령이다.** outcome 은 "그 결정이 결과적으로
-/// 좋았나" 이고 회고 큐가 그 값이 정해진 노트를 영영 제외한다. 검토는 다른
-/// 질문이므로 다른 자리에 남긴다 — 안 그러면 노트를 검증했을 뿐인데 나중에
-/// 결과를 묻는 자리가 조용히 사라진다.
-#[tauri::command]
-pub fn mark_reviewed(id: String) -> Result<(), CmdError> {
-    run(&prior_bin(), &["reviewed", &id], WRITE_TIMEOUT)
+pub fn add_vault(name: String, path: String) -> Result<(), CmdError> {
+    run(&prior_bin(), &["vault", "add", &name, &path], WRITE_TIMEOUT)
         .map(|_| ())
         .map_err(to_cmd_error)
 }
 
-/// path 는 결정 노트의 절대 경로를 준다.
-///
-/// **앱이 볼트 경로를 조립하지 않는다.** 조립하면 볼트 선택 규칙이 둘이 되고,
-/// 다중 볼트에서 그 어긋남은 엉뚱한 파일을 열거나 못 여는 것으로 나타난다.
+/// bind_domain 은 프로젝트가 쓸 볼트를 정한다. vault 가 비면 기본 볼트로 되돌린다.
 #[tauri::command]
-pub fn note_path(stem: String) -> Result<String, CmdError> {
-    run(&prior_bin(), &["path", &stem], READ_TIMEOUT).map_err(to_cmd_error)
+pub fn bind_domain(prefix: String, vault: String) -> Result<(), CmdError> {
+    let mut args = vec!["domain", "bind", prefix.as_str()];
+    if !vault.is_empty() {
+        args.push(vault.as_str());
+    }
+    run(&prior_bin(), &args, WRITE_TIMEOUT)
+        .map(|_| ())
+        .map_err(to_cmd_error)
 }
 
-/// open_note 는 노트를 OS 기본 앱으로 연다.
+/// open_vault 는 볼트 폴더를 OS 파일 관리자로 연다.
+///
+/// **경로를 프런트에서 받지 않는다.** 이름으로 받아 여기서 `prior settings` 에
+/// 물어본다 — 프런트가 임의의 경로를 열 수 있게 두면 그 창구가 앱의 다른 어떤
+/// 기능보다 넓어진다.
 ///
 /// **셸을 거치지 않는다.** 볼트 경로에 공백이 있다 (실측: `Obsidian Vault`).
 /// 셸 문자열로 만들면 거기서 쪼개지고, 따옴표로 감싸는 순간 경로에 따옴표가
 /// 있는 경우가 뚫린다. 인자로 넘기면 그런 자리가 없다.
 #[tauri::command]
-pub fn open_note(stem: String) -> Result<(), CmdError> {
-    let p = note_path(stem)?;
-    let p = p.trim();
-    if p.is_empty() {
-        return Err(CmdError {
-            kind: "failed".into(),
-            message: "prior path 가 빈 줄을 냈다".into(),
-        });
-    }
+pub fn open_vault(name: String) -> Result<(), CmdError> {
+    let raw = run_settings(&prior_bin())?;
+    let path = vault_path_in(&raw, &name)?;
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "windows") {
@@ -122,26 +140,42 @@ pub fn open_note(stem: String) -> Result<(), CmdError> {
     } else {
         "xdg-open"
     };
-    run(opener, &[p], READ_TIMEOUT).map(|_| ()).map_err(to_cmd_error)
+    run(opener, &[path.as_str()], READ_TIMEOUT)
+        .map(|_| ())
+        .map_err(to_cmd_error)
 }
 
-#[tauri::command]
-pub fn review(stem: String, outcome: String) -> Result<(), CmdError> {
-    run(
-        &prior_bin(),
-        &["review", &stem, "--outcome", &outcome],
-        WRITE_TIMEOUT,
-    )
-    .map(|_| ())
-    .map_err(to_cmd_error)
+/// vault_path_in 은 settings 출력에서 그 볼트의 경로를 꺼낸다.
+///
+/// 빈 경로를 그대로 OS 에 넘기면 **현재 디렉토리가 열린다** — 사람은 왜 파인더가
+/// 떴는지 모른다. 여기서 끊고 무엇이 문제인지 말한다.
+fn vault_path_in(raw: &str, name: &str) -> Result<String, CmdError> {
+    let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| CmdError {
+        kind: "failed".into(),
+        message: format!("prior settings 의 출력이 JSON 이 아니다: {e}"),
+    })?;
+    let found = v["vaults"]
+        .as_array()
+        .and_then(|vs| vs.iter().find(|x| x["name"] == name))
+        .and_then(|x| x["path"].as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if found.is_empty() {
+        return Err(CmdError {
+            kind: "not_found".into(),
+            message: format!("볼트 {name} 의 경로를 찾을 수 없다"),
+        });
+    }
+    Ok(found)
 }
 
 /// set_tray_title 은 메뉴바 아이콘 옆의 글자를 바꾼다.
 ///
 /// **푸시 알림을 보내지 않는다.** 먼저 말을 거는 도구는 지워지고, 앱이 지워지면
-/// 자동 기록까지 같이 잃는다. 숫자만 조용히 바꾼다.
+/// 자동 기록까지 같이 잃는다. 글자만 조용히 바꾼다.
 ///
-/// 빈 문자열이면 글자를 아예 뗀다 — 할 일이 없을 때 "0" 이 떠 있으면 그것도
+/// 빈 문자열이면 글자를 아예 뗀다 — 할 일이 없을 때 무언가 떠 있으면 그것도
 /// 늘 켜진 신호가 되어, 사람이 배지를 무시하는 법을 배운다.
 #[tauri::command]
 pub fn set_tray_title(app: tauri::AppHandle, title: String) {
@@ -213,24 +247,27 @@ mod tests {
     #[test]
     fn queue_는_stdout_을_그대로_준다() {
         let out = run_queue(&fixture("fake-prior-ok.sh")).expect("성공해야 한다");
-        assert!(out.contains("\"confirm\""), "out={out}");
+        assert!(out.contains("\"health\""), "out={out}");
     }
 
-    // ★★ **쓰기 상한이 읽기 상한보다 훨씬 길어야 한다.**
+    // ★★ **상한이 실측을 담되 필요 이상으로 길지 않아야 한다.**
     //
-    // `prior promote` 는 판별기를 부르고 그 예산이 90초다. 읽기 상한(10초)을 쓰면
-    // **정상 승격이 타임아웃으로 보인다** — 사람은 눌렀는데 아무 일도 안 난 줄 안다.
+    // 앱은 더 이상 판별기를 부르지 않는다 — 확인 큐를 들어내면서 승격은 데몬의
+    // 몫이 됐다. 상한이 2분으로 남아 있으면 **정말 멈춘 명령이 2분 동안 멈춘 줄
+    // 모르게 된다.**
     #[test]
-    fn 쓰기_상한이_판별기_예산을_담는다() {
+    fn 상한이_실측을_담되_과하지_않다() {
         assert!(
-            WRITE_TIMEOUT.as_secs() >= 90,
-            "쓰기 상한={:?} — prior promote 의 판별기 예산 90초를 못 담는다",
-            WRITE_TIMEOUT
+            READ_TIMEOUT.as_secs() >= 5,
+            "읽기 상한={READ_TIMEOUT:?} — queue 실측 2.6초를 못 담는다"
         );
         assert!(
             READ_TIMEOUT.as_secs() <= 15,
-            "읽기 상한={:?} — 큐가 이만큼 걸리면 앱이 멎은 것처럼 보인다",
-            READ_TIMEOUT
+            "읽기 상한={READ_TIMEOUT:?} — 큐가 이만큼 걸리면 앱이 멎은 것처럼 보인다"
+        );
+        assert!(
+            WRITE_TIMEOUT.as_secs() <= 60,
+            "쓰기 상한={WRITE_TIMEOUT:?} — 설정 쓰기는 밀리초 단위다. 길면 멈춘 것을 못 알아본다"
         );
         assert!(
             WRITE_TIMEOUT > READ_TIMEOUT,
@@ -259,40 +296,57 @@ mod tests {
         }
     }
 
-    // ★★ **빈 경로로 OS 를 부르면 안 된다.**
+    // ★★★ **볼트를 못 찾으면 열지 않는다.**
     //
-    // prior path 가 어떤 이유로든 빈 줄을 내면(설정 오류·빈 볼트), 그대로
-    // open 에 넘기면 OS 가 **현재 디렉토리를 연다** — 사람은 왜 파인더가 떴는지
-    // 모른다. 여기서 끊고 무엇이 문제인지 말한다.
+    // 빈 경로를 그대로 open 에 넘기면 OS 가 **현재 디렉토리를 연다** — 사람은
+    // 왜 파인더가 떴는지 모른다.
     #[test]
-    fn 빈_경로로는_열지_않는다() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("PRIORCASE_APP_BIN").ok();
-        std::env::set_var("PRIORCASE_APP_BIN", fixture("fake-prior-empty.sh"));
+    fn 없는_볼트는_열지_않는다() {
+        let raw = r#"{"vaults":[{"name":"default","path":"/tmp/v"}]}"#;
+        let e = vault_path_in(raw, "없는볼트").expect_err("실패해야 한다");
+        assert_eq!(e.kind, "not_found");
 
-        let e = open_note("무엇이든".into()).expect_err("실패해야 한다");
-        assert_eq!(e.kind, "failed");
-        assert!(e.message.contains("빈 줄"), "message={}", e.message);
+        let raw_empty = r#"{"vaults":[{"name":"default","path":"  "}]}"#;
+        let e = vault_path_in(raw_empty, "default").expect_err("빈 경로도 실패해야 한다");
+        assert_eq!(e.kind, "not_found");
 
-        match saved {
-            Some(v) => std::env::set_var("PRIORCASE_APP_BIN", v),
-            None => std::env::remove_var("PRIORCASE_APP_BIN"),
-        }
+        let ok = vault_path_in(raw, "default").expect("있는 볼트는 나와야 한다");
+        assert_eq!(ok, "/tmp/v");
     }
 
-    // ★ 새 커맨드 둘도 인자를 그대로 넘겨야 한다. 이름이 어긋나면 조용히 안 먹는다.
+    // ★★★ **설정을 고치는 명령들이 인자를 그대로 넘겨야 한다.**
+    //
+    // 이름이 어긋나면 조용히 안 먹는다 — 껐다고 믿는데 계속 돈다.
     #[test]
-    fn 새_커맨드들이_인자를_그대로_넘긴다() {
+    fn 설정_명령이_인자를_그대로_넘긴다() {
         let echo = fixture("fake-prior-echo-args.sh");
-        let out = crate::prior::run(&echo, &["reviewed", "/경로 with space.jsonl@42"], READ_TIMEOUT)
+        let out = crate::prior::run(&echo, &["hosts", "disable", "Codex CLI"], READ_TIMEOUT)
             .expect("성공해야 한다");
-        assert!(out.contains("reviewed"), "out={out}");
-        assert!(out.contains("/경로 with space.jsonl@42"), "인자가 쪼개졌다: {out}");
+        assert!(out.contains("disable"), "out={out}");
+        assert!(out.contains("Codex CLI"), "공백 있는 이름이 쪼개졌다: {out}");
 
-        let out = crate::prior::run(&echo, &["path", "priorcase-결정-x-2026-08-13"], READ_TIMEOUT)
-            .expect("성공해야 한다");
-        assert!(out.contains("path"), "out={out}");
-        assert!(out.contains("priorcase-결정-x-2026-08-13"), "out={out}");
+        let out = crate::prior::run(
+            &echo,
+            &["vault", "add", "회사", "/경로 with space/볼트"],
+            READ_TIMEOUT,
+        )
+        .expect("성공해야 한다");
+        assert!(out.contains("/경로 with space/볼트"), "인자가 쪼개졌다: {out}");
+    }
+
+    // ★★★ **볼트를 안 주면 인자에서 빠져야 한다.**
+    //
+    // `prior domain bind <도메인>` 은 "기본 볼트로 되돌린다" 이고,
+    // `prior domain bind <도메인> ""` 은 빈 이름의 볼트를 찾다가 실패한다.
+    // 빈 문자열을 그대로 넘기면 되돌리기가 영영 안 된다.
+    #[test]
+    fn 빈_볼트는_인자에서_빠진다() {
+        let mut args = vec!["domain", "bind", "omni"];
+        let vault = String::new();
+        if !vault.is_empty() {
+            args.push(vault.as_str());
+        }
+        assert_eq!(args, vec!["domain", "bind", "omni"]);
     }
 
     // ★★★ **가짜 prior 가 진짜 하위 프로세스 경로를 통과해야 한다.**
@@ -308,9 +362,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{name}: {} ({})", e.message, e.kind));
             let v: serde_json::Value =
                 serde_json::from_str(&out).unwrap_or_else(|e| panic!("{name}: JSON 아님 {e}"));
-            for k in ["confirm", "review", "retro", "health"] {
-                assert!(v[k].is_array(), "{name}: {k} 가 배열이 아니다");
-            }
+            assert!(v["health"].is_array(), "{name}: health 가 배열이 아니다");
         }
     }
 
@@ -325,23 +377,6 @@ mod tests {
         assert!(
             serde_json::from_str::<serde_json::Value>(&out).is_err(),
             "픽스처가 실제로 깨진 JSON 을 내야 한다: {out}"
-        );
-    }
-
-    // ★ 인자를 그대로 넘기는지 본다. id 에 공백·한글이 섞여도 깨지면 안 된다.
-    #[test]
-    fn 인자를_그대로_넘긴다() {
-        let echo = fixture("fake-prior-echo-args.sh");
-        let out = crate::prior::run(
-            &echo,
-            &["pending", "--resolve", "/경로 with space.jsonl@42"],
-            READ_TIMEOUT,
-        )
-        .expect("성공해야 한다");
-        assert!(out.contains("--resolve"), "out={out}");
-        assert!(
-            out.contains("/경로 with space.jsonl@42"),
-            "인자가 쪼개졌다: {out}"
         );
     }
 }

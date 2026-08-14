@@ -6,7 +6,7 @@ import type { CmdError } from "../src/types";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-const { fetchQueue, resolvePending, review, markReviewed, openNote } = await import(
+const { fetchQueue, fetchSettings, setHost, addVault, bindDomain, openVault } = await import(
   "../src/api",
 );
 
@@ -74,44 +74,67 @@ describe("fetchQueue", () => {
   });
 });
 
-describe("쓰기 명령", () => {
-  // ★★ 인자 이름이 Rust 쪽 파라미터명과 어긋나면 **조용히 안 먹는다** —
-  //    Tauri 가 빠진 인자를 빈 문자열로 채워 넘기는 판이 있다.
-  it("resolvePending 은 id 라는 이름으로 넘긴다", async () => {
-    invoke.mockResolvedValue(undefined);
-    await resolvePending("/경로.jsonl@42");
-    expect(invoke).toHaveBeenCalledWith("resolve_pending", { id: "/경로.jsonl@42" });
+describe("fetchSettings", () => {
+  it("정상 JSON 을 설정으로 준다", async () => {
+    invoke.mockResolvedValue(
+      JSON.stringify({ config_path: "/c", vaults: [], domains: [], hosts: [] }),
+    );
+    const s = await fetchSettings();
+    expect(s.config_path).toBe("/c");
   });
 
-  it("review 는 stem 과 outcome 을 넘긴다", async () => {
-    invoke.mockResolvedValue(undefined);
-    await review("priorcase-결정-x-2026-08-13", "good");
-    expect(invoke).toHaveBeenCalledWith("review", {
-      stem: "priorcase-결정-x-2026-08-13",
-      outcome: "good",
+  // ★★★ **깨진 설정을 빈 설정으로 그리면 안 된다.**
+  //
+  // 빈 볼트 목록은 "볼트가 없다" 로 읽히고, 사람은 멀쩡한 볼트가 있는데
+  // 새로 만들려 든다.
+  it("깨진 JSON 은 던진다", async () => {
+    invoke.mockResolvedValue("panic: ...");
+    await expect(fetchSettings()).rejects.toMatchObject({ kind: "failed" });
+  });
+
+  // ★ 어느 명령이 깨졌는지 말해야 한다 — queue 와 settings 를 같이 읽으므로
+  //   메시지가 같으면 어디를 봐야 할지 모른다.
+  it("어느 명령이 깨졌는지 말한다", async () => {
+    invoke.mockResolvedValue("쓰레기");
+    await expect(fetchSettings()).rejects.toMatchObject({
+      message: expect.stringContaining("settings"),
     });
   });
+});
 
-  // ★★★ **검토 표시는 승격 ID 로, outcome 과 다른 명령으로 간다.**
-  //
-  // review --outcome good 으로 보내면 회고 큐가 그 노트를 영영 제외한다 —
-  // 노트를 검증했을 뿐인데 나중에 결과를 묻는 자리가 조용히 사라진다.
-  it("markReviewed 는 mark_reviewed 를 id 로 부른다", async () => {
+describe("설정을 고치는 명령", () => {
+  // ★★ 인자 이름이 Rust 쪽 파라미터명과 어긋나면 **조용히 안 먹는다** —
+  //    Tauri 가 빠진 인자를 빈 문자열로 채워 넘기는 판이 있다.
+  it("setHost 는 이름과 켜짐을 그대로 넘긴다", async () => {
     invoke.mockResolvedValue(undefined);
-    await markReviewed("/t.jsonl@42");
-    expect(invoke).toHaveBeenCalledWith("mark_reviewed", { id: "/t.jsonl@42" });
-    // outcome 을 건드리는 명령이 같이 나가면 안 된다.
-    expect(invoke).toHaveBeenCalledTimes(1);
+    await setHost("Codex CLI", false);
+    expect(invoke).toHaveBeenCalledWith("set_host", { name: "Codex CLI", enabled: false });
   });
 
-  it("openNote 는 open_note 를 stem 으로 부른다", async () => {
+  it("addVault 는 이름과 경로를 넘긴다", async () => {
     invoke.mockResolvedValue(undefined);
-    await openNote("priorcase-결정-x-2026-08-13");
-    expect(invoke).toHaveBeenCalledWith("open_note", { stem: "priorcase-결정-x-2026-08-13" });
+    await addVault("회사", "~/볼트/회사");
+    expect(invoke).toHaveBeenCalledWith("add_vault", { name: "회사", path: "~/볼트/회사" });
+  });
+
+  // ★★★ **빈 볼트는 "기본 볼트로 되돌린다" 는 뜻이고 그대로 넘어가야 한다.**
+  //
+  // 여기서 임의로 기본 이름을 채워 넣으면 설정에 vault 줄이 남고, 나중에 기본
+  // 볼트의 이름이 바뀔 때 그 프로젝트만 갈 곳을 잃는다.
+  it("bindDomain 은 빈 볼트를 그대로 넘긴다", async () => {
+    invoke.mockResolvedValue(undefined);
+    await bindDomain("omni", "");
+    expect(invoke).toHaveBeenCalledWith("bind_domain", { prefix: "omni", vault: "" });
+  });
+
+  it("openVault 는 이름으로 부른다 — 경로가 아니다", async () => {
+    invoke.mockResolvedValue(undefined);
+    await openVault("default");
+    expect(invoke).toHaveBeenCalledWith("open_vault", { name: "default" });
   });
 
   it("쓰기가 실패하면 던진다 — 성공한 척하지 않는다", async () => {
     invoke.mockRejectedValue({ kind: "timeout", message: "느리다" });
-    await expect(resolvePending("x")).rejects.toMatchObject({ kind: "timeout" });
+    await expect(setHost("Codex CLI", true)).rejects.toMatchObject({ kind: "timeout" });
   });
 });

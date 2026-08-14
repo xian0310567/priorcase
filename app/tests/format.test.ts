@@ -1,68 +1,88 @@
 import { describe, it, expect } from "vitest";
-import { vaultLabel, clip, reasonLabel } from "../src/format";
+import { num, hostState, vaultState, vaultOfDomain, backlogLine } from "../src/format";
+import type { HostInfo, VaultInfo } from "../src/types";
 
-describe("vaultLabel", () => {
-  it("도메인과 볼트를 같이 보여 준다", () => {
-    expect(vaultLabel("priorcase", "personal")).toBe("priorcase · personal 볼트");
-  });
+const host = (o: Partial<HostInfo>): HostInfo => ({
+  name: "Codex CLI",
+  enabled: true,
+  root: "/h",
+  exists: true,
+  files: 0,
+  ...o,
+});
 
-  // ★★ 볼트가 비면 설정 오류다. 기본 볼트로 그리면 사람은 거기 쌓이는 줄 알지만
-  //    실제로는 기록 자체가 실패한다 (capture 가 없는 볼트를 거부한다).
-  it("볼트를 모르면 그렇다고 말한다", () => {
-    expect(vaultLabel("priorcase", "")).toBe("priorcase · ⚠️ 볼트 미상");
+const vault = (o: Partial<VaultInfo>): VaultInfo => ({
+  name: "default",
+  path: "/v",
+  exists: true,
+  decisions: 0,
+  domains: [],
+  ...o,
+});
+
+describe("num", () => {
+  // ★ 기록 1729개는 한눈에 안 읽힌다. 자릿점이 있어야 "천 단위구나" 가 보인다.
+  it("자릿점을 찍는다", () => {
+    expect(num(1729)).toBe("1,729");
+    expect(num(0)).toBe("0");
   });
 });
 
-describe("clip", () => {
-  it("줄 수를 넘으면 접고 몇 줄이 남았는지 준다", () => {
-    const text = ["a", "b", "c", "d", "e"].join("\n");
-    expect(clip(text, 3)).toEqual({ shown: "a\nb\nc", hidden: 2 });
-  });
-
-  it("짧으면 그대로 준다", () => {
-    expect(clip("a\nb", 3)).toEqual({ shown: "a\nb", hidden: 0 });
-  });
-
-  it("딱 맞으면 접지 않는다", () => {
-    expect(clip("a\nb\nc", 3)).toEqual({ shown: "a\nb\nc", hidden: 0 });
-  });
-
-  // ★ 발췌가 실측 880B~4.9KB 이고 절반이 한 화면에 안 들어간다.
-  //   접는 것 자체보다 "몇 줄이 숨었나" 를 아는 것이 중요하다.
-  it("빈 문자열도 터지지 않는다", () => {
-    expect(clip("", 3)).toEqual({ shown: "", hidden: 0 });
-  });
-
-  // ★★ **숨은 줄 수는 실제로 안 보이는 줄 수여야 한다.**
+describe("hostState", () => {
+  // ★★★ **"자리 없음" 과 "기록 0개" 는 다른 말이다.**
   //
-  // shown 을 잘라 놓고 hidden 을 상수나 어림수로 내면, 사람은 "3줄 더" 를 믿고
-  // 펼쳤다가 40줄을 만난다. 계산이 아니라 **약속**이므로 대조해서 지킨다.
-  it("접힌 줄 수가 실제로 사라진 줄 수와 같다", () => {
-    const text = Array.from({ length: 40 }, (_, i) => `줄${i}`).join("\n");
-    const r = clip(text, 6);
-    expect(r.shown.split("\n").length).toBe(6);
-    expect(r.shown.split("\n").length + r.hidden).toBe(40);
+  // 앞엣것은 그 도구를 안 쓰거나 기록 자리를 옮긴 것이고, 뒤엣것은 도구는
+  // 있는데 대화가 없는 것이다. 뭉치면 사람이 무엇을 고쳐야 할지 모른다.
+  it("자리가 없는 것과 비어 있는 것을 가른다", () => {
+    expect(hostState(host({ exists: false, files: 0 }))).toContain("자리가 없다");
+    expect(hostState(host({ exists: true, files: 0 }))).toBe("대화 0개");
+    expect(hostState(host({ exists: true, files: 1729 }))).toBe("대화 1,729개");
   });
 });
 
-describe("reasonLabel", () => {
-  it("재회수는 횟수를 보여 준다", () => {
-    expect(reasonLabel("recalled", 4)).toBe("재회수 4회");
+describe("vaultState", () => {
+  // ★★★ 자리가 없으면 **그것부터 말한다.** 결정 0건으로 그리면 "아직 안
+  //     썼구나" 로 읽히는데, 실제로는 그 볼트로 엮인 도메인의 기록이 통째로
+  //     안 써지는 상태다.
+  it("자리가 없으면 개수보다 그것을 먼저 말한다", () => {
+    const s = vaultState(vault({ exists: false, decisions: 0 }));
+    expect(s).toContain("자리가 없다");
+    expect(s).not.toContain("0건");
   });
 
-  // ★ superseded 는 hits 가 0 일 수 있다 — "재회수 0회" 로 그리면 거짓이다.
-  it("뒤집힌 것은 횟수를 말하지 않는다", () => {
-    expect(reasonLabel("superseded", 0)).toBe("뒤집혔다");
-    expect(reasonLabel("superseded", 3)).toBe("뒤집혔다");
+  it("정상이면 결정과 프로젝트 수를 낸다", () => {
+    expect(vaultState(vault({ decisions: 156, domains: ["a", "b"] }))).toBe(
+      "결정 156건 · 프로젝트 2개",
+    );
   });
+});
 
-  // ★★ **모르는 방아쇠를 재회수로 뭉개면 안 된다.**
+describe("vaultOfDomain", () => {
+  // ★★★ **빈 값은 "기본 볼트" 라는 뜻이다.**
   //
-  // 지금 Go 쪽 Reason 은 둘뿐이지만 늘어날 수 있고, TS 타입은 런타임 JSON 을
-  // 검사하지 않는다. else 로 "재회수 N회" 를 내면 **새 방아쇠가 전부 거짓말로
-  // 그려지고 아무도 눈치채지 못한다.** 모르면 모른다고 보이게 둔다.
-  it("모르는 방아쇠는 재회수로 뭉개지 않는다", () => {
-    expect(reasonLabel("archived", 0)).toBe("archived");
-    expect(reasonLabel("archived", 7)).toBe("archived");
+  // 빈칸으로 그리면 사람은 "엮이지 않았다" 고 읽는데, 실제로는 기본 볼트로
+  // 잘 가고 있다. 그 오해가 쓸데없는 재설정을 부른다.
+  it("빈 값은 기본 볼트로 읽는다", () => {
+    expect(vaultOfDomain("", "default")).toBe("default");
+    expect(vaultOfDomain("work", "default")).toBe("work");
+  });
+});
+
+describe("backlogLine", () => {
+  // ★★ 밀린 것이 없으면 **한 글자도 안 낸다.** 늘 무언가 떠 있으면 사람이
+  //    그것을 무시하는 법을 배운다.
+  it("밀린 것이 없으면 빈 문자열", () => {
+    expect(backlogLine(0, 0)).toBe("");
+  });
+
+  it("종류마다 다른 말을 쓴다", () => {
+    expect(backlogLine(28, 0)).toContain("판정을 기다리는");
+    expect(backlogLine(0, 55)).toContain("결과를 안 물어본");
+  });
+
+  it("둘 다 있으면 이어 붙인다", () => {
+    const s = backlogLine(28, 55);
+    expect(s).toContain("28건");
+    expect(s).toContain("55건");
   });
 });

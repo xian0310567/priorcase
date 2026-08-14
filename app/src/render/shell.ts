@@ -5,7 +5,7 @@ import type { CmdError } from "../types";
  * **텍스트는 언제나 textContent 로 넣는다.** 화면에 오는 글의 상당수가 남의
  * 글이다 — prior 의 stderr, 노트 요약, 발췌. innerHTML 을 쓰면 그 안의 마크업이
  * 화면 구조를 뒤튼다. */
-function el(tag: string, cls: string, text?: string): HTMLElement {
+export function el(tag: string, cls: string, text?: string): HTMLElement {
   const n = document.createElement(tag);
   n.className = cls;
   if (text !== undefined) n.textContent = text;
