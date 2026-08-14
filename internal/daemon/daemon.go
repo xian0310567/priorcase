@@ -51,6 +51,12 @@ type Options struct {
 	// `prior watch` 가 뜨지 않는다. 남은 것은 정상 감시 루프의 drain 이 가져간다.
 	StartupBudget time.Duration
 
+	// BacklogInterval 은 **밀린 구간을 소화하러 도는 주기**다. 0 이면 기본값.
+	//
+	// 시험이 밀리초로 돌 수 있어야 해서 여기서 받는다 — 5분을 기다리는 시험은
+	// 아무도 안 돌린다.
+	BacklogInterval time.Duration
+
 	// OnEvent 는 진행 상황을 알린다. nil 이면 아무 데도 안 알린다.
 	OnEvent func(Event)
 }
@@ -58,7 +64,7 @@ type Options struct {
 // Event 는 데몬이 밖에 알리는 사건이다. 데몬은 백그라운드라 조용히 실패하면
 // 아무도 모른다 — 그래서 성공·실패를 다 흘려보내고 호출자가 어디로 낼지 정한다.
 type Event struct {
-	Kind   string // "seed" | "scan" | "error" | "ready"
+	Kind   string // "seed" | "scan" | "error" | "ready" | "promote" | "backlog"
 	Path   string
 	Result ScanResult
 	Err    error
@@ -119,6 +125,8 @@ type watcher struct {
 	hosts []hosts.Resolved
 	mu    sync.Mutex
 	dirty map[string]bool
+	// backlog 는 밀린 구간을 소화하는 루프의 상태다 (backlog.go).
+	backlog backlogState
 }
 
 func (d *watcher) emit(e Event) {
@@ -162,6 +170,11 @@ func (d *watcher) run(ctx context.Context) error {
 		<-timer.C
 	}
 	armed := false
+
+	// **밀린 구간을 갚는 타이머.** drain 은 새 표시가 생겼을 때만 승격하므로
+	// 이미 쌓인 것은 아무도 안 건드린다 (backlog.go 참고).
+	chew := time.NewTimer(d.backlogInterval())
+	defer chew.Stop()
 
 	for {
 		select {
@@ -212,6 +225,12 @@ func (d *watcher) run(ctx context.Context) error {
 		case <-timer.C:
 			armed = false
 			d.drain(ctx, true)
+
+		case <-chew.C:
+			d.chewBacklog(ctx)
+			// 성과가 없으면 주기가 길어진다 — 판별기가 못 도는 상태에서
+			// 5분마다 부르는 것은 호스트 CLI 를 두들기는 일이다.
+			chew.Reset(d.backlog.wait(d.backlogInterval()))
 		}
 	}
 }
