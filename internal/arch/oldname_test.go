@@ -38,6 +38,8 @@ func TestOldNameDoesNotReturn(t *testing.T) {
 		"internal/daemon/promote.go":         "개명 때 옮기지 않은 옛 도메인 때문에 이 검사가 생겼다",
 		"internal/daemon/promote_test.go":    "개명 때 옮기지 않은 옛 도메인이 남은 사실을 적는다",
 		"internal/adapter/hook/doctor.go":    "개명 때 옮기지 않은 옛 도메인 때문에 고아 검사가 생겼다",
+		"docs/rename-to-priorcase.md":        "옛 이름에서 새 이름으로 옮기는 절차 자체다",
+		"docs/npm-deprecate.md":              "옛 이름으로 올라간 npm 패키지를 정리하는 절차다",
 	}
 
 	// `cb` 는 흔한 두 글자라 낱말 경계로만 잡는다. 그래도 base64 조각 안에서는

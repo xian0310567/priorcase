@@ -55,6 +55,12 @@ type PromoteOptions struct {
 // 건이 예산을 통째로 먹어 두 번째 구간이 영영 안 돈다. arch 테스트가 강제한다.
 const DefaultPromoteBudget = 90 * time.Second
 
+// judgeFloorDivisor 는 "해 볼 만한 시간" 을 예산에서 나누는 값이다.
+//
+// 기본 예산 90초에서 30초가 되고, 그건 판별기 지연의 실측 p95(28.5초)를 덮는다.
+// 예산에 비례하므로 호출부가 다른 예산을 줘도 같이 움직인다.
+const judgeFloorDivisor = 3
+
 // Promote 는 표시된 구간을 판별기에 넘겨 결정 노트로 승격한다.
 //
 // **훅과 데몬이 같은 코드를 쓴다.** 승격은 볼트에 쓰는 일이고, 쓰기 경로가 둘로
@@ -124,16 +130,30 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			o.report("중단됐다 — 남은 구간은 다음 기회에 넘긴다")
 			return
 		}
-		// **끝낼 수 없는 것은 시작하지 않는다.**
+		// **넘칠 수 없게 만든 뒤, 시작 조건을 낮춘다.**
 		//
-		// "마감 전이면 시작" 으로 두면 마감 직전에 집어 든 구간이 판별기 상한만큼
-		// 예산을 넘겨서 돈다. 그러면 훅 상한(120초)을 넘길 수 있고, 그때는 호스트가
-		// 훅을 통째로 죽인다 — 원장도 못 쓰고 선점 도장만 남아서 그 구간이
-		// claimTTL(5분) 동안 건너뛰어진다. 상한을 75초로 올리면서 이 틈이 커졌다.
+		// 예전에는 판별기 상한(75초)만큼 남아야 시작했다. 예산이 90초라 **시작
+		// 가능한 창이 처음 15초뿐**이었고, 실측 지연이 10~28초인데 75초를 예약한
+		// 셈이었다. 원장 실측으로 한 판당 판정이 **평균 1.4건**이었다
+		// (1건×21 · 2건×6 · 3건×2 · 4건×1). 미확인 구간 37건을 비우려면 세션이
+		// 스물여섯 번 필요하고, 그 사이 새 구간이 더 빨리 쌓인다.
 		//
-		// 그래서 판별기가 다 돌 시간이 남아 있을 때만 시작한다.
-		if time.Now().Add(judge.DefaultTimeout).After(deadline) {
-			o.report("판별기가 다 돌 시간이 안 남아 나머지는 다음 기회에 넘긴다")
+		// 이제 아래에서 **호출마다 남은 예산을 마감으로 씌운다.** 상한이 자동으로
+		// min(판별기 상한, 남은 시간)이 되므로 예산을 넘길 수가 없다 — 훅이 호스트
+		// 상한(120초)에 죽어 선점 도장만 남기는 판이 사라진다.
+		//
+		// 그래서 시작 조건은 "다 돌 시간" 이 아니라 **"해 볼 만한 시간"** 이면 된다.
+		// 예산의 1/3 로 둔다: 기본 90초에서 30초이고, 그건 실측 p95(28.5초)를
+		// 덮는다. 예산에 비례하므로 호출부가 다른 값을 줘도 같이 움직인다.
+		//
+		// 너무 낮추면 안 된다. 1초 남았는데 시작하면 거의 확실히 죽고, 그건 실패
+		// 횟수만 올려 그 구간을 사람 몫으로 밀어낸다(3회면 포기).
+		floor := budget / judgeFloorDivisor
+		if floor > judge.DefaultTimeout {
+			floor = judge.DefaultTimeout
+		}
+		if time.Now().Add(floor).After(deadline) {
+			o.report("판별기를 해 볼 시간이 안 남아 나머지는 다음 기회에 넘긴다")
 			return
 		}
 		if p.Domain == "" {
@@ -195,10 +215,15 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			}
 			continue
 		}
-		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
+		// **호출에 남은 예산을 마감으로 씌운다.** judge.Decide 가 자기 상한과
+		// 이 컨텍스트 중 **먼저 오는 쪽**을 쓰므로, 결과가 min(75초, 남은 시간)이다.
+		callCtx, cancelCall := context.WithDeadline(ctx, deadline)
+		r := promote.One(callCtx, j, o.Layout, o.Config, promote.Segment{
 			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt,
 			Session: p.SessionID, Author: author,
 		})
+
+		cancelCall()
 
 		// **중단은 실패가 아니다.** 호출 도중에 취소되면 판별기는 컨텍스트 에러를
 		// 내는데, 그걸 "판별기 실패" 로 남기면 원장이 거짓말을 한다 — 판별기는

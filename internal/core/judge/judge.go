@@ -171,6 +171,20 @@ func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 
 	var o, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &errb
+	// **상한이 걸려도 Wait 가 안 끝날 수 있다.**
+	//
+	// Stdout 이 파일이 아니면 exec 가 파이프를 만들고 복사 고루틴을 띄운다.
+	// Wait 는 그 고루틴을 기다리고, 고루틴은 파이프의 쓰기 끝이 닫히기를 기다린다 —
+	// 그건 그 파이프를 물려받은 **모든** 프로세스가 끝나야 닫힌다. claude 는
+	// 정리(텔레메트리·MCP 종료)에 자식을 쓰므로, 부모를 죽여도 Wait 가 계속 막힌다.
+	//
+	// 실측: 상한 2초를 준 호출이 30초를 기다렸다. 그러면 훅이 호스트 상한(120초)에
+	// 죽고, 그때는 원장도 못 쓰고 선점 도장만 남아 그 구간이 5분간 건너뛰어진다.
+	//
+	// WaitDelay 는 컨텍스트가 끝난 뒤 이만큼만 더 기다리고 파이프를 닫는다.
+	// 2초를 주는 이유: 이미 찍힌 답을 복사 고루틴이 옮길 시간은 줘야 한다
+	// (아래 주석대로 killed 인데 stdout 에 완전한 JSON 이 있는 판이 실제로 있었다).
+	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		// ★ **답이 나왔으면 쓴다. 프로세스가 어떻게 끝났든 상관없다.**
 		//

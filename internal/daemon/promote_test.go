@@ -756,7 +756,15 @@ func TestPromoteFailureClearsClaim(t *testing.T) {
 // "마감 전이면 시작" 으로 두면 마감 직전에 집어 든 구간이 판별기 상한만큼 예산을
 // 넘겨서 돈다. 그러면 훅 상한을 넘겨 호스트가 훅을 통째로 죽이고, 원장도 못 쓴 채
 // 선점 도장만 남는다. 상한을 75초로 올리면서 이 틈이 커졌다.
-func TestPromoteDoesNotStartWhatItCannotFinish(t *testing.T) {
+// **규칙이 바뀌었다.** 예전에는 "판별기 상한(75초)만큼 남아야 시작" 이었는데,
+// 그 탓에 예산 90초에서 시작 창이 15초뿐이라 한 판에 1.4건만 처리됐다.
+// 지금은 호출마다 남은 예산을 마감으로 씌워 넘칠 수가 없으므로, 시작 조건이
+// "예산의 1/3 이 남았나" 로 낮아졌다.
+//
+// **이 시험이 지키는 것은 그대로다**: 시작도 안 한 구간에 도장·실패 횟수가
+// 남으면 안 된다. 남으면 그 구간이 claimTTL(5분) 동안 건너뛰어지거나, 세 번
+// 쌓여 사람 몫으로 밀려난다.
+func TestPromoteLeavesNoTraceWhenItCannotStart(t *testing.T) {
 	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
 	mark := filepath.Join(t.TempDir(), "called")
 	jp := filepath.Join(t.TempDir(), "judge")
@@ -777,11 +785,11 @@ func TestPromoteDoesNotStartWhatItCannotFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 판별기 상한보다 짧은 예산 — 시작하면 끝낼 수 없다.
+	// 해 볼 만한 시간조차 없는 예산.
 	var errBuf strings.Builder
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@5",
-		Budget: time.Second, Err: &errBuf,
+		Budget: time.Nanosecond, Err: &errBuf,
 	})
 
 	if _, err := os.Stat(mark); err == nil {
