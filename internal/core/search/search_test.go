@@ -391,3 +391,59 @@ func TestTieBreakPrefersNewerDecision(t *testing.T) {
 			hits[0].Note.Stem, hits[0].Note.Meta.Date, hits[1].Note.Stem, hits[1].Note.Meta.Date)
 	}
 }
+
+// ★ **철회된 노트는 회수에서 통째로 빠진다.**
+//
+// 이 시스템에는 "잘못 기록된 노트를 걷어낼 경로" 가 없었다. 실측으로
+// `--status regretted` 를 걸어도 회수 점수가 1점도 안 깎이고, superseded 로
+// 내려도 -5 뿐이라 MinScore:1 인 훅 주입에서 절대 안 빠졌다.
+//
+// **regretted 와 다른 것이다.** regretted 는 "했는데 나빴다" 라서 계속 떠야
+// 한다 — 같은 실수를 되풀이하지 않으려면 눈앞에 있어야 하고, search 가
+// 경고 줄을 붙이는 것이 그 설계다. retracted 는 "애초에 결정이 아니었다 ·
+// 판별기가 잘못 만들었다" 라서 떠 있을 이유가 없다.
+//
+// 파일은 지우지 않는다 — "사용자가 볼트에 둔 것을 지우지 않는다" 는 규칙이
+// 여기에도 적용된다. 회수에서만 뺀다.
+func TestRetractedNoteIsExcludedFromRecall(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	plant(t, c, "alpha", "alpha-결정-잘못기록-2026-08-10", "참외를 고른다")
+	if hits := mustRecall(t, l, c, "참외", Options{Limit: 5, MinScore: 1}); len(hits) == 0 {
+		t.Fatal("심은 노트가 애초에 안 걸린다 — 이 테스트가 무의미하다")
+	}
+
+	retract(t, c, "alpha", "alpha-결정-잘못기록-2026-08-10")
+
+	if hits := mustRecall(t, l, c, "참외", Options{Limit: 5, MinScore: 1}); len(hits) != 0 {
+		t.Errorf("철회했는데 여전히 걸린다: %+v", hits[0].Note.Stem)
+	}
+}
+
+// regretted 는 반대다 — 계속 떠야 한다. 둘을 같은 것으로 다루면 안 된다.
+func TestRegrettedNoteStillSurfaces(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	plant(t, c, "alpha", "alpha-결정-후회-2026-08-10", "참외를 고른다")
+	setStatus(t, c, "alpha", "alpha-결정-후회-2026-08-10", "regretted")
+
+	if hits := mustRecall(t, l, c, "참외", Options{Limit: 5, MinScore: 1}); len(hits) == 0 {
+		t.Error("regretted 가 회수에서 빠졌다 — 같은 실수를 되풀이하지 말라는 장치가 죽는다")
+	}
+}
+
+func retract(t *testing.T, c *config.Config, dir, stem string) {
+	t.Helper()
+	setStatus(t, c, dir, stem, "retracted")
+}
+
+func setStatus(t *testing.T, c *config.Config, dir, stem, status string) {
+	t.Helper()
+	p := filepath.Join(c.DefaultVaultPath(), dir, "decisions", stem+".md")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := strings.Replace(string(b), "status: active", "status: "+status, 1)
+	if err := os.WriteFile(p, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

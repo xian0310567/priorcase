@@ -135,6 +135,23 @@ func mentionedDomains(c *config.Config, keywords []string) map[string]bool {
 func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool) []Hit {
 	var hits []Hit
 	for _, n := range notes {
+		// **철회된 노트는 아예 안 본다.**
+		//
+		// 이 시스템에는 "잘못 기록된 노트를 걷어낼 경로" 가 없었다. regretted 를
+		// 걸어도 점수가 1점도 안 깎이고, superseded 로 내려도 -5 뿐이라 MinScore:1
+		// 인 훅 주입에서 절대 안 빠졌다. 자동 기록이 도는 이상 오기록은 시간문제다.
+		//
+		// **regretted 와 다른 것이다.** regretted 는 "했는데 나빴다" 라서 계속 떠야
+		// 한다 — 같은 실수를 되풀이하지 않으려면 눈앞에 있어야 하고, RenderInject 가
+		// 경고 줄을 붙이는 것이 그 설계다. retracted 는 "애초에 결정이 아니었다"
+		// 라서 떠 있을 이유가 없다.
+		//
+		// 감점이 아니라 배제인 이유: 감점은 "덜 중요하다" 는 뜻인데, 철회는
+		// "이건 근거가 아니다" 는 뜻이다. 점수 몇 점으로 표현할 수 있는 것이 아니다.
+		// 파일은 지우지 않는다 — 볼트에 둔 것을 지우지 않는다는 규칙은 여기도 같다.
+		if n.Meta.Status == store.StatusRetracted {
+			continue
+		}
 		// **domain 과 보일러플레이트 태그는 head 에서 뺀다.**
 		//
 		// 도메인은 이미 weightCwdDomain·weightMention 이 따로 센다. head 에도 넣으면
@@ -172,7 +189,7 @@ func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned
 				score += weightMention
 			}
 		}
-		if n.Meta.Status == "superseded" {
+		if n.Meta.Status == store.StatusSuperseded {
 			score -= penaltySuperseded
 		}
 		if score > 0 {

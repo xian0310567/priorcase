@@ -156,3 +156,39 @@ func TestReviewCanCorrectSummary(t *testing.T) {
 		t.Errorf("빈 Summary 가 기존 값을 지웠다: %q", again.Meta.Summary)
 	}
 }
+
+// ★ 철회에는 이유가 있어야 한다.
+//
+// 철회된 노트는 파일로 남지만 회수에서 통째로 빠진다. 왜 뺐는지가 안 적히면
+// 나중에 옵시디언에서 그 노트를 연 사람은 status 한 줄만 보고 아무것도 알 수
+// 없다 — "조용히 틀리느니 시끄럽게 멈춘다" 가 여기서는 "빼는 이유를 남겨라" 다.
+func TestReviewRefusesRetractionWithoutReason(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	_, err := Review(l, ReviewRequest{
+		Stem: "alpha-결정-저장엔진-2026-08-01", Status: "retracted",
+	})
+	if err == nil {
+		t.Fatal("이유 없는 철회를 통과시켰다")
+	}
+	if !strings.Contains(err.Error(), "회고") && !strings.Contains(err.Error(), "이유") {
+		t.Errorf("무엇이 필요한지 안 알려 준다: %v", err)
+	}
+}
+
+func TestReviewAcceptsRetractionWithReason(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	if _, err := Review(l, ReviewRequest{
+		Stem: "alpha-결정-저장엔진-2026-08-01", Status: "retracted",
+		Retrospective: "판별기가 진행 상황 보고를 결정으로 잘못 만들었다",
+	}); err != nil {
+		t.Fatalf("이유를 줬는데 거부했다: %v", err)
+	}
+	p, _ := l.ResolveStem("alpha-결정-저장엔진-2026-08-01")
+	n, err := l.Read(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Meta.Status != "retracted" {
+		t.Errorf("status = %q, want retracted", n.Meta.Status)
+	}
+}

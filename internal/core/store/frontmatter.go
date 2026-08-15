@@ -124,6 +124,20 @@ func emitLinkList(ll LinkList) string {
 	return quoted(ll)
 }
 
+// 결정 노트의 status 값. schema.Validate 가 허용 목록을 들고 있고, 여기 상수는
+// **그 값을 코드에서 부르는 이름**이다 — 리터럴이 흩어지면 오타가 조용히 통과한다.
+const (
+	StatusActive     = "active"     // 현행
+	StatusSuperseded = "superseded" // 뒤집혔다 — 후속이 있다
+	StatusRegretted  = "regretted"  // 했는데 나빴다 — 계속 떠야 한다
+	// StatusRetracted 는 **애초에 결정이 아니었다** 는 뜻이다.
+	//
+	// 판별기 오기록이나 사람의 착오로 만들어진 노트를 위한 자리다. regretted 와
+	// 다르다: 후회는 계속 눈앞에 있어야 하지만 철회는 근거가 아니므로 회수에서
+	// 통째로 빠진다(search.scoreAll). 파일은 지우지 않는다.
+	StatusRetracted = "retracted"
+)
+
 var fence = []byte("---")
 
 // ParseFrontmatter 는 --- 로 감싼 YAML 블록과 그 뒤 본문을 나눈다.

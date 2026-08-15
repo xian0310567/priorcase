@@ -32,7 +32,7 @@ func newReviewCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&r.Outcome, "outcome", "", "pending | good | bad")
-	f.StringVar(&r.Status, "status", "", "active | superseded | regretted")
+	f.StringVar(&r.Status, "status", "", "active | superseded | regretted | retracted (철회 — 회수에서 뺀다, --retro 필수)")
 	f.StringVar(&r.Summary, "summary", "", "한 줄 요약을 고친다 (회수에 주입되는 유일한 줄)")
 	f.StringVar(&r.Retrospective, "retro", "", "## 회고 에 붙일 내용")
 	f.StringSliceVar(&r.Supersedes, "supersedes", nil, "이 결정이 뒤집는 결정의 stem (반복 가능)")

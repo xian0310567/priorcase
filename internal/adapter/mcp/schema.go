@@ -103,9 +103,13 @@ func reviewSchema(l i18n.Lang) map[string]any {
 		"outcome": prop("string", l.T(
 			"pending | good | bad",
 			"pending | good | bad")),
+		// retracted 는 **애초에 결정이 아니었다** 는 뜻이다 — 판별기 오기록이나
+		// 사람의 착오. regretted("했는데 나빴다")와 다르다: 후회는 같은 실수를
+		// 되풀이하지 않으려고 계속 떠야 하지만, 철회는 근거가 아니므로 회수에서
+		// 통째로 빠진다. 파일은 남는다.
 		"status": prop("string", l.T(
-			"active | superseded | regretted",
-			"active | superseded | regretted")),
+			"active | superseded | regretted | retracted — retracted 는 '애초에 결정이 아니었다' 로 회수에서 빠진다(retrospective 필수). regretted 는 '했는데 나빴다' 라 계속 회수된다",
+			"active | superseded | regretted | retracted — retracted means 'this was never a decision'; it drops out of recall entirely (retrospective required). regretted means 'we did it and it went badly' and keeps surfacing")),
 		"retrospective": prop("string", l.T(
 			"## 회고 에 붙일 내용",
 			"Text to append under ## Retrospective")),

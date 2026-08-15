@@ -13,7 +13,10 @@ import (
 
 var (
 	dateRe   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	statuses = map[string]bool{"active": true, "superseded": true, "regretted": true}
+	statuses = map[string]bool{
+		store.StatusActive: true, store.StatusSuperseded: true,
+		store.StatusRegretted: true, store.StatusRetracted: true,
+	}
 	outcomes = map[string]bool{"pending": true, "good": true, "bad": true}
 )
 
@@ -58,7 +61,7 @@ func Validate(marker, stem string, m store.Meta) error {
 		return fmt.Errorf("summary 가 비었다 — 회수 시 이것만 주입되므로 필수다")
 	}
 	if !IsFuture(m) && !statuses[m.Status] {
-		return fmt.Errorf("status 가 허용값(active/superseded/regretted) 밖이다: %q", m.Status)
+		return fmt.Errorf("status 가 허용값(active/superseded/regretted/retracted) 밖이다: %q", m.Status)
 	}
 	if !IsFuture(m) && !outcomes[m.Outcome] {
 		return fmt.Errorf("outcome 이 허용값(pending/good/bad) 밖이다: %q", m.Outcome)

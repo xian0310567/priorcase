@@ -48,6 +48,21 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	if r.Outcome != "" {
 		n.Meta.Outcome = r.Outcome
 	}
+	// **철회에는 이유가 있어야 한다.**
+	//
+	// 철회된 노트는 파일로 남지만 회수에서 통째로 빠진다(search.scoreAll).
+	// 왜 뺐는지가 안 적히면 나중에 옵시디언에서 그 노트를 연 사람은 status 한 줄만
+	// 보고 아무것도 알 수 없다 — 그 노트는 이 시스템에 대해 아무 말도 안 하면서
+	// 자리만 차지한다. "조용히 틀리느니 시끄럽게 멈춘다" 가 여기서는 "빼는 이유를
+	// 남겨라" 다.
+	//
+	// 다른 status 에는 안 건다. superseded 는 후속 노트가 이유를 말하고,
+	// regretted 는 계속 회수되므로 사람이 본문에서 읽을 기회가 있다.
+	if r.Status == store.StatusRetracted && strings.TrimSpace(r.Retrospective) == "" {
+		return ReviewResult{}, fmt.Errorf(
+			"철회에는 이유가 필요하다 — --retro 로 왜 이 노트가 결정이 아닌지 적어라 " +
+				"(회수에서 빠지므로 나중에 아무도 못 묻는다)")
+	}
 	if r.Status != "" {
 		n.Meta.Status = r.Status
 	}
