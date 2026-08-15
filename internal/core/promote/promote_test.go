@@ -115,7 +115,7 @@ func TestExistingSummariesArePassedToJudge(t *testing.T) {
 	}
 	found := false
 	for _, e := range f.got.Existing {
-		if strings.Contains(e, "저장 엔진을 임베디드 DB") {
+		if strings.Contains(e.Summary, "저장 엔진을 임베디드 DB") {
 			found = true
 		}
 	}
@@ -139,5 +139,78 @@ func TestEmptyExcerptIsSkipped(t *testing.T) {
 	r := One(context.Background(), f, store.NewLayout(c), c, s)
 	if r.Recorded || r.Err != nil {
 		t.Errorf("빈 발췌로 무언가 했다: %+v", r)
+	}
+}
+
+// ★ 자동 경로가 **뒤집기를 표현할 수 있어야 한다.**
+//
+// 지금까지는 없었다 — 프롬프트가 "이미 있는 결정의 반복이면 record=false" 라고만
+// 지시했고, 기존 결정을 뒤집는 대화는 그 결정과 주제·어휘가 거의 같아서 중복으로
+// 판정되기 가장 좋은 형태다. record=false 가 나오면 그 구간은 조용히 지워진다.
+// 그래서 기록이 각 주제의 **첫 결정 쪽으로 계통적으로 편향**됐다.
+func TestPromoteCarriesSupersedes(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	l := store.NewLayout(c)
+	f := &fake{v: judge.Verdict{
+		Record: true, Slug: "저장엔진뒤집기", Summary: "임베디드 DB 를 접고 파일로 간다",
+		Body: "## 결정\n\n파일.\n", Tags: []string{"저장"},
+		Supersedes: []string{"alpha-결정-저장엔진-2026-08-01"},
+	}}
+
+	r := One(context.Background(), f, l, c, seg())
+	if r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if !r.Recorded {
+		t.Fatalf("기록되지 않았다: %+v", r)
+	}
+	old, err := l.Read(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions",
+		"alpha-결정-저장엔진-2026-08-01.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Meta.Status != "superseded" {
+		t.Errorf("옛 노트 status = %q, want superseded — 자동 경로가 뒤집기를 못 옮겼다", old.Meta.Status)
+	}
+}
+
+// 판별기가 없는 stem 을 지어내도 구간을 통째로 잃으면 안 된다.
+// capture.Do 는 대상이 없으면 에러를 내므로, 걸러 내지 않으면 결정 자체가 버려진다.
+func TestPromoteDropsUnknownSupersedes(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	l := store.NewLayout(c)
+	f := &fake{v: judge.Verdict{
+		Record: true, Slug: "지어낸것", Summary: "요약", Body: "## 결정\n\nx\n",
+		Supersedes: []string{"alpha-결정-존재하지않음-2026-01-01"},
+	}}
+
+	r := One(context.Background(), f, l, c, seg())
+	if r.Err != nil {
+		t.Fatalf("없는 stem 하나 때문에 구간이 실패했다: %v", r.Err)
+	}
+	if !r.Recorded {
+		t.Fatalf("기록되지 않았다: %+v", r)
+	}
+}
+
+// 판별기가 뒤집을 대상을 이름으로 지목하려면 **stem 을 받아야 한다.**
+// 요약만 주면 "그 결정" 이라고 가리킬 이름이 없다.
+func TestExistingCarriesStems(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	l := store.NewLayout(c)
+	f := &fake{v: judge.Verdict{Record: false, Reason: "x"}}
+	One(context.Background(), f, l, c, seg())
+
+	if len(f.got.Existing) == 0 {
+		t.Fatal("기존 결정이 안 넘어갔다")
+	}
+	found := false
+	for _, e := range f.got.Existing {
+		if e.Stem == "alpha-결정-저장엔진-2026-08-01" && e.Summary != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("stem 이 안 넘어갔다: %+v", f.got.Existing)
 	}
 }

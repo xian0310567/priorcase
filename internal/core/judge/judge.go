@@ -67,6 +67,15 @@ type Verdict struct {
 	Summary string   `json:"summary"`
 	Body    string   `json:"body"`
 	Tags    []string `json:"tags"`
+	// Supersedes 는 이 결정이 뒤집는 기존 결정들의 stem 이다.
+	//
+	// **이 필드가 없던 시절, 자동 경로는 뒤집기를 표현할 방법이 아예 없었다.**
+	// 프롬프트가 "이미 있는 결정의 반복이면 record=false" 라고만 지시했는데,
+	// 기존 결정을 뒤집는 대화는 그 결정과 주제·어휘가 거의 같아서 중복으로
+	// 판정되기 가장 좋은 형태다. 그래서 기록이 각 주제의 첫 결정 쪽으로
+	// 계통적으로 편향됐다 — 볼트 191건 중 supersedes 가 붙은 것이 13건뿐인
+	// 이유의 절반이 여기다.
+	Supersedes []string `json:"supersedes"`
 	// Reason 은 record=false 일 때 왜 아닌지다. 사람이 판별기를 못 믿을 때 볼 것.
 	Reason string `json:"reason"`
 }
@@ -82,8 +91,17 @@ type Request struct {
 	Excerpt string
 	Domain  string
 	Date    string
-	// Existing 은 그 도메인에 이미 있는 결정 요약이다. 중복 판정에 쓴다.
-	Existing []string
+	// Existing 은 그 도메인에 이미 있는 결정이다. 중복 판정과 **뒤집기 지목**에 쓴다.
+	//
+	// 예전에는 요약 문자열만 넘겼다. 그러면 판별기가 "이 결정을 뒤집는다" 고
+	// 말하고 싶어도 **가리킬 이름이 없다** — supersedes 는 stem 으로 적어야 한다.
+	Existing []ExistingDecision
+}
+
+// ExistingDecision 은 판별기에게 보여 주는 기존 결정 한 줄이다.
+type ExistingDecision struct {
+	Stem    string
+	Summary string
 }
 
 // CLI 는 호스트의 `claude` 명령으로 판정한다.
@@ -233,6 +251,15 @@ func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 }
 
 // parse 는 응답에서 JSON 을 꺼낸다. 모델이 앞뒤에 말을 붙여도 견딘다.
+//
+// **배열도 받는다.** 발췌 한 구간에 기록할 결정이 둘 이상이면 판별기가 프롬프트가
+// 요구한 단일 객체 대신 `[{...},{...}]` 를 낸다. 그러면 첫 `{` ~ 마지막 `}` 를
+// 자른 문자열이 `{...},\n{...}` 가 되어 "invalid character ',' after top-level
+// value" 로 죽는다 — 원장(promotions.jsonl 2026-08-14T17:14:59Z, domain=nova)에
+// record:true 에 slug·summary·body 까지 다 찬 verdict 가 그렇게 버려진 것이 남아 있다.
+//
+// 배열이면 **첫 원소만 쓴다.** 나머지 결정은 이번 판정에서 잃지만, 그 구간은
+// 실패가 아니라 성공으로 처리되므로 사람이 확인 큐에서 나머지를 본다.
 func parse(s string) (Verdict, error) {
 	i := strings.Index(s, "{")
 	j := strings.LastIndex(s, "}")
@@ -241,7 +268,12 @@ func parse(s string) (Verdict, error) {
 	}
 	var v Verdict
 	if err := json.Unmarshal([]byte(s[i:j+1]), &v); err != nil {
-		return Verdict{}, fmt.Errorf("판별기 응답을 읽을 수 없다: %w — %.200s", err, s)
+		got, aerr := parseArray(s)
+		if aerr != nil {
+			// 원래 에러를 보고한다 — 단일 객체가 정상 경로이므로 그쪽 원인이 알고 싶은 것이다.
+			return Verdict{}, fmt.Errorf("판별기 응답을 읽을 수 없다: %w — %.200s", err, s)
+		}
+		v = got
 	}
 	if v.Record && (v.Slug == "" || v.Summary == "") {
 		// 기록하라면서 무엇을 기록할지 안 주면 쓸 수 없다. 조용히 빈 노트를
@@ -249,6 +281,23 @@ func parse(s string) (Verdict, error) {
 		return Verdict{Record: false, Reason: "판별기가 slug 나 summary 를 주지 않았다"}, nil
 	}
 	return v, nil
+}
+
+// parseArray 는 응답이 verdict 배열일 때 첫 원소를 준다.
+func parseArray(s string) (Verdict, error) {
+	i := strings.Index(s, "[")
+	j := strings.LastIndex(s, "]")
+	if i < 0 || j <= i {
+		return Verdict{}, fmt.Errorf("배열이 아니다")
+	}
+	var vs []Verdict
+	if err := json.Unmarshal([]byte(s[i:j+1]), &vs); err != nil {
+		return Verdict{}, err
+	}
+	if len(vs) == 0 {
+		return Verdict{}, fmt.Errorf("빈 배열")
+	}
+	return vs[0], nil
 }
 
 // prompt 는 판정 지시문이다.
@@ -288,8 +337,22 @@ JSON 하나만 출력하라. 설명·인사·코드펜스를 붙이지 마라.
 아래는 record=false 다.
 - 진행 상황 보고, 할 일 나열, 코드 설명
 - 결정을 "하겠다" 고 말만 하고 무엇으로 정했는지 없는 것
-- 이미 있는 결정의 반복 (아래 기존 목록 참고)
+- 이미 있는 결정의 **반복** (아래 기존 목록 참고)
 - 사소한 구현 디테일, 시행착오
+
+**★ 반복과 뒤집기를 반드시 갈라라.**
+
+기존 결정과 주제가 같다고 곧바로 중복이 아니다. **뒤집는 것은 새 결정이다.**
+뒤집기는 원래 결정과 주제·어휘가 거의 같아서 중복처럼 보이기 쉬운데,
+그것을 record=false 로 버리면 **볼트에는 이미 죽은 옛 결정만 남고 정정은
+영영 안 들어온다.** 회수는 그 옛 결정을 계속 현행으로 주입한다.
+
+- 같은 결론을 다시 말한다 → 중복이다. record=false
+- **다른 결론으로 바꿨다 / 전제가 무너졌다 / 그만두기로 했다** → 새 결정이다.
+  record=true 로 하고, supersedes 에 뒤집힌 결정의 **stem** 을 적어라.
+- 한 대화가 전제 여럿을 한꺼번에 걷어냈으면 **전부 적는다.** 빠뜨린 것은
+  낡은 채로 계속 회수된다.
+- stem 은 아래 기존 목록에 있는 것만 쓴다. 지어내지 마라.
 
 **본문은 발췌에 있는 것만으로 쓴다. 지어내지 마라.**
 
@@ -327,15 +390,18 @@ JSON 하나만 출력하라. 설명·인사·코드펜스를 붙이지 마라.
  "body": "발췌의 언어로. 절 셋: 결정 / 근거 / 고려한 대안. 발췌에 있는 것만",
  "tags": ["회수", "키워드", "동의어", "상위어", "..."]}
 
+뒤집는 결정이면 supersedes 를 함께 준다:
+{"record": true, ..., "supersedes": ["<뒤집힌 결정의 stem>"]}
+
 또는
 {"record": false, "reason": "왜 아닌지 한 줄"}
 
 `)
 	fmt.Fprintf(&b, "프로젝트 도메인: %s\n", req.Domain)
 	if len(req.Existing) > 0 {
-		b.WriteString("\n이미 기록된 결정 (중복이면 record=false):\n")
+		b.WriteString("\n이미 기록된 결정 (반복이면 record=false · 뒤집는 것이면 supersedes 에 stem 을 적어라):\n")
 		for _, e := range req.Existing {
-			fmt.Fprintf(&b, "- %s\n", e)
+			fmt.Fprintf(&b, "- %s — %s\n", e.Stem, e.Summary)
 		}
 	}
 	b.WriteString("\n--- 대화 발췌 ---\n")

@@ -115,7 +115,7 @@ func TestConfiguredDistinguishesSetFromUsable(t *testing.T) {
 
 // 지시문이 보수적으로 판정하게 만드는지 — 이게 이 패키지의 안전장치 전부다.
 func TestPromptDemandsConservatism(t *testing.T) {
-	p := prompt(Request{Domain: "alpha", Excerpt: "뭔가", Existing: []string{"이미 있는 결정"}})
+	p := prompt(Request{Domain: "alpha", Excerpt: "뭔가", Existing: []ExistingDecision{{Stem: "alpha-결정-옛것-2026-08-01", Summary: "이미 있는 결정"}}})
 	for _, want := range []string{"애매하면 record=false", "사람이 쓴 결정 노트와 섞이므로", "이미 기록된 결정", "alpha"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("지시문에 %q 가 없다", want)
@@ -313,5 +313,58 @@ func TestDecideStillFailsWhenOutputIsNotAVerdict(t *testing.T) {
 					"판별기 고장이 '기록 안 함' 으로 둔갑한다")
 			}
 		})
+	}
+}
+
+// ★ 실제로 발생했다. `~/.local/state/priorcase/promotions.jsonl` 2026-08-14T17:14:59Z,
+// domain=nova — record:true 에 slug·summary·body 까지 다 찬 verdict 가 통째로 버려졌다.
+//
+// 발췌 한 구간에 기록할 결정이 둘 이상이면 판별기가 단일 객체 대신 배열을 낸다.
+// parse 는 첫 `{` 부터 마지막 `}` 까지를 잘라내므로 잘린 문자열이 `{...},\n{...}`
+// 가 되고 json.Unmarshal 이 "invalid character ',' after top-level value" 로 죽는다.
+//
+// 배열이면 **첫 원소를 쓴다.** 나머지 결정은 잃지만, 그 구간은 pending 에 남아
+// 다음에 다시 판정된다 — 통째로 버리는 것보다 낫다.
+func TestParseAcceptsJSONArray(t *testing.T) {
+	raw := "```json\n[\n  {\"record\": true, \"slug\": \"첫째\", \"summary\": \"첫 결정\"},\n" +
+		"  {\"record\": true, \"slug\": \"둘째\", \"summary\": \"둘째 결정\"}\n]\n```"
+	v, err := parse(raw)
+	if err != nil {
+		t.Fatalf("배열 응답을 못 읽는다: %v", err)
+	}
+	if !v.Record || v.Slug != "첫째" {
+		t.Errorf("첫 원소를 안 썼다: %+v", v)
+	}
+}
+
+// 배열 대응을 넣어도 단일 객체는 그대로 읽혀야 한다.
+func TestParseStillReadsSingleObject(t *testing.T) {
+	v, err := parse("어쩌고 {\"record\": true, \"slug\": \"하나\", \"summary\": \"요약\"} 저쩌고")
+	if err != nil {
+		t.Fatalf("단일 객체를 못 읽는다: %v", err)
+	}
+	if v.Slug != "하나" {
+		t.Errorf("slug = %q, want 하나", v.Slug)
+	}
+}
+
+// ★ 지시문이 **반복과 뒤집기를 가르게** 만드는지.
+//
+// 이게 없으면 자동 경로는 뒤집기를 중복으로 판정해 조용히 지운다 — 기존 결정을
+// 뒤집는 대화는 그 결정과 주제·어휘가 거의 같아서 중복으로 판정되기 가장 좋다.
+// 그 결과 기록이 각 주제의 첫 결정 쪽으로 계통적으로 편향된다.
+func TestPromptOpensSupersedeChannel(t *testing.T) {
+	p := prompt(Request{Domain: "alpha", Excerpt: "뭔가", Existing: []ExistingDecision{
+		{Stem: "alpha-결정-옛것-2026-08-01", Summary: "옛 결론"},
+	}})
+	for _, want := range []string{
+		"뒤집는 것은 새 결정이다",   // 반복과 뒤집기를 가르라는 지시
+		"supersedes",         // 어디에 적는지
+		"지어내지 마라",          // 목록 밖 stem 금지
+		"alpha-결정-옛것-2026-08-01", // ★ stem 이 실제로 보여야 지목할 수 있다
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("지시문에 %q 가 없다", want)
+		}
 	}
 }

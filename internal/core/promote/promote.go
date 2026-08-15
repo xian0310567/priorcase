@@ -59,11 +59,12 @@ func One(ctx context.Context, j judge.Judge, l *store.Layout, c *config.Config, 
 		// 도메인을 모르면 어디에 쓸지 정할 수 없다. 판별기에 물어봐야 소용없다.
 		return Result{ID: s.ID, Reason: "도메인을 알 수 없다"}
 	}
+	existing := existingDecisions(l, s.Domain)
 	v, err := j.Decide(ctx, judge.Request{
 		Excerpt:  s.Excerpt,
 		Domain:   s.Domain,
 		Date:     s.Date,
-		Existing: existingSummaries(l, s.Domain),
+		Existing: existing,
 	})
 	if err != nil {
 		return Result{ID: s.ID, Err: err}
@@ -80,6 +81,7 @@ func One(ctx context.Context, j judge.Judge, l *store.Layout, c *config.Config, 
 		Date:          s.Date,
 		SourceSession: s.Session,
 		Tags:          v.Tags,
+		Supersedes:    knownStems(v.Supersedes, existing),
 		Body:          []byte(v.Body),
 	})
 	if err != nil {
@@ -93,20 +95,54 @@ func One(ctx context.Context, j judge.Judge, l *store.Layout, c *config.Config, 
 	return Result{ID: s.ID, Recorded: true, Path: res.Path}
 }
 
-// existingSummaries 는 그 도메인의 기존 결정 요약이다. 판별기가 중복을 거르는 데 쓴다.
+// knownStems 는 판별기가 준 supersedes 중 **실제로 보여 준 목록에 있던 것만** 남긴다.
+//
+// 지어낸 stem 하나가 capture.Do 를 실패시키면 그 구간의 결정이 통째로 사라진다.
+// 뒤집기 표시를 잃는 것과 결정을 잃는 것 중에는 앞이 훨씬 싸다 — 뒤집기는 사람이
+// 나중에 prior review 로 붙일 수 있지만, 버려진 구간은 아무도 안 본다.
+//
+// 조용히 버리는 것이 아니다: 판별기에게 준 목록 밖의 이름은 애초에 근거가 없다.
+func knownStems(want []string, existing []judge.ExistingDecision) []string {
+	if len(want) == 0 {
+		return nil
+	}
+	ok := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		ok[e.Stem] = true
+	}
+	var out []string
+	for _, s := range want {
+		if ok[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// existingDecisions 는 그 도메인의 기존 결정이다. 판별기가 중복을 거르고
+// **뒤집을 대상을 지목하는** 데 쓴다.
+//
+// **stem 을 같이 준다.** 요약만 주면 판별기가 "이 결정을 뒤집는다" 고 말하고 싶어도
+// 가리킬 이름이 없다 — supersedes 는 stem 으로 적어야 한다.
 //
 // 읽기 실패는 조용히 넘긴다 — 중복 판정 재료가 없을 뿐이고, 그것 때문에 승격 자체를
 // 막으면 볼트가 잠깐 안 읽힌다고 기록이 통째로 멎는다.
-func existingSummaries(l *store.Layout, domain string) []string {
+//
+// **뒤집힌 결정은 뺀다.** 이미 죽은 것을 다시 뒤집으라고 권할 이유가 없고,
+// 목록 30칸은 살아 있는 결정에 쓰는 편이 낫다.
+func existingDecisions(l *store.Layout, domain string) []judge.ExistingDecision {
 	notes, _, err := l.List()
 	if err != nil {
 		return nil
 	}
-	var out []string
+	var out []judge.ExistingDecision
 	for _, n := range notes {
+		if n.Meta.Status == "superseded" || n.Meta.Summary == "" {
+			continue
+		}
 		for _, d := range n.Meta.Domain {
-			if d == domain && n.Meta.Summary != "" {
-				out = append(out, n.Meta.Summary)
+			if d == domain {
+				out = append(out, judge.ExistingDecision{Stem: n.Stem, Summary: n.Meta.Summary})
 				break
 			}
 		}
