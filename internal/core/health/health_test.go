@@ -442,3 +442,122 @@ func TestTeamPortabilityNamesTheRepo(t *testing.T) {
 	}
 	t.Fatal("검사가 아예 없다")
 }
+
+// writeNote 는 결정 노트 하나를 심는다. related·supersedes·본문을 골라 넣는다.
+func writeNote(t *testing.T, c *config.Config, dir, stem, related, supersedes, body string) {
+	t.Helper()
+	writeNoteStatus(t, c, dir, stem, "active", related, supersedes, body)
+}
+
+func writeNoteStatus(t *testing.T, c *config.Config, dir, stem, status, related, supersedes, body string) {
+	t.Helper()
+	p := filepath.Join(c.DefaultVaultPath(), dir, "decisions", stem+".md")
+	src := "---\ntype: decision\ndate: 2026-08-09\ndomain: [" + dir + "]\nsummary: \"x\"\n" +
+		"status: " + status + "\noutcome: pending\nsupersedes: " + supersedes + "\n" +
+		"related: [" + related + "]\ntags: [decision]\nsource_session: \"\"\n---\n\n" + body
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 개명·삭제로 끊어진 링크는 아무 신호 없이 그래프만 끊는다 — 회수는 Related 를
+// 아예 안 읽으므로 점수도 안 변하고, doctor 는 지금까지 초록불이었다.
+func TestBrokenFrontmatterLinkIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	writeNote(t, c, "alpha", "alpha-결정-끊긴링크-2026-08-09",
+		`"[[alpha-결정-사라진것-2026-08-01]]"`, `""`, "## 결정\n\nx\n")
+
+	got := find(t, Vault(c, store.NewLayout(c)), "링크")
+	if got.Level != Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "alpha-결정-끊긴링크-2026-08-09") ||
+		!strings.Contains(got.Detail, "alpha-결정-사라진것-2026-08-01") {
+		t.Errorf("어느 노트가 무엇을 가리키는지 안 알려 준다: %s", got.Detail)
+	}
+}
+
+// ★ ResolveStem 으로 판정하면 실볼트 링크의 23%(214개 중 49개)가 오탐이 된다.
+// related 는 결정이 아닌 문서도 가리킨다 — 프로젝트 개요·볼트 규약 문서.
+func TestLinkToNonDecisionDocIsNotBroken(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	meta := filepath.Join(c.DefaultVaultPath(), "_meta")
+	if err := os.MkdirAll(meta, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meta, "00-볼트-네이밍-규약.md"), []byte("# 규약\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeNote(t, c, "alpha", "alpha-결정-규약참조-2026-08-09",
+		`"[[00-볼트-네이밍-규약]]"`, `""`, "## 결정\n\nx\n")
+
+	if got := find(t, Vault(c, store.NewLayout(c)), "링크"); got.Level != OK {
+		t.Fatalf("결정이 아닌 문서를 가리키는 것은 정상이다: [%v] %s", got.Level, got.Detail)
+	}
+}
+
+// ★ 본문을 검사하면 오탐률이 93% 다 (실볼트 15건 중 진짜 1건).
+// ```toml 펜스 안의 [[domain]]·[[vault]] 는 TOML array-of-tables 문법이지 링크가 아니다.
+func TestBodyWikilinksAreNotChecked(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	body := "## 결정\n\n```toml\n[[domain]]\nprefix = \"x\"\n```\n\n" +
+		"자리표시자 [[옛이름]] → [[새이름]] 과 인용 [[벧전 5:7]] 도 링크가 아니다.\n"
+	writeNote(t, c, "alpha", "alpha-결정-본문링크-2026-08-09", "", `""`, body)
+
+	if got := find(t, Vault(c, store.NewLayout(c)), "링크"); got.Level != OK {
+		t.Fatalf("본문은 사람의 산문이다 — 우리 규약의 대상이 아니다: [%v] %s", got.Level, got.Detail)
+	}
+}
+
+// (b) 뒤집힌 대상이 active 로 남으면 회수 감점(penaltySuperseded)이 안 걸려
+// 이미 죽은 결정이 만점으로 계속 올라온다.
+func TestSupersedeTargetLeftActiveIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	writeNoteStatus(t, c, "alpha", "alpha-결정-옛것-2026-08-09", "active",
+		`"[[alpha-결정-새것-2026-08-09]]"`, `""`, "## 결정\n\nx\n")
+	writeNote(t, c, "alpha", "alpha-결정-새것-2026-08-09",
+		"", `"[[alpha-결정-옛것-2026-08-09]]"`, "## 결정\n\nx\n")
+
+	got := find(t, Vault(c, store.NewLayout(c)), "뒤집기")
+	if got.Level != Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "alpha-결정-옛것-2026-08-09") {
+		t.Errorf("어느 노트인지 안 알려 준다: %s", got.Detail)
+	}
+}
+
+// (c) 옛 노트가 후속을 안 가리키면 그 결정을 열었을 때 "무엇이 이걸 대체했나" 로
+// 갈 길이 없다. supersede 가 심는 역링크가 사람 손에 지워진 경우다.
+func TestSupersedeTargetMissingBackLinkIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	writeNoteStatus(t, c, "alpha", "alpha-결정-옛것-2026-08-09", "superseded",
+		"", `""`, "## 결정\n\nx\n") // related 가 비었다 — 역링크 없음
+	writeNote(t, c, "alpha", "alpha-결정-새것-2026-08-09",
+		"", `"[[alpha-결정-옛것-2026-08-09]]"`, "## 결정\n\nx\n")
+
+	got := find(t, Vault(c, store.NewLayout(c)), "뒤집기")
+	if got.Level != Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
+	}
+}
+
+// ★ (d) 실볼트에 실재하는 사례. status 만 손으로 superseded 로 바꾸고 frontmatter 를
+// 안 건드리면, 그 노트를 뒤집은 결정이 무엇인지 아무 데도 안 적힌다.
+// 근본 원인은 Supersedes 가 한 칸뿐이라 방향전환 하나가 셋을 뒤집을 수 없었던 것이다.
+func TestOrphanSupersededNoteIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	writeNoteStatus(t, c, "alpha", "alpha-결정-고아-2026-08-09", "superseded",
+		"", `""`, "## 결정\n\nx\n")
+
+	got := find(t, Vault(c, store.NewLayout(c)), "뒤집기")
+	if got.Level != Warn {
+		t.Fatalf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "alpha-결정-고아-2026-08-09") {
+		t.Errorf("어느 노트인지 안 알려 준다: %s", got.Detail)
+	}
+}

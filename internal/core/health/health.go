@@ -81,6 +81,8 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	notes := checkNotes(r, l)
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
+	checkLinks(r, l, notes)
+	checkSupersedeSymmetry(r, notes)
 	checkIndex(r, l, notes)
 	checkIndexInGit(r, l)
 	return r
@@ -168,6 +170,142 @@ func checkSimilarSlugs(r *Report, notes []store.Note) {
 	sort.Strings(dups)
 	r.add("유사 slug", Warn, strings.Join(dups, " · "),
 		"둘 중 하나를 지우거나 prior review --supersedes 로 엮어라")
+}
+
+// checkLinks 는 **가리키는 대상이 없는 frontmatter 위키링크**를 찾는다.
+//
+// 링크는 프로젝트를 잇는 유일한 수단인데 아무도 안 보고 있었다 — `internal/core/search`
+// 는 Related·Supersedes 를 아예 안 읽고(참조 0건), doctor 는 지금까지 초록불이었다.
+// 그래서 개명이나 삭제가 나면 **아무 신호 없이 그래프만 조용히 끊긴다.**
+//
+// # 등급이 Warn 인 이유
+//
+// Level 주석(위 §)이 Fail 을 "동작하지 않는다" 로 못박았다. 끊어진 링크는 아무것도
+// 못 돌게 하지 않는다 — 회수가 링크를 애초에 안 본다. checkSimilarSlugs 와 같은 급이다.
+//
+// # 본문을 보지 않는 이유
+//
+// 실볼트 실측(2026-08-15): 본문 위키링크 291개 중 대상이 없는 것이 15개인데
+// **진짜는 1개뿐**이다(오탐률 93%). 나머지는 ```toml 펜스 안의 `[[domain]]`·`[[vault]]`
+// (TOML array-of-tables 문법), `[[옛이름]]` 자리표시자, `[[벧전 5:7]]` 성경 인용이다.
+// 코드 펜스를 걷어내도 뒤 둘은 살아남는다. checkTeamPortability 주석이 이 프로젝트의
+// 죄목으로 든 "소음이 되면 사람은 무시하는 법을 배운다" 에 정면으로 걸린다.
+//
+// frontmatter 는 우리 방출기가 쓰는 자리라 기준선이 깨끗하다(실볼트 214개 중 dangling 0).
+// 그래서 여기서 빨간불이 뜨면 진짜다.
+func checkLinks(r *Report, l *store.Layout, notes []store.Note) {
+	known, err := l.AllStems()
+	if err != nil {
+		r.add("링크", Warn, "볼트를 훑을 수 없다: "+err.Error(),
+			"볼트 경로와 권한을 확인해라")
+		return
+	}
+	var broken, unwrapped []string
+	total := 0
+	for _, n := range notes {
+		for _, link := range store.LinkTargets(n.Meta) {
+			total++
+			if !known[link.Target] {
+				broken = append(broken, fmt.Sprintf("%s → [[%s]] (%s)", n.Stem, link.Target, link.Field))
+				continue
+			}
+			// **모양이 나쁜 것을 조용히 통과시키지 않는다.** `[[ ]]` 가 없으면
+			// 우리는 읽지만 옵시디언은 링크로 안 읽는다 — 백링크 패널에 안 뜨는
+			// 반쪽 링크다. 대상이 있으니 broken 은 아니고, 따로 센다.
+			if link.Unwrapped {
+				unwrapped = append(unwrapped, fmt.Sprintf("%s → %s (%s)", n.Stem, link.Target, link.Field))
+			}
+		}
+	}
+
+	sort.Strings(broken)
+	sort.Strings(unwrapped)
+	switch {
+	case len(broken) > 0:
+		detail := strings.Join(broken, " · ")
+		if len(unwrapped) > 0 {
+			detail += fmt.Sprintf(" · 그리고 [[ ]] 없는 값 %d건", len(unwrapped))
+		}
+		r.add("링크", Warn, detail,
+			"대상이 개명·삭제됐다. related 에서 빼거나 새 이름으로 고쳐라")
+	case len(unwrapped) > 0:
+		r.add("링크", Warn, strings.Join(unwrapped, " · "),
+			"[[ ]] 로 감싸라 — 지금은 옵시디언이 링크로 읽지 않아 백링크가 안 걸린다")
+	default:
+		r.add("링크", OK, fmt.Sprintf("%d개가 전부 걸린다", total), "")
+	}
+}
+
+// checkSupersedeSymmetry 는 뒤집기가 **반쪽만 적힌** 자리를 찾는다.
+//
+// capture.supersede 는 세 가지를 한 번에 한다 — 새 노트의 supersedes, 옛 노트의
+// status, 옛 노트의 related 역링크. 그런데 사람이 손으로 status 한 줄만 바꾸거나
+// 옵시디언에서 related 를 지우면 그 셋이 갈라지고, **아무도 안 본다.**
+//
+// 실볼트에 실제로 있다(2026-08-15 실측): `priorcase-결정-유료층-순수E2E-복구불가`
+// 와 `priorcase-결정-클라이언트비제공-무료는파일유료는UI` 가 status: superseded 인데
+// 아무 노트도 그것을 supersedes 로 가리키지 않는다. 커밋 6259622 에서 status 한 줄과
+// 본문 한 문단만 바꾸고 frontmatter 를 안 건드린 결과다. 근본 원인은 `Supersedes`
+// 가 한 칸뿐이라 방향전환 하나가 셋을 뒤집을 수 없었던 것이다.
+//
+// **자동으로 고치지 않는다.** 어느 쪽이 진실인지 기계는 모른다 — 사람이 옵시디언에서
+// 지운 것일 수도, 새 노트가 잘못 쓴 것일 수도 있다. "조용히 틀리느니 시끄럽게
+// 멈춘다" 는 여기서 "보고하고 Fix 문구로 다음 행동을 준다" 로 읽는다.
+func checkSupersedeSymmetry(r *Report, notes []store.Note) {
+	byStem := make(map[string]store.Note, len(notes))
+	for _, n := range notes {
+		byStem[n.Stem] = n
+	}
+	// 누가 누구를 뒤집는다고 주장하는가.
+	supersededBy := map[string]string{}
+	for _, n := range notes {
+		for _, link := range store.LinkTargets(n.Meta) {
+			if link.Kind == store.KindSupersedes {
+				supersededBy[link.Target] = n.Stem
+			}
+		}
+	}
+
+	var bad []string
+	for target, newer := range supersededBy {
+		old, ok := byStem[target]
+		if !ok {
+			continue // 대상이 아예 없는 것은 checkLinks 가 문다. 두 번 말하지 않는다.
+		}
+		if old.Meta.Status != "superseded" {
+			bad = append(bad, fmt.Sprintf("%s 가 %s 를 뒤집었는데 그쪽 status 가 %q 다",
+				newer, target, old.Meta.Status))
+		}
+		if !hasLink(old.Meta.Related, newer) {
+			bad = append(bad, fmt.Sprintf("%s 의 related 에 후속 %s 가 없다", target, newer))
+		}
+	}
+	// 반대 방향: 뒤집혔다고 적혀 있는데 뒤집은 쪽이 없다.
+	for _, n := range notes {
+		if n.Meta.Status == "superseded" && supersededBy[n.Stem] == "" {
+			bad = append(bad, fmt.Sprintf("%s 는 superseded 인데 무엇이 뒤집었는지 아무 데도 없다", n.Stem))
+		}
+	}
+
+	if len(bad) == 0 {
+		r.add("뒤집기", OK, fmt.Sprintf("%d건 전부 양쪽이 맞는다", len(supersededBy)), "")
+		return
+	}
+	sort.Strings(bad)
+	r.add("뒤집기", Warn, strings.Join(bad, " · "),
+		"prior review <stem> --supersedes <뒤집은-노트> 로 다시 엮어라 (한쪽만 고치면 또 갈라진다)")
+}
+
+// hasLink 는 related 목록이 그 stem 을 가리키는지 본다.
+func hasLink(related []string, stem string) bool {
+	for _, raw := range related {
+		for _, link := range store.LinkTargets(store.Meta{Related: []string{raw}}) {
+			if link.Target == stem {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // slugKey 는 유사 비교용 정규화 키다. **capture.slugKey 와 같은 규칙이어야 한다** —
