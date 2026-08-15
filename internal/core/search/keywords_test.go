@@ -147,3 +147,33 @@ func TestJosaStillStrippedWhenStemSurvives(t *testing.T) {
 		}
 	}
 }
+
+// ★ 불용어가 **내용어를 지우면 안 된다.**
+//
+// 이 볼트는 소프트웨어 결정을 담는다. 거기서 "파일"·"상태"·"확인"·"작업"은
+// 기능어가 아니라 주제어다. 그런데 불용어 목록에 있어서 질의에서 통째로 빠졌고,
+// 그래서 `prior recall "상태 파일을 볼트 밖으로 옮긴다"` 가 정확히 그 주제의
+// 노트를 못 찾았다 — 노트에 `상태파일` 태그를 달아도 소용없었다.
+//
+// 실측(197건 head 코퍼스): 이 낱말들의 df 는 파일 10.7% · 확인 8.1% · 상태 4.1% ·
+// 문제 3.0% · 방법 1.5% · 작업 1.0% · 내용 0.5% 다. 흔해서 뺀 것이라기엔
+// 대부분 희귀하고, 가장 흔한 "파일"(10.7%)조차 "볼트"(11.7%)보다 드물다.
+//
+// 기능어(때문·위해·대해·관련·정도·경우·부분)는 그대로 둔다 — 그건 진짜로 주제를
+// 안 담는다.
+func TestContentWordsAreNotStopwords(t *testing.T) {
+	for _, w := range []string{"파일", "상태", "확인", "작업", "방법", "문제", "내용"} {
+		if got := ExtractKeywords(w + " 저장엔진"); len(got) != 2 {
+			t.Errorf("ExtractKeywords(%q + ...) = %v — 내용어가 불용어로 빠졌다", w, got)
+		}
+	}
+}
+
+// 진짜 기능어는 여전히 빠져야 한다.
+func TestFunctionWordsStayStopwords(t *testing.T) {
+	for _, w := range []string{"때문", "위해", "대해", "관련", "정도", "경우", "부분", "결정"} {
+		if got := ExtractKeywords(w); len(got) != 0 {
+			t.Errorf("ExtractKeywords(%q) = %v — 기능어가 남았다", w, got)
+		}
+	}
+}
