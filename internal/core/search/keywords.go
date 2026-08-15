@@ -31,8 +31,18 @@ const minTokenRunes = 2
 func ExtractKeywords(prompt string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, tok := range punct.Split(store.NFC(prompt), -1) {
-		tok = josa.ReplaceAllString(tok, "")
+	for _, raw := range punct.Split(store.NFC(prompt), -1) {
+		tok := josa.ReplaceAllString(raw, "")
+		// **조사를 떼어 너무 짧아지면 뗀 것이 조사가 아니었다.** 원형을 쓴다.
+		//
+		// 안 그러면 낱말이 통째로 사라진다: "경로" → "경"(1글자) → 탈락.
+		// 실측으로 `prior recall "경로"` 가 볼트 전체에서 0건이었고, 노트에
+		// `경로` 태그를 달아도 그 낱말로는 영영 못 찾았다. 같은 부류가 흔하다 —
+		// 파이(→파)·정도(→정)·포도(→포)·사과(→사). 전부 끝 글자가 조사와 겹치는
+		// 평범한 명사다.
+		if len([]rune(tok)) < minTokenRunes {
+			tok = raw
+		}
 		if len([]rune(tok)) < minTokenRunes {
 			continue
 		}

@@ -100,3 +100,50 @@ func TestConversationalEnglishIsFilteredOut(t *testing.T) {
 		}
 	}
 }
+
+// ★ 조사 제거가 **낱말을 통째로 삼키면 안 된다.**
+//
+// "경로" 는 끝의 "로" 가 조사로 잘려 "경" 이 되고, minTokenRunes 미만이라
+// 질의에서 사라진다. 그래서 `prior recall "경로"` 가 볼트 전체에서 0건이었다 —
+// 노트에 경로 라는 태그를 달아도 그 낱말로는 영원히 못 찾는다.
+//
+// 같은 부류가 흔하다: 파이(→파) · 정도(→정) · 포도(→포) · 사과(→사).
+// 전부 끝 글자가 조사와 겹치는 명사다.
+//
+// ("정도" 는 여기 없다 — 그건 불용어라 추출 단계에서 정당하게 빠진다.)
+//
+// 조사를 떼어 2글자 미만이 되면 **뗀 것이 조사가 아니었다는 뜻**이다. 원형을 쓴다.
+func TestJosaStripDoesNotSwallowShortNouns(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"경로", "경로"},
+		{"파이", "파이"},
+		{"자료", "자료"},
+		{"포도", "포도"},
+	}
+	for _, c := range cases {
+		got := ExtractKeywords(c.in)
+		if len(got) == 0 {
+			t.Errorf("ExtractKeywords(%q) = [] — 낱말이 통째로 사라졌다", c.in)
+			continue
+		}
+		if got[0] != c.want {
+			t.Errorf("ExtractKeywords(%q) = %v, want [%q]", c.in, got, c.want)
+		}
+	}
+}
+
+// 진짜 조사는 여전히 떨어져야 한다 — 위 수정이 조사 제거를 무력화하면 안 된다.
+func TestJosaStillStrippedWhenStemSurvives(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"저장을", "저장"},
+		{"엔진이", "엔진"},
+		{"스키마는", "스키마"},
+		{"볼트에서", "볼트"},
+	}
+	for _, c := range cases {
+		got := ExtractKeywords(c.in)
+		if len(got) != 1 || got[0] != c.want {
+			t.Errorf("ExtractKeywords(%q) = %v, want [%q]", c.in, got, c.want)
+		}
+	}
+}
