@@ -54,7 +54,7 @@ func TestReviewSupersedesBothSides(t *testing.T) {
 	l, _ := fixtureLayoutConfig(t)
 	newStem := "alpha-결정-스키마-2026-08-02"
 	oldStem := "alpha-결정-저장엔진-2026-08-01"
-	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: []string{oldStem}}); err != nil {
 		t.Fatal(err)
 	}
 	read := func(stem string) store.Note {
@@ -68,8 +68,8 @@ func TestReviewSupersedesBothSides(t *testing.T) {
 		}
 		return n
 	}
-	if got := read(newStem).Meta.Supersedes; got != "[["+oldStem+"]]" {
-		t.Errorf("새 노트 supersedes = %q", got)
+	if got := read(newStem).Meta.Supersedes; len(got) != 1 || got[0] != "[["+oldStem+"]]" {
+		t.Errorf("새 노트 supersedes = %v", got)
 	}
 	old := read(oldStem)
 	if old.Meta.Status != "superseded" {

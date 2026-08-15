@@ -39,7 +39,63 @@ func supersede(l *store.Layout, target, newStem string) (string, store.Note, err
 	if old.Stem == newStem {
 		return "", store.Note{}, fmt.Errorf("자기 자신을 뒤집을 수 없다: %s", newStem)
 	}
+	back, err := store.NormalizeLink(newStem)
+	if err != nil {
+		return "", store.Note{}, fmt.Errorf("역링크를 만들 수 없다: %w", err)
+	}
+	fwd, err := store.NormalizeLink(old.Stem)
+	if err != nil {
+		return "", store.Note{}, fmt.Errorf("링크를 만들 수 없다: %w", err)
+	}
 	old.Meta.Status = "superseded"
-	old.Meta.Related = appendUnique(old.Meta.Related, "[["+newStem+"]]")
-	return "[[" + old.Stem + "]]", old, nil
+	old.Meta.Related = appendUnique(old.Meta.Related, back)
+	return fwd, old, nil
+}
+
+// supersedeAll 은 **여러 대상을 한 번에** 엮는다.
+//
+// 하나만 되던 시절에 실제로 데이터를 잃었다: 2026-08-13 `방향전환-개인도구-다중볼트`
+// 가 전제 6개를 폐기 선언했는데 `--supersedes` 가 한 칸뿐이라 1건만 엮였고, 나머지는
+// 본문 산문으로 밀려나 두 노트가 "superseded 인데 무엇이 뒤집었는지 없는" 상태로
+// 남았다. 그 상태를 doctor 의 뒤집기 검사가 지금 문다.
+//
+// 디스크에는 쓰지 않는다 — supersede 와 같은 이유다(호출부가 전부 검증한 뒤에 쓴다).
+func supersedeAll(l *store.Layout, targets []string, newStem string) (store.LinkList, []store.Note, error) {
+	var links store.LinkList
+	var olds []store.Note
+	seen := map[string]bool{}
+	for _, t := range targets {
+		link, old, err := supersede(l, t, newStem)
+		if err != nil {
+			return nil, nil, err
+		}
+		// 같은 대상을 두 번 주면 옛 노트를 두 번 쓰게 된다. 두 번째 쓰기는 첫 번째의
+		// 결과를 못 보므로 related 가 어긋날 수 있다 — 여기서 접는다.
+		if seen[old.Stem] {
+			continue
+		}
+		seen[old.Stem] = true
+		links = append(links, link)
+		olds = append(olds, old)
+	}
+	return links, olds, nil
+}
+
+// normalizeLinks 는 사용자·에이전트가 준 링크 목록을 정본 형태로 접는다.
+//
+// **하나라도 나쁘면 통째로 거부한다.** 조용히 빼면 사용자는 링크를 걸었다고 믿는데
+// 볼트에는 없다 — 이 프로젝트가 죄목으로 드는 "조용한 무동작" 이다.
+func normalizeLinks(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		link, err := store.NormalizeLink(s)
+		if err != nil {
+			return nil, fmt.Errorf("related 가 잘못됐다: %w", err)
+		}
+		out = appendUnique(out, link)
+	}
+	return out, nil
 }

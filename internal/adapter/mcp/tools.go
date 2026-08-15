@@ -122,7 +122,7 @@ type captureArgs struct {
 	Body       string   `json:"body,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	Related    []string `json:"related,omitempty"`
-	Supersedes string   `json:"supersedes,omitempty"`
+	Supersedes []string `json:"supersedes,omitempty"`
 	Date       string   `json:"date,omitempty"`
 	SessionID  string   `json:"session_id,omitempty"`
 	// Author 는 이 결정을 내린 사람이다. 비면 설정·git 신원에서 정한다.
@@ -172,7 +172,7 @@ type reviewArgs struct {
 	Outcome       string `json:"outcome,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Retrospective string `json:"retrospective,omitempty"`
-	Supersedes    string `json:"supersedes,omitempty"`
+	Supersedes    []string `json:"supersedes,omitempty"`
 }
 
 func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewArgs) (*sdk.CallToolResult, noOutput, error) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,6 +197,56 @@ func (l *Layout) UndeclaredDecisionDirs() ([]string, error) {
 		}
 	}
 	sort.Strings(out)
+	return out, nil
+}
+
+// AllStems 는 **볼트 전역** 마크다운 파일명(확장자 뺀 basename)의 집합이다.
+//
+// 위키링크가 걸리는지 판정하는 유일한 근거다. 옵시디언이 `[[x]]` 를 푸는 방식이
+// 정확히 이것이라 — 경로가 아니라 basename 으로, 볼트 전체에서 — 그대로 흉내낸다.
+//
+// # ResolveStem 을 쓰지 않는 이유
+//
+// ResolveStem(위 §)은 (1) 모양 (2) 접두어 화이트리스트 (3) decisions 디렉터리 안,
+// 셋을 강제한다. 그건 **쓰기 경로의 보안 검증**으로 옳지만 판정에는 너무 좁다 —
+// 실볼트 실측(2026-08-15)으로 frontmatter 링크 214개 중 **49개(23%)가 결정이 아닌
+// 문서**를 가리킨다(`[[00-omni-프로젝트-개요]]`, `_meta/00-볼트-네이밍-규약`).
+// ResolveStem 으로 판정하면 그 49건이 전부 "끊어진 링크" 로 잡힌다.
+//
+// # DecisionDirs 를 쓰지 않는 이유
+//
+// 그쪽은 설정의 [[domain]] 목록만 돈다. 설정에 없는 폴더는 통째로 안 보이는데,
+// 실볼트에서 그 사각지대에 bard 14건이 들어앉아 한 세션 내내 회수되지 않았다.
+// **검사기가 색인의 사각지대를 상속하면 그 사각지대를 영영 못 본다.**
+//
+// 파싱은 하지 않는다 — 파일명만 본다. 실측 2.4~2.7ms / 477파일.
+func (l *Layout) AllStems() (map[string]bool, error) {
+	out := map[string]bool{}
+	err := filepath.WalkDir(l.vault, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			// 못 읽는 하위는 건너뛴다. 볼트 루트 자체가 없으면 아래에서 에러가 난다.
+			if p == l.vault {
+				return err
+			}
+			return nil
+		}
+		name := NFC(e.Name())
+		if e.IsDir() {
+			// 점으로 시작하는 폴더는 도구의 것이다(.obsidian·.git·.trash).
+			// 옵시디언도 그 안을 링크 대상으로 세지 않는다.
+			if p != l.vault && strings.HasPrefix(name, ".") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(name, ".md") {
+			out[strings.TrimSuffix(name, ".md")] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("볼트를 훑을 수 없다 (%s): %w", l.vault, err)
+	}
 	return out, nil
 }
 

@@ -78,7 +78,7 @@ func TestDoSupersedesBothSides(t *testing.T) {
 
 	res, err := Do(l, c, Request{
 		Domain: "alpha", Slug: "저장엔진 재선정", Summary: "저장 엔진을 다시 고른다",
-		Date: "2026-08-07", Supersedes: oldStem, Body: []byte("## 결정\n"),
+		Date: "2026-08-07", Supersedes: []string{oldStem}, Body: []byte("## 결정\n"),
 	})
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -88,8 +88,9 @@ func TestDoSupersedesBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "[[" + oldStem + "]]"; newNote.Meta.Supersedes != want {
-		t.Errorf("새 노트 supersedes = %q, want %q (review 와 같은 형식이어야 한다)",
+	want := "[[" + oldStem + "]]"
+	if len(newNote.Meta.Supersedes) != 1 || newNote.Meta.Supersedes[0] != want {
+		t.Errorf("새 노트 supersedes = %v, want [%q] (review 와 같은 형식이어야 한다)",
 			newNote.Meta.Supersedes, want)
 	}
 
@@ -124,7 +125,7 @@ func TestDoRejectsSupersedesTraversal(t *testing.T) {
 	for _, bad := range []string{"../../CLAUDE", "../CLAUDE", "규약없음", "없는도메인-결정-x-2026-08-01"} {
 		res, err := Do(l, c, Request{
 			Domain: "alpha", Slug: "순회 시도 " + bad, Summary: "s",
-			Date: "2026-08-07", Supersedes: bad, Body: []byte("## 결정\n"),
+			Date: "2026-08-07", Supersedes: []string{bad}, Body: []byte("## 결정\n"),
 		})
 		if err == nil {
 			t.Errorf("--supersedes %q 를 통과시켰다 → %s", bad, res.Path)
@@ -155,7 +156,7 @@ func TestDoValidatesBothNotesBeforeWritingEither(t *testing.T) {
 	// summary 가 비면 새 노트가 스키마 검증에서 걸린다.
 	if _, err := Do(l, c, Request{
 		Domain: "alpha", Slug: "요약 없는 결정", Summary: "",
-		Date: "2026-08-07", Supersedes: oldStem, Body: []byte("## 결정\n"),
+		Date: "2026-08-07", Supersedes: []string{oldStem}, Body: []byte("## 결정\n"),
 	}); err == nil {
 		t.Fatal("summary 가 빈 요청을 통과시켰다")
 	}
@@ -184,5 +185,88 @@ func TestDoUpdatesIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "색인이 갱신되는지 본다") {
 		t.Error("새 결정이 색인에 없다")
+	}
+}
+
+// --related 로 들어온 맨 stem 은 `[[ ]]` 로 감싸 저장한다.
+//
+// MCP 설명문이 "위키링크 **또는** stem" 이라 두 형식을 다 권한 탓에 실볼트에
+// `[[ ]]` 없는 값이 남았다. 옵시디언은 그것을 링크로 읽지 않으므로 백링크 패널에
+// 안 뜨는 죽은 문자열이 된다.
+func TestDoNormalizesRelated(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	res, err := Do(l, c, Request{
+		Domain: "alpha", Slug: "정규화", Summary: "s", Date: "2026-08-07",
+		Related: []string{"beta-결정-배포전략-2026-08-03", "  [[common-결정-로케일함정-2026-08-04]]  "},
+		Body:    []byte("## 결정\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(res.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `related: ["[[beta-결정-배포전략-2026-08-03]]", "[[common-결정-로케일함정-2026-08-04]]"]`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("related 가 정본 형식이 아니다.\nwant %s\n실제:\n%s", want, data)
+	}
+}
+
+// ★ supersede.go 주석이 실측으로 기록한 사고: "../../CLAUDE" 가 frontmatter 에
+// 그대로 안착했다. ResolveStem 이 막던 경로 순회를 --related 가 통째로 우회한다.
+func TestDoRejectsPathEscapeInRelated(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	for _, bad := range []string{"../../CLAUDE", "[[../CLAUDE]]", "alpha/decisions/x", "[[]]"} {
+		_, err := Do(l, c, Request{
+			Domain: "alpha", Slug: "탈출" + bad, Summary: "s", Date: "2026-08-07",
+			Related: []string{bad}, Body: []byte("## 결정\n"),
+		})
+		if err == nil {
+			t.Errorf("related=%q 를 통과시켰다", bad)
+		}
+	}
+}
+
+// ★ 한 결정이 여럿을 뒤집을 수 있어야 한다.
+//
+// 실볼트 사례: 2026-08-13 `방향전환-개인도구-다중볼트` 가 전제 6개를 폐기 선언했는데
+// `--supersedes` 가 한 칸뿐이라 1건만 엮였다. 나머지는 본문 산문으로 밀려났고,
+// `유료층-순수E2E-복구불가`·`클라이언트비제공` 두 노트가 "superseded 인데 무엇이
+// 뒤집었는지 아무 데도 없는" 상태로 남았다 — doctor 의 뒤집기 검사가 지금 그걸 문다.
+func TestDoSupersedesMultipleTargets(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	res, err := Do(l, c, Request{
+		Domain: "alpha", Slug: "방향전환", Summary: "전제를 한꺼번에 걷어낸다", Date: "2026-08-11",
+		Supersedes: []string{"alpha-결정-스키마-2026-08-02", "beta-결정-배포전략-2026-08-03"},
+		Body:       []byte("## 결정\n"),
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	data, err := os.ReadFile(res.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `supersedes: ["[[alpha-결정-스키마-2026-08-02]]", "[[beta-결정-배포전략-2026-08-03]]"]`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("supersedes 가 둘 다 안 적혔다.\nwant %s\n실제:\n%s", want, data)
+	}
+	// 양쪽 다 뒤집힌 것으로 기록돼야 한다 — 한쪽만 되면 회수 감점이 반만 걸린다.
+	for _, stem := range []string{"alpha-결정-스키마-2026-08-02", "beta-결정-배포전략-2026-08-03"} {
+		p, err := l.ResolveStem(stem)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := l.Read(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if old.Meta.Status != "superseded" {
+			t.Errorf("%s status = %q, want superseded", stem, old.Meta.Status)
+		}
+		if !strings.Contains(strings.Join(old.Meta.Related, " "), "방향전환") {
+			t.Errorf("%s related 에 후속이 없다: %v", stem, old.Meta.Related)
+		}
 	}
 }

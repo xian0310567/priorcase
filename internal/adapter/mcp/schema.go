@@ -71,12 +71,21 @@ func captureSchema(l i18n.Lang) map[string]any {
 		"tags": arrayProp(l.T(
 			"프로젝트를 넘어 쓰일 교훈이면 lesson 을 넣는다",
 			"Add `lesson` if this is a lesson that applies beyond this project")),
+		// **"또는 stem" 을 지웠다.** 두 형식을 다 권한 탓에 실볼트에 `[[ ]]` 없는
+		// 값이 남았고, 옵시디언은 그것을 링크로 안 읽어 백링크가 안 걸렸다.
+		// (capture 가 이제 맨 stem 도 감싸 주지만, 권하는 형식은 하나여야 한다.)
+		//
+		// 무엇을 넣을지도 적는다 — 다른 프로젝트의 결정을 근거로 삼는 것이
+		// 이 필드의 존재 이유인데, 그 말이 없으면 아무도 안 쓴다.
 		"related": arrayProp(l.T(
-			"관련 문서의 위키링크 또는 stem",
-			"Wiki links or stems of related documents")),
-		"supersedes": prop("string", l.T(
-			"이 결정이 뒤집는 기존 결정의 stem",
-			"Stem of the existing decision this one overturns")),
+			"실제로 근거로 삼은 문서의 위키링크 [[stem]]. **다른 프로젝트의 결정도 넣는다** — 그게 프로젝트를 잇는 유일한 수단이다",
+			"Wiki links [[stem]] of documents you actually relied on. **Include decisions from other projects** — that is the only thing connecting them")),
+		// **배열이다.** 한 결정이 여럿을 뒤집는 일이 실제로 있었는데(2026-08-13
+		// 방향전환이 전제 6개를 폐기), 필드가 한 칸뿐이라 나머지가 본문 산문으로
+		// 밀려나고 두 노트가 "뒤집혔는데 뒤집은 쪽이 없는" 상태로 남았다.
+		"supersedes": arrayProp(l.T(
+			"이 결정이 뒤집는 기존 결정들의 stem. **여러 전제를 한꺼번에 걷어냈으면 전부 적는다** — 빠뜨린 것은 낡은 채로 계속 회수된다",
+			"Stems of existing decisions this one overturns. **List every one** — anything omitted keeps being recalled as if still current")),
 		"date": prop("string", l.T(
 			"YYYY-MM-DD (기본: 오늘)",
 			"YYYY-MM-DD (default: today)")),
@@ -100,9 +109,9 @@ func reviewSchema(l i18n.Lang) map[string]any {
 		"retrospective": prop("string", l.T(
 			"## 회고 에 붙일 내용",
 			"Text to append under ## Retrospective")),
-		"supersedes": prop("string", l.T(
-			"이 결정이 뒤집는 결정의 stem",
-			"Stem of the decision this one overturns")),
+		"supersedes": arrayProp(l.T(
+			"이 결정이 뒤집는 결정들의 stem (여럿 가능)",
+			"Stems of the decisions this one overturns (multiple allowed)")),
 	}, "stem")
 }
 

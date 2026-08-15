@@ -26,11 +26,19 @@ type Meta struct {
 	// Extra 로 보존하므로 데이터를 잃지 않는다 (schema.Current 주석 참고).
 	Author string `yaml:"author,omitempty"`
 
-	Domain        []string `yaml:"domain"`
-	Summary       string   `yaml:"summary"`
-	Status        string   `yaml:"status"`
-	Outcome       string   `yaml:"outcome"`
-	Supersedes    string   `yaml:"supersedes"`
+	Domain  []string `yaml:"domain"`
+	Summary string   `yaml:"summary"`
+	Status  string   `yaml:"status"`
+	Outcome string   `yaml:"outcome"`
+
+	// Supersedes 는 이 결정이 뒤집은 결정들이다. **여럿일 수 있다.**
+	//
+	// 예전에는 `string` 이었고, 그 한 칸이 실제로 데이터를 잃었다: 2026-08-13
+	// `방향전환-개인도구-다중볼트` 가 전제 6개를 폐기 선언했는데 엮인 것은 1건뿐이고,
+	// 나머지는 본문 산문으로 밀려나 `유료층-순수E2E-복구불가`·`클라이언트비제공` 두
+	// 노트가 "superseded 인데 무엇이 뒤집었는지 아무 데도 없는" 상태로 남았다.
+	Supersedes LinkList `yaml:"supersedes"`
+
 	Related       []string `yaml:"related"`
 	Tags          []string `yaml:"tags"`
 	SourceSession string   `yaml:"source_session"`
@@ -54,6 +62,66 @@ type Meta struct {
 	// yaml.Node 로 받는 이유는 스타일 보존이다. map[string]any 로 받으면 사용자가 쓴
 	// `[a, b]` 가 되쓸 때 블록 목록으로 바뀌어, 고치지도 않은 줄의 바이트가 달라진다.
 	Extra map[string]yaml.Node `yaml:",inline"`
+}
+
+// LinkList 는 **스칼라와 시퀀스를 둘 다 받는** 링크 목록이다.
+//
+// 이 타입이 없으면 `supersedes` 를 다중값으로 올리는 순간 **디스크의 기존 노트가
+// 전부 파싱 불능이 된다.** EmitFrontmatter 가 supersedes 를 omitempty 없이 항상
+// 쓰므로 실볼트 191건 전부가 `supersedes: ""` 를 갖고 있고, yaml.v3 는 `!!str` 를
+// `[]string` 에 넣지 못한다. readNote 가 실패하면 List() 가 전건을 건너뛰어
+// 색인 0행·회수 0건이 된다.
+//
+// **스키마 판을 올려도 못 막는다.** schema.IsFuture 는 Validate 안의 열거값 검사만
+// 완화하는데, 파싱은 그보다 먼저 ParseFrontmatter 에서 일어난다. frontmatter.go 의
+// "순수 증분 키는 옛 바이너리가 Extra 로 보존한다" 규칙도 **키 추가**에만 적용되고
+// 기존 키의 **타입 변경**에는 적용되지 않는다.
+//
+// 그래서 마이그레이션이 아니라 관용으로 푼다 — 읽을 때 두 표기를 다 받고,
+// 쓸 때는 하나면 스칼라로 되돌린다(아래 emitLinkList).
+type LinkList []string
+
+func (ll *LinkList) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		var s string
+		if err := n.Decode(&s); err != nil {
+			return err
+		}
+		if strings.TrimSpace(s) == "" {
+			*ll = nil // 빈 스칼라는 "없다" 다. 빈 문자열 한 개가 아니다.
+			return nil
+		}
+		*ll = LinkList{s}
+		return nil
+	case yaml.SequenceNode:
+		var ss []string
+		if err := n.Decode(&ss); err != nil {
+			return err
+		}
+		if len(ss) == 0 {
+			*ll = nil // 빈 시퀀스와 빈 스칼라를 같은 것으로 접는다
+			return nil
+		}
+		*ll = LinkList(ss)
+		return nil
+	}
+	return fmt.Errorf("supersedes 는 문자열이거나 목록이어야 한다 (줄 %d)", n.Line)
+}
+
+// emitLinkList 는 **하나 이하면 스칼라, 여럿이면 시퀀스**로 쓴다.
+//
+// 언제나 시퀀스로 쓰면 기존 191건 전부의 바이트가 바뀌어 diff 가 소음이 되고,
+// 옛 바이너리가 그 노트를 통째로 못 읽는다. Author(비면 줄 자체를 안 쓴다)와
+// Schema(1이면 안 쓴다)가 이미 세운 "재저장해도 바이트 불변" 규칙과 같은 이유다.
+func emitLinkList(ll LinkList) string {
+	switch len(ll) {
+	case 0:
+		return `""`
+	case 1:
+		return quote(ll[0])
+	}
+	return quoted(ll)
 }
 
 var fence = []byte("---")
@@ -146,7 +214,7 @@ func EmitFrontmatter(m Meta) []byte {
 	b.WriteString("summary: " + quote(m.Summary) + "\n")
 	b.WriteString("status: " + m.Status + "\n")
 	b.WriteString("outcome: " + m.Outcome + "\n")
-	b.WriteString("supersedes: " + quote(m.Supersedes) + "\n")
+	b.WriteString("supersedes: " + emitLinkList(m.Supersedes) + "\n")
 	b.WriteString("related: " + quoted(m.Related) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")
 	b.WriteString("source_session: " + quote(m.SourceSession) + "\n")

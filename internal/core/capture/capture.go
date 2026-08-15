@@ -21,7 +21,7 @@ type Request struct {
 	Slug          string
 	Summary       string
 	Date          string // 비면 오늘
-	Supersedes    string
+	Supersedes    []string
 	SourceSession string
 	// Author 는 이 결정을 내린 사람이다. 비면 호출부가 설정·git 에서 정해 넣는다.
 	//
@@ -73,29 +73,35 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	}
 	stem := strings.TrimSuffix(filepath.Base(path), ".md")
 
+	// **링크는 여기서 한 번 접는다.** 예전에는 받은 문자열을 그대로 frontmatter 에
+	// 넣었다 — supersedes 가 겪은 것과 같은 사고다(supersede.go 주석의 실측 셋).
+	// 맨 stem 은 옵시디언이 링크로 안 읽고, 경로 조각은 ResolveStem 이 막아 둔
+	// 경로 순회를 그대로 우회한다.
+	relatedLinks, err := normalizeLinks(r.Related)
+	if err != nil {
+		return Result{}, err
+	}
+
 	m := store.Meta{
 		Type: "decision", Date: r.Date, Author: r.Author, Domain: []string{r.Domain},
 		Summary: r.Summary, Status: "active", Outcome: "pending",
-		Related: r.Related,
+		Related: relatedLinks,
 		Tags:    ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
 	}
 
-	// --supersedes 는 prior review 와 같은 로직(supersede)을 탄다 — 대상 검증,
+	// --supersedes 는 prior review 와 같은 로직(supersedeAll)을 탄다 — 대상 검증,
 	// "[[stem]]" 형식, 옛 노트의 status·related 갱신이 두 명령에서 동일하다.
-	var old store.Note
-	hasOld := false
-	if r.Supersedes != "" {
-		link, o, err := supersede(l, r.Supersedes, stem)
-		if err != nil {
-			return Result{}, err
-		}
-		m.Supersedes, old, hasOld = link, o, true
+	supLinks, olds, err := supersedeAll(l, r.Supersedes, stem)
+	if err != nil {
+		return Result{}, err
 	}
+	m.Supersedes = supLinks
 
-	// Review 와 같은 불변식: 두 노트를 모두 검증한 뒤에야 쓰기 시작한다.
+	// Review 와 같은 불변식: **모든** 노트를 검증한 뒤에야 쓰기 시작한다.
 	// 새 노트 검증이 실패했는데 옛 노트가 이미 superseded 로 바뀌어 있으면,
 	// 뒤집은 결정은 없는데 옛 결정만 뒤집힌 반쪽 상태가 디스크에 남는다.
-	if hasOld {
+	// 대상이 여럿이면 그 위험도 여럿이므로, 하나라도 실패하면 아무것도 안 쓴다.
+	for _, old := range olds {
 		if err := refuseFutureNote(old); err != nil {
 			return Result{}, err
 		}
@@ -128,7 +134,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 			"## 결정\n\n## 근거\n\n## 고려한 대안\n\n## 예상 리스크\n\n## 회고\n",
 			"## Decision\n\n## Rationale\n\n## Alternatives considered\n\n## Risks\n\n## Retrospective\n"))
 	}
-	if hasOld {
+	for _, old := range olds {
 		if err := l.Write(old); err != nil {
 			return Result{}, err
 		}

@@ -296,3 +296,62 @@ func TestAuthorSurvivesRoundTrip(t *testing.T) {
 		t.Errorf("왕복 후 Author = %q", again.Author)
 	}
 }
+
+// ★ supersedes 를 다중값으로 올릴 때 **디스크의 기존 노트가 전부 죽을 수 있다.**
+//
+// EmitFrontmatter 는 supersedes 를 omitempty 없이 항상 쓰므로 실볼트 191건 전부가
+// `supersedes: ""` 를 갖고 있다. yaml.v3 는 `!!str` 를 `[]string` 에 못 넣는다 —
+// 타입만 바꾸면 readNote 가 전건 실패하고 색인 0행·회수 0건이 된다.
+// 스키마 판을 올려도 못 막는다: 파싱이 판 검사보다 먼저 일어난다.
+func TestSupersedesReadsBothScalarAndSequence(t *testing.T) {
+	cases := []struct {
+		name, line string
+		want       []string
+	}{
+		{"빈 스칼라 (디스크의 191건)", `supersedes: ""`, nil},
+		{"단일 스칼라", `supersedes: "[[a-결정-x-2026-08-01]]"`, []string{"[[a-결정-x-2026-08-01]]"}},
+		{"빈 시퀀스", `supersedes: []`, nil},
+		{"시퀀스", `supersedes: ["[[a-결정-x-2026-08-01]]", "[[b-결정-y-2026-08-02]]"]`,
+			[]string{"[[a-결정-x-2026-08-01]]", "[[b-결정-y-2026-08-02]]"}},
+	}
+	for _, c := range cases {
+		src := "---\ntype: decision\ndate: 2026-08-09\ndomain: [a]\nsummary: \"s\"\n" +
+			"status: active\noutcome: pending\n" + c.line + "\nrelated: []\n" +
+			"tags: [decision]\nsource_session: \"\"\n---\n\n## 결정\n"
+		m, _, err := ParseFrontmatter([]byte(src))
+		if err != nil {
+			t.Errorf("%s: 파싱 실패 — %v", c.name, err)
+			continue
+		}
+		if len(m.Supersedes) != len(c.want) {
+			t.Errorf("%s: %d개, want %d개 (%v)", c.name, len(m.Supersedes), len(c.want), m.Supersedes)
+			continue
+		}
+		for i := range c.want {
+			if m.Supersedes[i] != c.want[i] {
+				t.Errorf("%s: [%d] = %q, want %q", c.name, i, m.Supersedes[i], c.want[i])
+			}
+		}
+	}
+}
+
+// **기존 노트를 다시 저장해도 바이트가 안 바뀌어야 한다.** Author·Schema 가 이미
+// 세운 규칙이다. 언제나 시퀀스로 쓰면 191건 전부의 diff 가 뜨고, 옛 바이너리는
+// 그 노트를 못 읽는다.
+func TestSupersedesEmitsScalarUnlessMultiple(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{nil, `supersedes: ""`},
+		{[]string{"[[a-결정-x-2026-08-01]]"}, `supersedes: "[[a-결정-x-2026-08-01]]"`},
+		{[]string{"[[a-결정-x-2026-08-01]]", "[[b-결정-y-2026-08-02]]"},
+			`supersedes: ["[[a-결정-x-2026-08-01]]", "[[b-결정-y-2026-08-02]]"]`},
+	}
+	for _, c := range cases {
+		got := string(EmitFrontmatter(Meta{Type: "decision", Supersedes: c.in}))
+		if !strings.Contains(got, c.want+"\n") {
+			t.Errorf("Supersedes=%v 방출이 다르다.\nwant 줄: %s\n실제:\n%s", c.in, c.want, got)
+		}
+	}
+}

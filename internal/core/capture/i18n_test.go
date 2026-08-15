@@ -86,7 +86,7 @@ func TestEnglishTemplateRoundTrip(t *testing.T) {
 	}
 	second, err := Do(l, c, Request{
 		Domain: "alpha", Slug: "storage engine revisited", Summary: "switch to an embedded KV store",
-		Date: "2026-08-02", Supersedes: firstNote.Stem, Body: []byte("## Decision\n\nUse BoltDB.\n"),
+		Date: "2026-08-02", Supersedes: []string{firstNote.Stem}, Body: []byte("## Decision\n\nUse BoltDB.\n"),
 	})
 	if err != nil {
 		t.Fatalf("capture --supersedes 실패: %v", err)

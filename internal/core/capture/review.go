@@ -25,7 +25,7 @@ type ReviewRequest struct {
 	// 박혔고, 회고 절에 정정을 적어도 회수는 여전히 틀린 한 줄을 주입했다.
 	Summary       string
 	Retrospective string
-	Supersedes    string // 뒤집는 대상의 stem
+	Supersedes    []string // 뒤집는 대상의 stem (여럿 가능)
 }
 
 // Review 는 기존 결정의 outcome·status·회고·supersedes 를 갱신하고, 뒤이은
@@ -55,14 +55,12 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 		n.Meta.Summary = r.Summary
 	}
 
-	var old store.Note
-	hasOld := false
-	if r.Supersedes != "" {
-		link, o, err := supersede(l, r.Supersedes, n.Stem)
-		if err != nil {
-			return ReviewResult{}, err
-		}
-		n.Meta.Supersedes, old, hasOld = link, o, true
+	links, olds, err := supersedeAll(l, r.Supersedes, n.Stem)
+	if err != nil {
+		return ReviewResult{}, err
+	}
+	if len(links) > 0 {
+		n.Meta.Supersedes = links
 	}
 	if r.Retrospective != "" {
 		n.Body = appendRetrospective(n.Body, r.Retrospective, l.Lang())
@@ -72,7 +70,7 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	// 검증에서 실패하면 옛 노트만 superseded 로 남아 양방향 연결이 반쪽짜리
 	// 상태로 디스크에 고정된다 — supersedes 링크는 없는데 옛 노트는 이미
 	// 뒤집힌 것으로 기록돼, 회수 시 두 노트 다 사실과 다르게 잡힌다.
-	if hasOld {
+	for _, old := range olds {
 		if err := refuseFutureNote(old); err != nil {
 			return ReviewResult{}, err
 		}
@@ -84,7 +82,7 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("검증 실패: %w", err)
 	}
 
-	if hasOld {
+	for _, old := range olds {
 		if err := l.Write(old); err != nil {
 			return ReviewResult{}, err
 		}

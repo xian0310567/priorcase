@@ -70,7 +70,7 @@ func TestReviewValidatesBothNotesBeforeWritingEither(t *testing.T) {
 	}
 
 	_, err = Review(l, ReviewRequest{
-		Stem: newStem, Supersedes: oldStem, Outcome: "허용값-밖",
+		Stem: newStem, Supersedes: []string{oldStem}, Outcome: "허용값-밖",
 	})
 	if err == nil {
 		t.Fatal("허용값 밖 outcome 인데 Review() 가 성공했다")
@@ -137,10 +137,10 @@ func TestReviewSupersedesTwiceKeepsRelatedUnique(t *testing.T) {
 	newStem := "alpha-결정-스키마-2026-08-02"
 	oldStem := "alpha-결정-저장엔진-2026-08-01"
 
-	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: []string{oldStem}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: oldStem}); err != nil {
+	if _, err := Review(l, ReviewRequest{Stem: newStem, Supersedes: []string{oldStem}}); err != nil {
 		t.Fatal(err)
 	}
 
