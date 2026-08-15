@@ -1,11 +1,13 @@
 package search
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
@@ -294,5 +296,98 @@ func TestTrim(t *testing.T) {
 		if out[i].Note.Path != want {
 			t.Errorf("%d번째 결과가 %q 가 아니다(동점 정렬이 결정적이지 않다): %s", i, want, out[i].Note.Path)
 		}
+	}
+}
+
+// ★ 이 파일의 진짜 위험은 **순위 성질을 단언하는 테스트가 없다는 것**이었다.
+// 가중치는 상수 다섯 개인데 그 상수들 사이의 관계를 못 박은 자리가 하나도 없어서,
+// 숫자를 바꿔도 아무 시험이 안 깨진다.
+//
+// 못 박는 성질: **질의어를 하나 더 맞히는 것이 "그 폴더에 산다" 는 사실보다 세다.**
+// 실측(2026-08-15)으로 이게 깨져 있었다 — weightCwdDomain(4) > weightHead(3) 이라
+// 교차 프로젝트 질의 12개 중 8개에서 상위 3이 바뀌었고, nova 결정 3건이 통째로
+// 탈락하고 무관한 priorcase 노트가 그 자리를 먹은 판이 있었다.
+func TestKeywordHitOutweighsCwdDomain(t *testing.T) {
+	if weightHead <= weightCwdDomain {
+		t.Fatalf("weightHead(%d) 가 weightCwdDomain(%d) 이하다 — "+
+			"어느 폴더에서 물었나가 무엇을 물었나를 이긴다", weightHead, weightCwdDomain)
+	}
+}
+
+// 위 성질이 실제 회수에서 관측되는지 본다. 상수 비교만으로는 점수식이 그 상수를
+// 어떻게 쓰는지 못 잡는다.
+//
+// 점수를 정확히 통제하려고 노트 두 건을 심는다. 공용 픽스처로는 격차를 1점밖에
+// 못 만들어서 이 성질을 가르지 못한다.
+//
+//	cwd 도메인 노트 : head 히트 1개(케이크)        → 3 + (cwd 보너스)
+//	타 도메인 노트  : head 히트 2개(케이크·딸기)    → 6
+//
+// 낱말은 조사 제거기(keywords.go 의 josa)에 안 걸리는 것으로 골랐다 — "파이" 는
+// 끝의 "이" 가 조사로 잘려 "파" 가 되고, 두 글자 미만이라 질의에서 통째로 빠진다.
+//
+// 보너스가 3 이상이면 **덜 맞은 노트가 이긴다.** 그게 실볼트에서 관측된 것이다.
+func TestCwdDomainDoesNotOutrankBetterMatch(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	plant(t, c, "alpha", "alpha-결정-보너스만-2026-08-10", "케이크를 고른다")
+	plant(t, c, "beta", "beta-결정-내용우위-2026-08-10", "케이크와 딸기를 고른다")
+
+	hits := mustRecall(t, l, c, "케이크 딸기",
+		Options{Cwd: "/tmp/proj/alpha", CrossProject: true, Limit: 5, MinScore: 1})
+	if len(hits) < 2 {
+		t.Fatalf("비교할 만큼 안 걸렸다: %+v", hits)
+	}
+	if !strings.Contains(hits[0].Note.Stem, "내용우위") {
+		var got []string
+		for _, h := range hits {
+			got = append(got, fmt.Sprintf("%s=%d", h.Note.Stem, h.Score))
+		}
+		t.Errorf("1위가 내용우위가 아니다 — cwd 보너스가 더 나은 매칭을 눌렀다: %v", got)
+	}
+}
+
+// plant 는 점수를 통제한 노트를 심는다. 본문은 질의어를 담지 않는다 —
+// bodyHits 가 섞이면 head 격차만 재려는 의도가 흐려진다.
+func plant(t *testing.T, c *config.Config, dir, stem, summary string) {
+	t.Helper()
+	plantDated(t, c, dir, stem, "2026-08-10", summary)
+}
+
+func plantDated(t *testing.T, c *config.Config, dir, stem, date, summary string) {
+	t.Helper()
+	p := filepath.Join(c.DefaultVaultPath(), dir, "decisions", stem+".md")
+	src := "---\ntype: decision\ndate: " + date + "\ndomain: [" + dir + "]\n" +
+		"summary: \"" + summary + "\"\nstatus: active\noutcome: pending\n" +
+		"supersedes: \"\"\nrelated: []\ntags: [decision]\nsource_session: \"\"\n---\n\n## 결정\n\n내용.\n"
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 점수가 같으면 **최근 결정이 위**여야 한다.
+//
+// 예전 동점 처리는 경로 문자열 내림차순이었다(셸 `sort -rn` 동작 보존). 그건
+// 사실상 무작위다 — 파일명이 `<도메인>-결정-<slug>-<날짜>` 라 slug 의 가나다순이
+// 이기고 날짜는 맨 뒤에 있어 거의 영향을 못 준다. 점수식에 시간 항이 하나도 없는
+// 시스템에서 **동점 처리가 시간을 볼 유일한 자리**인데 그걸 안 쓰고 있었다.
+//
+// 주입은 상위 3줄뿐이므로 동점 하나가 곧 탈락이다.
+func TestTieBreakPrefersNewerDecision(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	// 같은 도메인·같은 summary → head 히트가 같아 점수가 동점이다.
+	// 새 노트의 slug 가 가나다순으로 앞이라, 경로 내림차순이면 옛 노트가 이긴다.
+	plantDated(t, c, "alpha", "alpha-결정-가나다-2026-08-20", "2026-08-20", "참외를 고른다")
+	plantDated(t, c, "alpha", "alpha-결정-하하하-2026-08-01", "2026-08-01", "참외를 고른다")
+
+	hits := mustRecall(t, l, c, "참외", Options{Limit: 5, MinScore: 1})
+	if len(hits) < 2 {
+		t.Fatalf("비교할 만큼 안 걸렸다: %+v", hits)
+	}
+	if hits[0].Score != hits[1].Score {
+		t.Fatalf("동점이 아니라 이 테스트가 무의미하다: %d vs %d", hits[0].Score, hits[1].Score)
+	}
+	if !strings.Contains(hits[0].Note.Stem, "가나다") {
+		t.Errorf("동점인데 옛 결정이 위다: 1위=%s(%s) 2위=%s(%s)",
+			hits[0].Note.Stem, hits[0].Note.Meta.Date, hits[1].Note.Stem, hits[1].Note.Meta.Date)
 	}
 }

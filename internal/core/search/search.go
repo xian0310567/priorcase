@@ -11,9 +11,19 @@ import (
 
 // 점수 가중치 — 현행 셸 sb_search 에서 이식했다.
 const (
-	weightCwdDomain   = 4 // cwd 도메인이 노트 domain 에 있다
+	// **weightCwdDomain 은 weightHead 보다 작아야 한다.**
+	//
+	// 예전에는 4 였다. 그러면 "이 폴더에 산다" 는 사실 하나가 **질의어를 하나 더
+	// 맞힌 것보다 세다.** 실측(2026-08-15) 교차 프로젝트 질의 12개 중 8개에서
+	// 상위 3이 바뀌었다 — "월드 저장 포맷" 질의에서 nova 결정 3건(고유 8/8/8)이
+	// 통째로 탈락하고 priorcase 잡음(고유 5/4/4)이 그 자리를 먹었다. 훅 주입이
+	// 3줄뿐이라 재정렬이 곧 탈락이다.
+	//
+	// 0 으로 두지 않는 이유: 같은 점수면 지금 하는 일 쪽이 맞다. 동점을 가르는
+	// 정도로만 남긴다. TestKeywordHitOutweighsCwdDomain 이 이 관계를 못 박는다.
+	weightCwdDomain   = 2 // cwd 도메인이 노트 domain 에 있다
 	weightMention     = 6 // 프롬프트가 도메인 접두어를 직접 언급했다 (도메인마다 누적)
-	weightHead        = 3 // stem+summary+tags+domain 에서 키워드 히트
+	weightHead        = 3 // stem+summary+tags 에서 키워드 히트
 	weightBody        = 1 // 본문에서 키워드 히트
 	penaltySuperseded = 5 // 뒤집힌 결정
 )
@@ -186,19 +196,31 @@ func filterByDomain(hits []Hit, domain string) []Hit {
 //
 // 정렬 키(Score)와 필터 임계값(MinScore)이 지금은 같은 필드라서, 절단과
 // 필터의 순서를 바꿔도 결과가 같다 — 내림차순으로 정렬된 배열에서 MinScore
-// 이상인 항목은 항상 앞쪽의 연속 구간(prefix)을 이루기 때문이다. 그래서
-// 지금 당장은 이 순서가 관측 가능한 차이를 만들지 않는다(테스트로 순서
-// 자체를 못 박을 수 없는 이유이기도 하다 — search_test.go 의 TestTrim 참고).
+// 이상인 항목은 항상 앞쪽의 연속 구간(prefix)을 이루기 때문이다.
 //
-// 하지만 나중에 2차 정렬 키(예: 날짜)나 점수와 무관한 필터(예: 도메인)가
-// 생기면 이 동치는 깨진다. 필터를 절단보다 먼저 두는 쪽이 "Limit 은 유효한
-// 결과의 개수"라는 의미에 맞으므로, 지금부터 이 순서를 지킨다.
+// 필터를 절단보다 먼저 두는 쪽이 "Limit 은 유효한 결과의 개수"라는 의미에
+// 맞으므로 이 순서를 지킨다. (이 주석은 "나중에 2차 정렬 키(예: 날짜)가
+// 생기면 동치가 깨진다" 고 예고해 뒀고, 아래에서 실제로 그렇게 됐다.)
+//
+// # 동점은 최근 결정이 이긴다
+//
+// 예전에는 경로 문자열 내림차순이었다(옛 셸의 `sort -rn` 동작 보존). 그건
+// 사실상 무작위다 — 파일명이 `<도메인>-결정-<slug>-<날짜>` 라 slug 의 가나다순이
+// 이기고 날짜는 맨 뒤에 있어 거의 영향을 못 준다. **점수식에 시간 항이 하나도
+// 없는 시스템에서 동점 처리가 시간을 볼 유일한 자리**인데 그걸 안 쓰고 있었다.
+// 주입은 상위 3줄뿐이라 동점 하나가 곧 탈락이다.
+//
+// 날짜가 없는 노트는 빈 문자열이라 자연히 맨 뒤로 간다. 날짜까지 같으면 경로로
+// 가른다 — 결과가 실행마다 달라지면 안 되기 때문이다.
 func trim(hits []Hit, o Options) []Hit {
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].Score != hits[j].Score {
 			return hits[i].Score > hits[j].Score
 		}
-		return hits[i].Note.Path > hits[j].Note.Path // 셸의 sort -rn 동점 처리와 동일
+		if hits[i].Note.Meta.Date != hits[j].Note.Meta.Date {
+			return hits[i].Note.Meta.Date > hits[j].Note.Meta.Date
+		}
+		return hits[i].Note.Path > hits[j].Note.Path
 	})
 	if o.MinScore > 0 {
 		var out []Hit
