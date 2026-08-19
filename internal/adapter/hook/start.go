@@ -52,13 +52,24 @@ func (o Options) sessionStart() error {
 	}
 
 	if !excluded {
+		// MCP instructions 와 **같은 계약을 말해야 한다** (이 함수 주석 참고).
+		// 한쪽만 고치면 MCP 를 안 쓰는 설치와 쓰는 설치가 서로 다른 규칙으로 돈다.
 		b.WriteString(lang.T(
-			"\n**되돌리기 어려운 선택을 했으면 그 자리에서 `prior capture` 를 부른다.**\n"+
-				"아키텍처·스키마·외부 서비스·가격처럼 나중에 \"왜 이렇게 했지\"를 묻게 될 선택이 대상이다.\n"+
-				"자잘한 것까지 남기면 회수가 오히려 어려워진다.\n",
-			"\n**The moment you make a hard-to-reverse choice, call `prior capture`.**\n"+
-				"That means choices you will later ask \"why did we do it this way\" about — architecture, schema, external services, pricing.\n"+
-				"Recording every trivial thing only makes recall harder.\n"))
+			"\n**기록에는 등급이 둘이다. 둘 다 네 일이다.**\n"+
+				"- `prior note` — 확정 전의 것 전부. 검토한 대안과 **왜 기각했는지**, 측정값과 방법,\n"+
+				"  걸린 제약, 아직 못 정한 것. 회수에 자동 주입되지 않으니 **자주 남겨도 손해가 없다.**\n"+
+				"- `prior capture` — 확정된 결정. 되돌리기 어려운 선택, 고른 대안, 실측으로 깨진 통념,\n"+
+				"  그리고 코드를 읽어도 알 수 없는 조직·프로세스 제약.\n"+
+				"\n애매하면 `prior note` 다. \"아직 확정 안 됐으니 나중에\" 로 미루지 마라 —\n"+
+				"그렇게 미룬 것이 지금까지 전부 사라졌다. **결론만 쓰지 말고 근거와 기각한 대안을 같이 남겨라.**\n",
+			"\n**Recording has two tiers. Both are your job.**\n"+
+				"- `prior note` — everything before it settles. Alternatives weighed and **why each was ruled out**,\n"+
+				"  measurements and method, constraints you hit, what is still open. Recall never auto-injects it,\n"+
+				"  so **noting often costs nothing.**\n"+
+				"- `prior capture` — settled decisions. Hard-to-reverse choices, the option you picked, assumptions\n"+
+				"  a measurement overturned, and organizational or process constraints no code-reading reveals.\n"+
+				"\nWhen in doubt, `prior note`. Do not defer with \"nothing is settled yet\" —\n"+
+				"everything deferred that way has been lost so far. **Record the rationale and the rejected options, not just the conclusion.**\n"))
 	}
 
 	if len(notes) > 0 {
@@ -120,6 +131,12 @@ func (o Options) pendingBlock() string {
 			"\n⚠️ Cannot check for unreviewed segments (%v). "+
 				"**The safety net that catches missed records is off right now.**\n"), err)
 	}
+	// 면제된 구간은 세션 진입 안내에서 뺀다 — 이 블록도 사람이 청하지 않았는데
+	// 들이미는 통로다 (hook/recall.go 의 nudge 와 같은 이유, daemon.ForNudge 주석).
+	//
+	// **읽기 실패 분기 뒤에 둔다.** 위의 "확인할 수 없다" 는 면제와 무관한 사실이고,
+	// 그걸 면제 필터에 태우면 상태 파일이 깨진 것이 조용해진다.
+	items = daemon.ForNudge(items)
 	if len(items) == 0 {
 		return ""
 	}

@@ -63,6 +63,9 @@ func Validate(marker, stem string, m store.Meta) error {
 	if !IsFuture(m) && !outcomes[m.Outcome] {
 		return fmt.Errorf("outcome 이 허용값(pending/good/bad) 밖이다: %q", m.Outcome)
 	}
+	if err := checkOverturnConsistency(m); err != nil {
+		return err
+	}
 	marker = store.NFC(marker)
 	if marker == "" {
 		return fmt.Errorf("결정 표식이 비었다 — 설정의 decision_file 템플릿을 확인하라")
@@ -77,6 +80,50 @@ func Validate(marker, stem string, m store.Meta) error {
 	}
 	if !strings.HasSuffix(stem, "-"+m.Date) {
 		return fmt.Errorf("파일명 날짜와 date(%q)가 다르다: %q", m.Date, stem)
+	}
+	return nil
+}
+
+// checkOverturnConsistency 는 **번복 사유가 붙은 노트가 active 로 되돌아가는 것**을 막는다.
+//
+// # 왜 전이표를 안 만들었나
+//
+// 원래 요구는 "status 전이 규칙"(예: superseded → active 금지)이었다. 두 가지 이유로
+// 일반 전이표를 만들지 않았다.
+//
+//  1. **Validate 는 이전 값을 모른다.** 인자는 (marker, stem, meta) 뿐이고, 호출부
+//     넷(capture.Do, capture.Review 의 새·옛 노트, promote)이 전부 "지금 쓸 노트"만
+//     넘긴다. 전이를 보려면 시그니처에 from 을 더해야 하는데, 그러면 손으로 고친
+//     파일을 다시 읽어 쓰는 경로(index·health)가 from 을 만들어 낼 수 없다.
+//  2. **과하게 막으면 사람이 손으로 고치는 길을 막는다.** 옵시디언에서 status 를
+//     잘못 눌렀다가 되돌리는 것은 정상 작업이다. superseded → active 를 무조건
+//     막으면 그 되돌리기가 prior 로는 영영 안 된다 — 사용자에게 "파일을 직접
+//     열어 고쳐라" 라고 말하는 도구가 된다.
+//
+// 대신 **노트 하나 안에서 닫히는 모순 하나만** 본다: superseded_reason 이 있는데
+// status 가 active 인 상태. 이건 손으로 되돌리다 만 흔적이고, 회수에서 정확히
+// 최악이다 — 뒤집힌 결정이 감점(search.penaltySuperseded) 없이 만점으로 올라온다.
+// 사용자 정책이 "방치된 오래된 결정이 recall 을 오염시킨다" 로 못 박은 그 상태다.
+//
+// 되돌리는 길은 여전히 열려 있다: 사유를 지우고 active 로 바꾸면 통과한다. "번복을
+// 취소하려면 번복 사유도 같이 지워라" 는 요구는 과하지 않다 — 남아 있으면 그게 거짓말이다.
+//
+// superseded_reason 은 새 키라 기존 노트에는 없다(실볼트 18노트 전부). 즉 이 규칙이
+// 오늘 거부하는 기존 노트는 0건이다. 판(schema.Current)을 올리지 않는 이유이기도
+// 하다: 기존 필드의 의미도 허용값도 안 바꿨고, 옛 바이너리는 이 키를 Extra 로 보존한다.
+func checkOverturnConsistency(m store.Meta) error {
+	// 더 새 판은 우리가 모르는 규칙으로 쓰였다 — 열거값과 같은 이유로 안 본다.
+	if IsFuture(m) {
+		return nil
+	}
+	if strings.TrimSpace(m.SupersededReason) == "" {
+		return nil
+	}
+	if m.Status == "active" {
+		return fmt.Errorf(
+			"번복 사유(superseded_reason)가 있는데 status 가 active 다 — "+
+				"뒤집힌 결정이 회수에서 감점 없이 올라온다. 되돌리려면 사유도 함께 지워라: %q",
+			m.SupersededReason)
 	}
 	return nil
 }

@@ -64,7 +64,20 @@ func (o Options) nudge() string {
 		return ""
 	}
 	items, err := daemon.ReadPending(o.StateDir)
-	if err != nil || len(items) == 0 {
+	if err != nil {
+		return ""
+	}
+	// **여기가 면제를 실제로 빼는 자리다.**
+	//
+	// 면제(credit)는 예전에 pending 자체를 지웠고, 그래서 판별기까지 그 구간을 못 봤다 —
+	// 최근 7일 판정 23건에 자동 기록 0건이던 고장의 한 갈래다. 이제 면제는 구간을
+	// 지우지 않고 Quiet 표시만 남기므로, **묻지 않았는데 들이미는 쪽이 직접 빼야 한다.**
+	// 회수 주입은 매 프롬프트마다 도는 통로라 그중에서도 가장 시끄러운 자리다.
+	//
+	// 반대로 `prior pending`(사람이 직접 물었다)과 승격(daemon/promote.go)에는 이걸
+	// 걸지 않는다 — 전자는 은폐고 후자는 방금 고친 그 고장이다 (daemon.ForNudge 주석).
+	items = daemon.ForNudge(items)
+	if len(items) == 0 {
 		return ""
 	}
 	domain := o.Config.DomainForCwd(o.Input.Cwd)

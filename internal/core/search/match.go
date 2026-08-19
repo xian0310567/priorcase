@@ -26,6 +26,11 @@ func matches(text, keyword string) bool {
 	return containsWord(text, keyword)
 }
 
+// Matches 는 matches 의 공개판이다. 작업 로그 검색(core/worklog)이 이 규칙을
+// 그대로 써야 하기 때문에 낸다 — 결정 노트와 작업 로그가 다른 규칙으로 걸리면
+// 같은 질의가 두 계층에서 다른 것을 물어온다.
+func Matches(text, keyword string) bool { return matches(text, keyword) }
+
 // hasWideScript 는 띄어쓰기로 낱말을 가르지 않는 문자(한글·한자·가나)를 포함하는지 본다.
 func hasWideScript(s string) bool {
 	for _, r := range s {

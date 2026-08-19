@@ -73,3 +73,46 @@ func TestValidateRejects(t *testing.T) {
 		})
 	}
 }
+
+// ★ **번복 사유가 붙은 노트는 active 로 돌아갈 수 없다.**
+//
+// 일반 전이표(superseded → active 금지 같은)를 만들지 않은 이유는
+// checkOverturnConsistency 의 주석에 있다 — Validate 는 이전 값을 모르고, 과하게
+// 막으면 사람이 옵시디언에서 손으로 되돌리는 길이 막힌다. 대신 노트 하나 안에서
+// 닫히는 모순 하나만 본다.
+func TestValidateRejectsActiveWithSupersedeReason(t *testing.T) {
+	m := base()
+	m.SupersededReason = "측정에서 가정이 깨졌다"
+
+	if err := Validate(koMarker, "alpha-결정-x-2026-08-07", m); err == nil {
+		t.Fatal("번복 사유가 있는데 status:active 인 노트를 통과시켰다 — " +
+			"회수에서 감점 없이 만점으로 올라온다")
+	}
+
+	// 뒤집힌 상태로 표시돼 있으면 통과한다.
+	for _, s := range []string{"superseded", "regretted"} {
+		m.Status = s
+		if err := Validate(koMarker, "alpha-결정-x-2026-08-07", m); err != nil {
+			t.Errorf("status=%q 를 거부했다: %v", s, err)
+		}
+	}
+
+	// **되돌리는 길은 열려 있다** — 사유를 지우면 active 로 돌아간다.
+	// 이게 없으면 사용자에게 "파일을 직접 열어 고쳐라" 라고 말하는 도구가 된다.
+	m.Status, m.SupersededReason = "active", ""
+	if err := Validate(koMarker, "alpha-결정-x-2026-08-07", m); err != nil {
+		t.Errorf("사유를 지운 되돌리기를 막았다: %v", err)
+	}
+}
+
+// TestFutureSchemaSkipsOverturnRule 은 더 새 판으로 쓰인 노트에는 이 규칙을 안
+// 대는지 본다. 열거값 검사를 건너뛰는 것과 같은 이유다 — 우리가 모르는 규칙으로
+// 쓰인 노트를 우리 규칙으로 거부하면 남의 결정을 지우는 것과 같다.
+func TestFutureSchemaSkipsOverturnRule(t *testing.T) {
+	m := base()
+	m.SupersededReason = "미래 판이 쓴 사유"
+	m.Schema = Current + 1
+	if err := Validate(koMarker, "alpha-결정-x-2026-08-07", m); err != nil {
+		t.Errorf("더 새 판 노트를 거부했다: %v", err)
+	}
+}

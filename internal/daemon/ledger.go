@@ -29,9 +29,17 @@ type Promotion struct {
 	ID       string    `json:"id"`
 	Domain   string    `json:"domain"`
 	Recorded bool      `json:"recorded"`
-	Path     string    `json:"path,omitempty"`   // 만들어진 노트 (Recorded 일 때)
-	Reason   string    `json:"reason,omitempty"` // 안 만든 이유 (판별기가 준 것)
-	Err      string    `json:"err,omitempty"`    // 판별기를 못 불렀을 때
+	// Tier 는 **어느 등급으로** 남았는지다 (decision / worklog / none).
+	//
+	// Recorded 불리언만으로는 부족해졌다. 등급이 둘로 늘면서 "남았다" 가 결정
+	// 노트일 수도, 작업 로그일 수도 있는데 무게가 전혀 다르다 — prior doctor 가
+	// "자동 기록 N건" 을 셀 때 그 둘을 합치면 다시 진단이 흐려진다.
+	//
+	// omitempty 다. 옛 원장 23줄에는 이 키가 없고, 그때는 전부 결정 노트 시도였다.
+	Tier   string `json:"tier,omitempty"`
+	Path   string `json:"path,omitempty"`   // 만들어진 노트 (Recorded 일 때)
+	Reason string `json:"reason,omitempty"` // 안 만든 이유 (판별기가 준 것)
+	Err    string `json:"err,omitempty"`    // 판별기를 못 불렀을 때
 
 	// Excerpt 는 판별기가 본 발췌다. **pending 이 사라지는 경우에만 담는다.**
 	//

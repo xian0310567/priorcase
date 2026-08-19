@@ -153,6 +153,34 @@ func TestSafetyNetReportsToStderrOnly(t *testing.T) {
 	}
 }
 
+// ★★ **"훑음" 만으로는 판별기가 무엇을 봤는지 알 수 없다.**
+//
+// 발췌가 잘렸는지를 사후에 대조할 방법이 없어서 "판별기가 결정을 못 알아봤다" 와
+// "판별기에게 근거를 안 보여 줬다" 가 밖에서 구별되지 않았다. 원장은 승격 성공 때만
+// 발췌를 싣는데, 이 머신의 원장 32줄 중 excerpt 키가 있는 줄이 **0건**이었다 —
+// 최근 7일 판정 23건에 자동 기록이 0건이라 그 경로를 한 번도 안 탔기 때문이다.
+//
+// 문구는 데몬의 watch 줄과 **공유한다**(daemon.ScanResult.ExcerptNote). 각자 포맷하면
+// 같은 사실이 두 문장으로 갈리고, 그러면 두 경로를 나란히 놓고 대조할 수 없다.
+func TestSafetyNetReportsWhatTheJudgeSaw(t *testing.T) {
+	sd := t.TempDir()
+	tp := writeTranscript(t, t.TempDir(), 8)
+	r := runHook(t, cfg(t), sd, EventStop, Input{
+		Cwd: "/tmp/proj/alpha", SessionID: "S1", TranscriptPath: tp})
+	if r.e != nil {
+		t.Fatal(r.e)
+	}
+	if !strings.Contains(r.err, "발췌") {
+		t.Errorf("판별기가 무엇을 봤는지 안 알린다:\n%s", r.err)
+	}
+	// **"생략 0" 을 내면 안 된다.** 다 담았으면 그렇다고 못 박아야, 발췌를 아예
+	// 안 만든 구간의 0과 구별된다 — 0을 "다 담았다" 로 읽는 순간 이 값을 뺀 이유가
+	// 통째로 무너진다.
+	if !strings.Contains(r.err, "전부") {
+		t.Errorf("다 담은 것을 '전부' 로 못 박지 않는다:\n%s", r.err)
+	}
+}
+
 // ── 자동 승격 (③) ────────────────────────────────────────────────────────
 
 // 판별기가 없으면 **아무것도 하지 않는다.** 그때는 표시만 남고 에이전트가 판단한다 —

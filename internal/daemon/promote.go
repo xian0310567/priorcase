@@ -11,6 +11,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/judge"
 	"github.com/xian0310567/priorcase/internal/core/promote"
 	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/worklog"
 )
 
 // PromoteOptions 는 승격 한 판에 필요한 것이다.
@@ -25,6 +26,16 @@ type PromoteOptions struct {
 	First string
 	// Budget 은 이번 판에 쓸 수 있는 총 시간이다. 0 이면 DefaultPromoteBudget.
 	Budget time.Duration
+	// Scope 는 이번 판이 **대화 도중인지 세션 끝인지**다. 비면 judge.ScopeMid.
+	//
+	// 이것이 등급을 가른다. 도중 판정은 작업 로그까지만 쓰고, 결정 노트는 세션이
+	// 끝나 아크 전체가 보일 때만 나온다.
+	//
+	// 왜 호출부가 정하는가: 데몬은 대화가 끝났는지 알 수 없다. 파일이 잠잠해진 것과
+	// 세션이 끝난 것은 다르다 — 실측으로 구간 @3467548 은 마지막 발화 3초 뒤에
+	// 판정됐고 대화는 그 7초 뒤에 이어졌다. 세션이 끝났다는 것은 **호스트만** 안다
+	// (SessionEnd·PreCompact 훅). 그래서 훅이 넣어 주고 데몬은 비운다.
+	Scope judge.Scope
 	// Only 는 이 구간 하나만 처리한다. 비면 전부 돈다.
 	//
 	// **필터로 둔 이유는 쓰기 경로를 하나로 유지하기 위해서다.** 집기(ClaimPending)·
@@ -195,10 +206,20 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			}
 			continue
 		}
-		r := promote.One(ctx, j, o.Layout, o.Config, promote.Segment{
+		scope := o.Scope
+		if scope == "" {
+			scope = judge.ScopeMid
+		}
+		seg := promote.Segment{
 			ID: p.ID(), Domain: p.Domain, Date: day, Excerpt: p.Excerpt,
-			Session: p.SessionID, Author: author,
-		})
+			Session: p.SessionID, Author: author, Scope: scope,
+		}
+		// 아크 전체를 볼 때만 축적분을 붙인다. 도중 판정에 붙이면 방금 자기가 쓴
+		// 것을 다시 읽고 "이미 있다" 로 접는다 — 중복 기각이 되살아난다.
+		if scope == judge.ScopeEnd {
+			seg.Worklog = worklog.SessionTitles(o.Layout, p.Domain, p.SessionID, 20)
+		}
+		r := promote.One(ctx, j, o.Layout, o.Config, seg)
 
 		// **중단은 실패가 아니다.** 호출 도중에 취소되면 판별기는 컨텍스트 에러를
 		// 내는데, 그걸 "판별기 실패" 로 남기면 원장이 거짓말을 한다 — 판별기는
@@ -215,7 +236,7 @@ func Promote(ctx context.Context, o PromoteOptions) {
 		// 게 아니라고 했다" 와 "판별기가 아예 안 돌았다" 가 같아 보인다.
 		rec := Promotion{
 			At: time.Now().UTC(), ID: p.ID(), Domain: p.Domain,
-			Recorded: r.Recorded, Reason: TrimLedgerText(r.Reason),
+			Recorded: r.Recorded, Tier: string(r.Tier), Reason: TrimLedgerText(r.Reason),
 		}
 		if r.Path != "" {
 			rec.Path = o.Layout.RelPath(r.Path)
@@ -251,13 +272,20 @@ func Promote(ctx context.Context, o PromoteOptions) {
 				o.report(fmt.Sprintf("승격 실패 (%s): %v (%d/%d)",
 					p.ID(), r.Err, n, MaxJudgeFails))
 			}
-		case r.Recorded:
+		case r.Recorded && r.Tier == judge.TierDecision:
 			o.report("자동 기록 " + o.Layout.RelPath(r.Path))
 			// **방금 만든 노트를 그 자리에서 소모시킨다.** 안 그러면 다음 스캔이 이
 			// 노트를 "새로 생겼다" 로 세어 아직 아무도 안 본 다음 구간을 면제한다.
 			if cerr := CreditNoteFor(o.StateDir, p.Path, day, p.SessionID); cerr != nil {
 				o.report(fmt.Sprintf("크레딧을 새기지 못했다: %v", cerr))
 			}
+			_ = ResolvePending(o.StateDir, p.ID())
+		case r.Recorded:
+			// 작업 로그다. **크레딧을 소모시키지 않는다** — 크레딧은 "결정 노트가
+			// 새로 생겼으니 에이전트가 기록한 것" 이라는 추론 위에 서 있는데,
+			// 작업 로그는 결정 노트가 아니라 그 추론이 성립하지 않는다. 여기서
+			// 소모시키면 도중 판정 한 번이 다음 구간 하나를 눈감게 만든다.
+			o.report("작업 로그 " + o.Layout.RelPath(r.Path))
 			_ = ResolvePending(o.StateDir, p.ID())
 		default:
 			// 기록할 결정이 아니라는 판정. 표시를 지운다 — 안 지우면 매 세션 다시 묻는다.

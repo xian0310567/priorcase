@@ -9,6 +9,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/xian0310567/priorcase/internal/core/capture"
 	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/worklog"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
@@ -33,25 +34,67 @@ func (s *server) addTools(srv *sdk.Server) {
 		InputSchema: recallSchema(lang),
 	}, s.recall)
 
+	// note 를 capture 앞에 둔 것은 **읽는 사람을 위한 순서일 뿐이다.**
+	//
+	// 처음에는 "자주 불려야 하는 쪽을 앞에 등록하면 모델이 그걸 기본으로 삼는다" 는
+	// 계산이었다. 실측으로 깨졌다 — go-sdk 는 도구를 map 에 담고 `tools/list` 를
+	// **이름 순으로** 낸다(features.go 의 sortedKeys = slices.Sorted). 등록 순서는
+	// 클라이언트에 아예 도달하지 않고, 실제 순서는 capture → note → pending → recall 다.
+	//
+	// 그러니 note 를 실제로 불리게 만드는 지렛대는 순서가 아니라 **설명 문구와
+	// instructions** 다. 여기 그 둘을 다 걸었다: 원장 기각 23건 중 11건이 "아직
+	// 미결정" 이었고, 그때 갈 곳이 없어서 전부 사라졌다.
+	sdk.AddTool(srv, &sdk.Tool{
+		Name: "priorcase_note",
+		Description: lang.T(
+			"확정 전의 것을 작업 로그에 남긴다. 검토한 대안과 각각을 왜 기각했는지, "+
+				"측정값과 그 방법, 걸린 제약, 아직 못 정한 것과 그것이 풀리는 조건이 대상이다. "+
+				"회수에 자동 주입되지 않으므로 자주 불러도 아무것도 나빠지지 않는다 — "+
+				"확정되기 전이라고 미루지 마라. 확정된 결정은 priorcase_capture 로 올린다.",
+			"Record something that has not settled yet into the worklog: alternatives you weighed and why "+
+				"each was ruled out, measurements and how you took them, constraints you hit, what is still "+
+				"open and what would settle it. Recall never auto-injects the worklog, so calling this often "+
+				"costs nothing — do not defer just because nothing is settled. Settled decisions go to priorcase_capture."),
+		InputSchema: noteSchema(lang),
+	}, s.note)
+
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "priorcase_capture",
 		Description: lang.T(
-			"결정을 기록한다. 되돌리기 어려운 선택(아키텍처·스키마·외부 서비스·가격), "+
-				"대안을 검토해 하나를 고른 경우, 실측으로 통념이 깨진 경우가 대상이다. "+
-				"자잘한 것까지 남기면 회수가 어려워진다.",
-			"Record a decision. Use it for choices that are hard to reverse (architecture, schema, "+
-				"external services, pricing), for picking one option after weighing alternatives, and "+
-				"when a measurement overturned an assumption. Recording trivia makes recall worse."),
+			"확정된 결정을 기록한다. 되돌리기 어려운 선택(아키텍처·스키마·외부 서비스·가격), "+
+				"대안을 검토해 하나를 고른 경우, 실측으로 통념이 깨진 경우, "+
+				"그리고 코드를 읽어도 알 수 없는 조직·프로세스 제약이 대상이다. "+
+				"본문에 결론만 쓰지 말고 근거와 기각한 대안을 같이 남겨라. "+
+				"기존 결정을 뒤집는 것이면 supersedes 와 함께 supersede_reason 에 **무엇이 뒤집었는지**를 남겨라. "+
+				"아직 확정 전이면 priorcase_note 를 쓴다 — 버리지는 마라.",
+			"Record a settled decision. Use it for choices that are hard to reverse (architecture, schema, "+
+				"external services, pricing), for picking one option after weighing alternatives, when a "+
+				"measurement overturned an assumption, and for organizational or process constraints that no "+
+				"amount of code-reading reveals. Record the rationale and the rejected options, not just the "+
+				"conclusion. If it overturns an existing decision, pass supersedes together with "+
+				"supersede_reason — **what overturned it**. If it has not settled yet use priorcase_note — "+
+				"but do not throw it away."),
 		InputSchema: captureSchema(lang),
 	}, s.capture)
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "priorcase_review",
+		// **번복 이유와 summary 를 설명에 박아 둔다.** 인자만 열어 두면 모델이 안 쓴다 —
+		// 실볼트 18노트 중 번복 사유가 남은 것이 0건이었고, outcome 이 bad 로 바뀐 노트의
+		// summary 가 여전히 뒤집힌 결론을 말하는 상태로 회수에 실려 나갔다.
 		Description: lang.T(
-			"기존 결정의 결과(outcome)·상태·회고를 갱신하거나, 그 결정을 뒤집는다. "+
-				"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.",
-			"Update an existing decision's outcome, status, or retrospective — or overturn it. "+
-				"An overturned decision left as-is pollutes recall."),
+			"기존 결정의 결과(outcome)·상태·요약·회고를 갱신하거나, 그 결정을 뒤집는다. "+
+				"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다. "+
+				"**무엇이 뒤집었는지를 supersede_reason 에 한 줄로 남겨라** — 계기가 없으면 "+
+				"다음 사람이 그 번복을 신뢰하지 못하고 원래 안으로 되돌린다. "+
+				"결론이 바뀌었으면 summary 도 함께 고쳐라. 회수가 주입하는 것은 그 한 줄뿐이라 "+
+				"본문만 고치면 낡은 결론이 계속 대화에 실려 나간다.",
+			"Update an existing decision's outcome, status, summary, or retrospective — or overturn it. "+
+				"An overturned decision left as-is pollutes recall. "+
+				"**Record what overturned it in supersede_reason**, in one line — without the trigger the "+
+				"next person cannot trust the reversal and will swing back to the original. "+
+				"If the conclusion changed, fix summary too: recall injects only that one line, so editing "+
+				"the body alone leaves the stale conclusion in circulation."),
 		InputSchema: reviewSchema(lang),
 	}, s.review)
 
@@ -101,12 +144,43 @@ func (s *server) recall(ctx context.Context, req *sdk.CallToolRequest, a recallA
 	}
 
 	body := search.RenderInject(s.l, hits)
+
+	// **작업 로그는 여기서만 나온다.** 자동 주입에는 절대 안 섞고, 물어봤을 때만
+	// 붙인다 — 그것이 등급을 나눈 이유다. 회수는 Limit 3 · MinScore 1 의 고정
+	// 슬롯이라, 작업 로그가 그 슬롯을 놓고 결정 노트와 경쟁하면 볼트가 커질수록
+	// 결정 노트가 밀려난다.
+	//
+	// 결정 노트 뒤에 붙인다. 등급이 그대로 읽히는 순서여야 한다.
+	// 작업 로그를 못 읽어도 회수 자체는 성공시킨다 — 결정 노트는 이미 손에 있고,
+	// 하위 계층 하나 때문에 상위 계층까지 못 주는 것이 더 나쁘다. 대신 침묵하지 않는다.
+	//
+	// **cross_project 를 여기서도 지킨다.** 예전에는 안 넘겨서 그 인자가 반쪽만
+	// 지켜졌다 — 결정 노트는 좁혀졌는데 작업 로그는 전 도메인이 나왔다.
+	notes, werr := worklog.Search(s.l, search.ExtractKeywords(a.Query),
+		worklog.Scope(s.c, cwd, crossProject), limit)
+	// **경고를 body 에 바로 붙이지 않는다.** 아래 `body == ""` 폴백이 "찾았는데 없다"
+	// 를 명시하는 자리인데, 여기서 body 를 채워 버리면 결정 노트도 0건이고 작업 로그도
+	// 실패한 최악의 경우에 그 문장이 안 나온다 — 모델은 괄호 친 에러만 받는다.
+	warn := ""
+	if werr != nil {
+		warn = fmt.Sprintf("\n(작업 로그를 찾아보지 못했다: %v)\n", werr)
+	}
+	if len(notes) > 0 {
+		var w strings.Builder
+		w.WriteString("\n[작업 로그 — 확정 전 기록]\n")
+		for _, h := range notes {
+			fmt.Fprintf(&w, "- %s %s · %s → %s\n",
+				h.Date, h.Time, h.Title, s.l.RelPath(h.Path))
+		}
+		body += w.String()
+	}
+
 	if body == "" {
 		// 빈 응답을 내면 모델이 도구가 고장난 것으로 읽고 다시 부르거나 포기한다.
 		// "찾았는데 없다" 를 명시적으로 말해야 다음 행동이 갈린다.
-		body = fmt.Sprintf("%q 와 관련된 과거 결정을 찾지 못했다.\n", a.Query)
+		body = fmt.Sprintf("%q 와 관련된 과거 결정도 작업 로그도 찾지 못했다.\n", a.Query)
 	}
-	return textResult(body + renderSkipped(s.l, skipped)), nil, nil
+	return textResult(body + warn + renderSkipped(s.l, skipped)), nil, nil
 }
 
 // ── capture ─────────────────────────────────────────────────────────────
@@ -119,8 +193,12 @@ type captureArgs struct {
 	Tags       []string `json:"tags,omitempty"`
 	Related    []string `json:"related,omitempty"`
 	Supersedes string   `json:"supersedes,omitempty"`
-	Date       string   `json:"date,omitempty"`
-	SessionID  string   `json:"session_id,omitempty"`
+	// SupersedeReason 은 **왜 그것을 뒤집는가** 다. core 가 필드를 만들어 둔 뒤에도
+	// 여기 인자가 없어서 에이전트는 영영 못 넘겼다 — 실볼트 18노트 중 번복 사유가
+	// 남은 것이 0건이었던 실제 원인이 이 한 줄의 부재였다.
+	SupersedeReason string `json:"supersede_reason,omitempty"`
+	Date            string `json:"date,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
 	// Author 는 이 결정을 내린 사람이다. 비면 설정·git 신원에서 정한다.
 	Author string `json:"author,omitempty"`
 }
@@ -132,16 +210,17 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 		author = s.c.AuthorFor(wd)
 	}
 	res, err := capture.Do(s.l, s.c, capture.Request{
-		Author:        author,
-		Domain:        a.Domain,
-		Slug:          a.Slug,
-		Summary:       a.Summary,
-		Date:          a.Date,
-		Supersedes:    a.Supersedes,
-		SourceSession: a.SessionID,
-		Tags:          a.Tags,
-		Related:       a.Related,
-		Body:          []byte(a.Body),
+		Author:          author,
+		Domain:          a.Domain,
+		Slug:            a.Slug,
+		Summary:         a.Summary,
+		Date:            a.Date,
+		Supersedes:      a.Supersedes,
+		SupersedeReason: a.SupersedeReason,
+		SourceSession:   a.SessionID,
+		Tags:            a.Tags,
+		Related:         a.Related,
+		Body:            []byte(a.Body),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -161,23 +240,63 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 	return textResult(b.String()), nil, nil
 }
 
+// ── note ────────────────────────────────────────────────────────────────
+
+type noteArgs struct {
+	Domain    string   `json:"domain"`
+	Summary   string   `json:"summary"`
+	Body      string   `json:"body,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Date      string   `json:"date,omitempty"`
+	SessionID string   `json:"session_id,omitempty"`
+}
+
+func (s *server) note(ctx context.Context, req *sdk.CallToolRequest, a noteArgs) (*sdk.CallToolResult, noOutput, error) {
+	res, err := worklog.Append(s.l, worklog.Entry{
+		Domain:  a.Domain,
+		Date:    a.Date,
+		Title:   a.Summary,
+		Body:    a.Body,
+		Session: a.SessionID,
+		Tags:    a.Tags,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	// **편승을 붙이지 않는다.** capture 는 결정 시점이라 과거 결정이 가장 정확하게
+	// 닿는 순간이지만, note 는 자주 불리라고 만든 것이다. 매번 회수 결과를 딸려
+	// 보내면 그 자체가 부르기를 망설이게 만드는 비용이 된다.
+	return textResult(fmt.Sprintf("작업 로그에 남겼다: %s\n", s.l.RelPath(res.Path))), nil, nil
+}
+
 // ── review ──────────────────────────────────────────────────────────────
 
 type reviewArgs struct {
-	Stem          string `json:"stem"`
-	Outcome       string `json:"outcome,omitempty"`
-	Status        string `json:"status,omitempty"`
+	Stem    string `json:"stem"`
+	Outcome string `json:"outcome,omitempty"`
+	Status  string `json:"status,omitempty"`
+	// Summary 가 없던 것이 **실제 손해를 냈다.** 볼트의 codecommit 노트는 outcome 이
+	// bad 로 뒤집힌 뒤에도 summary 가 옛 결론을 그대로 말했다 — 회수가 주입하는 유일한
+	// 한 줄이 거짓말을 하는 상태로 계속 돌았고, 고칠 인자가 여기 없어서 에이전트는
+	// 본문에 정정을 적는 것 말고 할 수 있는 일이 없었다. 본문은 주입되지 않는다.
+	Summary       string `json:"summary,omitempty"`
 	Retrospective string `json:"retrospective,omitempty"`
 	Supersedes    string `json:"supersedes,omitempty"`
+	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. review 는 supersedes 없이도
+	// 번복 이유를 남길 수 있는 유일한 경로다 — 측정으로 가정이 깨져서 대체안 없이
+	// 그만두는 번복이 실제로 더 흔하다.
+	SupersedeReason string `json:"supersede_reason,omitempty"`
 }
 
 func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewArgs) (*sdk.CallToolResult, noOutput, error) {
 	rr, err := capture.Review(s.l, capture.ReviewRequest{
-		Stem:          a.Stem,
-		Outcome:       a.Outcome,
-		Status:        a.Status,
-		Retrospective: a.Retrospective,
-		Supersedes:    a.Supersedes,
+		Stem:            a.Stem,
+		Outcome:         a.Outcome,
+		Status:          a.Status,
+		Summary:         a.Summary,
+		Retrospective:   a.Retrospective,
+		Supersedes:      a.Supersedes,
+		SupersedeReason: a.SupersedeReason,
 	})
 	if err != nil {
 		return nil, nil, err

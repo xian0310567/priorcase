@@ -377,26 +377,55 @@ func activity(o DoctorOptions) string {
 	if err != nil {
 		return out
 	}
-	// **억제 횟수를 낸다.** 이게 없으면 "볼 게 없어서 조용하다" 와 "N번 눈감았다" 가
-	// 여전히 같은 문장이다. 컷오버 1일차의 오진이 정확히 그 구분의 부재였다.
+	// **조용히 넘긴 표시를 센다.** 이게 없으면 "볼 게 없어서 조용하다" 와 "N번
+	// 눈감았다" 가 여전히 같은 문장이다. 컷오버 1일차의 오진이 정확히 그 구분의 부재였다.
+	//
+	// 문구를 두 가지 이유로 고쳤다.
+	//
+	//  1. **"면제 N회" 는 이제 거짓말이다.** 그 말은 "기록을 N번 눈감았다" 로 읽히는데,
+	//     그게 방금 없앤 동작이다. 면제는 pending 을 지우던 것에서 pending 에 Quiet
+	//     표를 다는 것으로 바뀌었다(daemon.Store.Credit) — 기록은 그대로 가고, 묻지
+	//     않았는데 들이미는 자리에서만 빠진다.
+	//  2. **창이 다르다.** 이 수는 Checkpoint.Suppressed 의 **설치 이후 누적**인데,
+	//     같은 줄의 자동 기록·판정은 최근 7일이다. 기간이 다른 수를 나란히 놓아
+	//     "면제 6회 / 최근 7일 자동 기록 0건" 이라는 가짜 인과를 읽게 만들었다.
+	//     실제 원인은 횟수가 아니라 면제가 pending 을 지운다는 사실 자체였고, 그건
+	//     이 줄로는 영영 안 보인다. 누적임을 문구에 박아 그 대조를 막는다.
 	if n := suppressed(o); n > 0 {
-		out += fmt.Sprintf(" · 면제 %d회", n)
+		out += fmt.Sprintf(" · 표시를 조용히 넘김 %d회(설치 이후 누적)", n)
 	}
 	if len(proms) == 0 {
 		return out + " · 자동 기록 없음"
 	}
-	made := 0
+	// **등급을 나눠 센다.** 기록 계층이 둘로 갈리면서(결정 노트 / 작업 로그) 합계
+	// 하나로는 성패를 못 읽는다 — 작업 로그만 잔뜩 쌓이고 결정이 0인 상태와, 결정이
+	// 꾸준히 나오는 상태가 똑같이 "자동 기록 N건" 이 된다. 그 둘을 가르는 것이
+	// 이번 변경의 성패이고, 사람이 그걸 확인하는 계기판이 이 줄뿐이다.
+	//
+	// tier 가 없는 줄은 결정으로 센다 — 옛 원장 23줄에 이 키가 없고, 그때는 등급이
+	// 하나뿐이라 전부 결정 노트 시도였다(daemon.Promotion.Tier).
+	dec, wlog := 0, 0
 	for _, p := range proms {
-		if p.Recorded {
-			made++
+		switch {
+		case !p.Recorded:
+		case p.Tier == string(judge.TierWorklog):
+			wlog++
+		default:
+			dec++
 		}
 	}
 	// 판정 건수를 같이 낸다 — 0/12 는 "판별기가 안 돈다" 가 아니라 "12번 봤는데
 	// 기록할 게 없었다" 이고, 그 둘은 전혀 다른 진단이다.
-	return out + fmt.Sprintf(" · 최근 7일 자동 기록 %d건/판정 %d건", made, len(proms))
+	return out + fmt.Sprintf(" · 최근 7일 자동 기록 %d건(결정 %d건 · 작업 로그 %d건)/판정 %d건",
+		dec+wlog, dec, wlog, len(proms))
 }
 
-// suppressed 는 안전망이 면제로 넘긴 구간 수다.
+// suppressed 는 안전망이 조용히 넘긴 표시의 **설치 이후 누적** 횟수다.
+//
+// 기록을 건너뛴 수가 아니다 — Checkpoint.Suppressed 주석 참고. 창을 좁힐 수 없는
+// 이유는 그 값이 체크포인트에 누적 정수 하나로만 있기 때문이다. 기간을 맞추려면
+// 상태 파일에 시각을 남겨야 하는데, 그 파일은 매 스캔마다 통째로 다시 쓰인다.
+// 그래서 수를 고치는 대신 **문구에 창을 박는다.**
 func suppressed(o DoctorOptions) int {
 	s := daemon.NewStore(o.StateDir)
 	if s.Load() != nil {

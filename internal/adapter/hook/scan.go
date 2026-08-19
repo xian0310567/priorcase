@@ -79,8 +79,18 @@ func (o Options) safetyNet(ctx context.Context) error {
 				msg += " · 표시함 (시그널 없음 — 판별기가 판정한다)"
 			}
 		}
-		if r.Recorded {
-			msg += " · 이미 기록됨"
+		// **판별기가 무엇을 봤는지 여기 적는다.** 발췌가 잘렸는지를 사후에 대조할
+		// 방법이 없어서, "판별기가 결정을 못 알아봤다" 와 "판별기에게 근거를 안 보여
+		// 줬다" 가 밖에서 구별되지 않았다. 데몬의 watch 줄과 **같은 문구**를 쓴다
+		// (daemon.ScanResult.ExcerptNote) — 갈리면 두 경로를 대조할 수 없다.
+		if note := r.ExcerptNote(); note != "" {
+			msg += " · " + note
+		}
+		// 옛 문구는 "이미 기록됨" 이었고, 그 줄이 뜬 구간은 **표시조차 안 됐다.**
+		// 지금 면제는 표시를 지우지 않고 조용히 할 뿐이다(daemon.Store.Credit 주석) —
+		// 기록은 그대로 가고, 묻지 않았는데 들이미는 곳에서만 빠진다.
+		if r.Quiet {
+			msg += " · 조용히 (이미 기록된 세션 — 들이밀지만 않는다)"
 		}
 		if !r.Advanced {
 			msg += fmt.Sprintf(" · ⚠️ 체크포인트 미전진 (깨진 줄 %d)", r.Bad)
@@ -129,8 +139,18 @@ func (o Options) promote(ctx context.Context) {
 		First:    o.Input.TranscriptPath,
 		Author:   o.Config.AuthorFor(o.Input.Cwd),
 		Budget:   promoteBudget,
-		Err:      o.Err,
-		Label:    "prior hook " + string(o.Event),
+		// **여기가 결정 노트가 나올 수 있는 유일한 자리다.**
+		//
+		// 훅이 데몬보다 더 아는 것이 정확히 이것이다 — 데몬은 파일이 잠잠해진 것만
+		// 알고 세션이 끝난 것은 모른다. 실측으로 그 차이가 얼마나 큰지 나왔다:
+		// 구간 @3467548 은 마지막 발화 3초 뒤에 판정됐는데 대화는 그 7초 뒤에
+		// 이어졌다. 데몬이 "끝났다" 고 짐작하면 그런 창에서 결정 노트가 나온다.
+		//
+		// 이 함수는 EventSessionEnd·EventPreCompact 에서만 불린다(safetyNet 참고).
+		// 그래서 여기서는 무조건 ScopeEnd 다.
+		Scope: judge.ScopeEnd,
+		Err:   o.Err,
+		Label: "prior hook " + string(o.Event),
 	})
 }
 

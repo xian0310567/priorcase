@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/i18n"
 	"github.com/xian0310567/priorcase/internal/core/index"
@@ -26,11 +27,37 @@ type ReviewRequest struct {
 	Summary       string
 	Retrospective string
 	Supersedes    string // 뒤집는 대상의 stem
+
+	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. 없으면 변경 없음.
+	//
+	// 이 자리가 없어서 잃던 것: supersede() 는 옛 노트에 status="superseded" 와
+	// related 링크만 남겼다. "무엇이 뒤집었는가" 는 남고 "왜" 는 안 남는다.
+	// 실볼트 18노트 중 번복 사유가 기록된 것은 0건이었다.
+	//
+	// **어느 노트에 붙는지가 Supersedes 에 따라 갈린다.**
+	//
+	//   - Supersedes 가 있으면 → 뒤집히는 **옛 노트**에 붙는다. 사유는 옛 결정의
+	//     성질이지 새 결정의 성질이 아니다 — 회수에 옛 노트가 올라올 때 이유가
+	//     함께 나와야 읽는 쪽이 "이건 왜 버렸지" 를 다시 안 판다.
+	//   - Supersedes 가 없으면 → **이 노트 자신**에 붙는다. 대체할 새 결정 없이
+	//     그냥 그만두는 번복이 실제로 더 흔하다(측정으로 가정이 깨졌을 때).
+	//     그때는 Status 도 superseded·regretted 로 함께 바꿔야 한다 — 안 그러면
+	//     "이유는 있는데 여전히 active" 인 모순이 남고 schema 가 거부한다.
+	SupersedeReason string
 }
 
-// Review 는 기존 결정의 outcome·status·회고·supersedes 를 갱신하고, 뒤이은
+// reviewDate 는 번복이 기록되는 날짜다. 노트의 date 가 아니라 **오늘**이다 —
+// date 는 결정을 내린 날이고 번복은 그 뒤 어느 날 일어난 별개의 사건이다.
+// 노트 date 를 쓰면 회고 줄이 "2026-08-01: 이 결정은 … 로 뒤집혔다" 가 되어
+// 결정과 번복이 같은 날 벌어진 것처럼 읽힌다.
+//
+// (capture 쪽은 r.Date 를 넘긴다 — 뒤집는 결정이 내려진 날이 곧 번복이 일어난 날이다.)
+func reviewDate() string { return time.Now().Format("2006-01-02") }
+
+// Review 는 기존 결정의 outcome·status·summary·회고·supersedes 를 갱신하고, 뒤이은
 // 색인 갱신에서 읽지 못해 빠진 노트를 준다.
 // supersedes 는 양방향으로 연결한다 — 옛 노트도 superseded 로 바꾸고 related 를 채운다.
+// SupersedeReason 이 함께 오면 뒤집힌 쪽에 **왜** 까지 남긴다 (markOverturned).
 func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	path, err := l.ResolveStem(r.Stem)
 	if err != nil {
@@ -51,18 +78,43 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	if r.Status != "" {
 		n.Meta.Status = r.Status
 	}
-	if r.Summary != "" {
+	if r.Summary != "" && r.Summary != n.Meta.Summary {
+		// **옛 summary 를 버리지 않는다.** 갈아치우는 이유는 거의 언제나 "그 줄이
+		// 틀렸다" 인데, 틀린 판단이야말로 번복 기록의 절반이다 — 지우면 남는 건
+		// 정답뿐이고 다음 사람이 같은 오답을 다시 판다.
+		//
+		// 본문이 아니라 frontmatter 로 보내는 이유는 두 가지다. (1) summary 한 줄만
+		// 고치러 온 호출이 본문을 건드리면 안 된다(TestReviewCanCorrectSummary 가
+		// 그 계약이다). (2) 회수의 head 는 stem+summary+tags 이므로, 틀려서 갈아치운
+		// 줄을 head 밖으로 빼는 것이 맞다 — 안 그러면 폐기한 문장이 계속 검색에 걸린다.
+		if strings.TrimSpace(n.Meta.Summary) != "" {
+			n.Meta.SummaryHistory = appendUnique(n.Meta.SummaryHistory, n.Meta.Summary)
+		}
 		n.Meta.Summary = r.Summary
 	}
 
 	var old store.Note
 	hasOld := false
 	if r.Supersedes != "" {
-		link, o, err := supersede(l, r.Supersedes, n.Stem)
+		link, o, err := supersede(l, r.Supersedes, n.Stem, r.SupersedeReason, reviewDate())
 		if err != nil {
 			return ReviewResult{}, err
 		}
 		n.Meta.Supersedes, old, hasOld = link, o, true
+	} else if strings.TrimSpace(r.SupersedeReason) != "" {
+		// 대체할 새 결정이 없는 번복이다. 사유는 이 노트 자신에게 붙는다.
+		//
+		// status 를 함께 안 바꿨으면 여기서 멈춘다. 그냥 두면 "번복 사유는 있는데
+		// status 는 active" 인 노트가 되어, 회수가 감점 없이 만점으로 계속 올려
+		// 보낸다 — 사용자가 "방치된 오래된 결정이 recall 을 오염시킨다" 로 못 박은
+		// 바로 그 상태다. schema.Validate 도 같은 모순을 잡지만, 여기서 막아야
+		// 무엇을 더 줘야 하는지가 에러에 나온다.
+		if n.Meta.Status != "superseded" && n.Meta.Status != "regretted" {
+			return ReviewResult{}, fmt.Errorf(
+				"번복 사유만 왔고 status 는 %q 다 — 대체할 새 결정이 있으면 --supersedes 를, "+
+					"없으면 --status superseded(또는 regretted)를 함께 줘라", n.Meta.Status)
+		}
+		markOverturned(l, &n, r.SupersedeReason, reviewDate(), "")
 	}
 	if r.Retrospective != "" {
 		n.Body = appendRetrospective(n.Body, r.Retrospective, l.Lang())

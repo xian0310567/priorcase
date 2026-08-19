@@ -48,6 +48,35 @@ func TestCaptureCmdWritesNoteAndShowsRelated(t *testing.T) {
 	}
 }
 
+// **--supersedes 만으로는 "왜" 가 안 남는다.** 옛 노트에는 status 와 링크만 찍히고,
+// 실볼트 18노트 중 번복 사유가 기록된 것은 0건이었다. --reason 은 그 이유가 뒤집히는
+// **옛 노트**에 붙는지까지 본다 — 사유는 옛 결정의 성질이지 새 결정의 성질이 아니다.
+func TestCaptureCmdWritesSupersedeReasonOntoOldNote(t *testing.T) {
+	cfgPath, c := testutil.VaultConfigFile(t)
+
+	root := NewRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"capture", "--config", cfgPath,
+		"--domain", "alpha", "--slug", "저장 엔진 교체",
+		"--summary", "저장 엔진을 서버 DB 로 바꾼다", "--date", "2026-08-07",
+		"--supersedes", "alpha-결정-저장엔진-2026-08-01",
+		"--reason", "동시 쓰기 3프로세스에서 락 경합으로 막혔다",
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("prior capture 실행 실패: %v", err)
+	}
+
+	old, err := os.ReadFile(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions",
+		"alpha-결정-저장엔진-2026-08-01.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(old), "동시 쓰기 3프로세스에서 락 경합으로 막혔다") {
+		t.Errorf("번복 사유가 뒤집힌 옛 노트에 안 남았다:\n%s", old)
+	}
+}
+
 // TestCaptureCmdRequiresFlags 는 필수 플래그(domain/slug/summary)가 빠지면
 // 에러가 나는지 확인한다.
 func TestCaptureCmdRequiresFlags(t *testing.T) {

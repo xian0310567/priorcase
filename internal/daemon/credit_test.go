@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"fmt"
-	"github.com/xian0310567/priorcase/internal/transcript"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/testutil"
+	"github.com/xian0310567/priorcase/internal/transcript"
 )
 
 // note 는 픽스처 볼트에 결정 노트 하나를 심는다. session 이 비면 세션 대조에 안 걸린다.
@@ -33,45 +33,60 @@ func creditCfg(t *testing.T) *config.Config {
 	return vc
 }
 
-// ★★ 결정 노트 하나는 **구간 하나**를 면제한다. 세션 전체가 아니다.
+// ★★★ **면제는 기록 경로를 건드리지 않는다.** 이 파일에서 가장 중요한 테스트다.
 //
-// 옛 구현은 그 세션 id 를 단 노트가 하나라도 있으면 true 를 돌려줬다. 그래서 세션
-// 첫머리에서 한 번 기록하면 그 뒤로 무엇을 놓쳐도 pending 이 안 생기고, pending 이
-// 없으면 ②넛지와 ③판별기 승격이 **둘 다** 첫 줄에서 반환한다. 컷오버 1일차에
-// 이 세션의 노트 11건이 정확히 그 상태를 만들어 판별기가 한 번도 못 돌았다.
-func TestSuppressionIsConsumedNotPermanent(t *testing.T) {
+// # 이 테스트가 왜 생겼나
+//
+// 면제는 "이미 기록한 세션을 두 번 조르지 않는다" 로 태어났다. 그때 pending 은
+// 에이전트에게 들이미는 알림일 뿐이었으므로 pending 을 안 만드는 것이 곧 안 조르는
+// 것이었다. 그 뒤 판별기가 붙었고(D8/D12), pending 은 **판별기의 유일한 입력**이 됐다 —
+// Promote 는 ReadPending 으로만 대상을 찾는다. 로직은 그대로인데 억제 대상이 알림에서
+// 기록 자체로 바뀌었다.
+//
+// 실측: 최근 7일 판정 23건 / 자동 기록 0건, 같은 기간 doctor 의 면제 6회. 면제된
+// 구간은 pending 없이 Advance 로 지나가므로 **그 대화는 다시 오지 않는다.** 사람이
+// 손으로 기록할수록 자동 경로가 더 눈감았다.
+//
+// 그래서 이제 면제는 구간을 지우지 않는다. 조용하게(Pending.Quiet) 만들 뿐이다.
+func TestCreditNeverSkipsTheRecordPath(t *testing.T) {
 	vc := creditCfg(t)
 	l := store.NewLayout(vc)
-	note(t, vc, "세션기록", "2026-01-01", "S1") // 날짜는 대화(08-07)와 다르다 — 세션 축만 본다
+	// 이 세션(S1)으로 기록된 노트가 이미 있다 — 옛 동작이라면 이 구간이 통째로 사라진다.
+	note(t, vc, "세션기록", "2026-01-01", "S1")
 
 	tp := filepath.Join(t.TempDir(), "s.jsonl")
 	s := newStore(t)
 
 	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	first, err := Scan(s, vc, l, tp, false, anyHost(tp))
+	r, err := Scan(s, vc, l, tp, true, anyHost(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.Recorded || first.Flagged {
-		t.Fatalf("첫 구간은 그 노트가 가려 줘야 한다: recorded=%v flagged=%v", first.Recorded, first.Flagged)
+	if !r.Advanced {
+		t.Fatal("전제가 깨졌다 — 다 본 구간은 전진한다")
 	}
 
-	// 노트는 그대로. 대화만 8발화 더 이어졌다 — 이 구간은 아무도 안 봤다.
-	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	second, err := Scan(s, vc, l, tp, false, anyHost(tp))
+	items, err := ReadPending(s.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Recorded {
-		t.Error("면제가 소모되지 않았다 — 노트 하나가 세션 전체를 영구히 가리고 있다")
+	if len(items) != 1 {
+		t.Fatalf("표시가 %d건 — 면제가 기록 경로를 죽였다. "+
+			"체크포인트는 이미 전진했으므로 이 대화는 다시 오지 않는다", len(items))
 	}
-	if !second.Flagged {
-		t.Error("새 구간을 표시하지 않았다 — 판별기가 볼 것이 없어진다")
+	// 승격이 이걸 그대로 집어 갈 수 있어야 한다 — 발췌가 없으면 판별기에 넘길 것이 없다.
+	if items[0].Excerpt == "" {
+		t.Error("발췌가 비었다 — 판별기가 볼 것이 없다")
 	}
 }
 
-// 새 노트가 생기면 면제를 새로 산다. 부지런한 에이전트는 계속 조용하다.
-func TestNewNoteBuysNewSuppression(t *testing.T) {
+// 면제가 여러 번 걸려도 앞서 표시한 구간이 지워지면 안 된다.
+//
+// 옛 테스트(TestLaterSuppressionDoesNotEraseEarlierFlag)는 "1구간 면제 → 2구간 표시 →
+// 3구간 면제" 를 만들어 놓고 표시가 1건 남는지를 봤다. 그 시나리오의 전제(면제된 구간은
+// 표시가 없다)가 사라졌으므로 **셋 다 남는지**를 본다. 안전망은 뒤늦게 자기 일을
+// 취소하지 않는다.
+func TestSuppressionNeverErasesFlaggedSegments(t *testing.T) {
 	vc := creditCfg(t)
 	l := store.NewLayout(vc)
 	note(t, vc, "첫기록", "2026-01-01", "S1")
@@ -79,53 +94,77 @@ func TestNewNoteBuysNewSuppression(t *testing.T) {
 	tp := filepath.Join(t.TempDir(), "s.jsonl")
 	s := newStore(t)
 
-	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, err := Scan(s, vc, l, tp, false, anyHost(tp)); err != nil || !r.Recorded {
-		t.Fatalf("첫 구간 면제 실패: %+v %v", r, err)
+	for i, text := range []string{"여기서 결정했다", "또 다른 결정을 했다", "세 번째 결정을 했다"} {
+		if i == 2 {
+			note(t, vc, "둘째기록", "2026-01-02", "S1") // 새 노트가 면제를 다시 산다
+		}
+		writeLines(t, tp, turns(t, 8, text, "/tmp/proj/alpha")...)
+		if _, err := Scan(s, vc, l, tp, true, anyHost(tp)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	note(t, vc, "둘째기록", "2026-01-02", "S1") // 에이전트가 또 기록했다
-	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
+	items, err := ReadPending(s.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Recorded {
-		t.Error("노트가 새로 생겼는데 면제하지 않았다 — 제 할 일을 한 세션까지 표시하면 무시를 학습시킨다")
+	if len(items) != 3 {
+		t.Errorf("표시가 %d건, 3건이어야 한다 — 나중 면제가 앞서 표시한 구간을 지웠다", len(items))
 	}
-	if r.Flagged {
-		t.Error("면제했는데 표시까지 했다")
+}
+
+// ★★ 결정 노트 하나는 **구간 하나**를 조용히 한다. 세션 전체가 아니다.
+//
+// 옛 구현은 그 세션 id 를 단 노트가 하나라도 있으면 true 를 돌려줬다. 그래서 세션
+// 첫머리에서 한 번 기록하면 그 뒤로 무엇을 놓쳐도 영원히 안전망 밖이었다. 컷오버
+// 1일차에 이 세션의 노트 11건이 정확히 그 상태를 만들었다.
+//
+// (옛 판은 Scan 을 거쳐 ScanResult.Recorded 를 봤다. 그 필드는 이제 "표시를 조용히
+// 했나" 이고 볼트 대조는 scan.go 가 한다 — 여기서는 크레딧 장부 자체만 못 박는다.)
+func TestSuppressionIsConsumedNotPermanent(t *testing.T) {
+	s := newStore(t)
+	quiet, err := s.CreditQuiet("/p", 1, nil) // 이 세션으로 기록된 노트 1건
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quiet {
+		t.Fatal("새 노트가 생겼는데 면제가 안 걸렸다")
+	}
+
+	// 노트는 그대로. 대화만 더 이어졌다 — 이 구간은 아직 아무도 안 봤다.
+	again, err := s.CreditQuiet("/p", 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		t.Error("면제가 소모되지 않았다 — 노트 하나가 세션 전체를 영구히 가리고 있다")
+	}
+}
+
+// 새 노트가 생기면 면제를 새로 산다. 부지런한 에이전트는 계속 조용하다.
+func TestNewNoteBuysNewSuppression(t *testing.T) {
+	s := newStore(t)
+	if quiet, err := s.CreditQuiet("/p", 1, nil); err != nil || !quiet {
+		t.Fatalf("첫 면제 실패: %v %v", quiet, err)
+	}
+	if quiet, err := s.CreditQuiet("/p", 2, nil); err != nil || !quiet {
+		t.Errorf("노트가 새로 생겼는데 면제하지 않았다 (%v %v) — "+
+			"제 할 일을 한 세션까지 들이밀면 무시를 학습시킨다", quiet, err)
 	}
 }
 
 // 날짜+도메인 축도 소모성이어야 한다. 세션 id 를 안 넘기는 경로가 여기로 온다.
 func TestDayDomainSuppressionIsAlsoConsumed(t *testing.T) {
-	vc := creditCfg(t)
-	l := store.NewLayout(vc)
-
-	tp := filepath.Join(t.TempDir(), "s.jsonl")
 	s := newStore(t)
-	day := func(n int, text string) []string {
-		var out []string
-		for i := 0; i < n; i++ {
-			out = append(out, fmt.Sprintf(
-				`{"type":"assistant","cwd":"/tmp/proj/alpha","sessionId":"","timestamp":"2026-08-01T01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":%q}]}}`+"\n",
-				i, text))
-		}
-		return out
+	day := map[string]int{"2026-08-01": 1}
+	if quiet, err := s.CreditQuiet("/p", 0, day); err != nil || !quiet {
+		t.Fatalf("같은 날 같은 도메인 노트가 가려 줘야 한다: %v %v", quiet, err)
 	}
-	// 픽스처 볼트에는 alpha 의 2026-08-01 결정이 이미 있다.
-	writeLines(t, tp, day(8, "여기서 결정했다")...)
-	if r, err := Scan(s, vc, l, tp, false, anyHost(tp)); err != nil || !r.Recorded {
-		t.Fatalf("같은 날 같은 도메인 노트가 가려 줘야 한다: %+v %v", r, err)
-	}
-
-	writeLines(t, tp, day(8, "또 다른 결정을 했다")...)
-	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
+	again, err := s.CreditQuiet("/p", 0, map[string]int{"2026-08-01": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Recorded {
+	if again {
 		t.Error("날짜 축 면제가 소모되지 않았다 — 그날 노트 하나가 그날 전체를 가린다")
 	}
 }
@@ -134,13 +173,13 @@ func TestDayDomainSuppressionIsAlsoConsumed(t *testing.T) {
 // 다시 무한해진다. 조용히 되돌아가는 종류의 회귀라 따로 못 박는다.
 func TestAdvancePreservesCredit(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.Credit("/p", 3, map[string]int{"2026-08-08": 2}); err != nil {
+	if _, err := s.CreditQuiet("/p", 3, map[string]int{"2026-08-08": 2}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Advance("/p", 100, 100); err != nil {
 		t.Fatal(err)
 	}
-	again, err := s.Credit("/p", 3, map[string]int{"2026-08-08": 2})
+	again, err := s.CreditQuiet("/p", 3, map[string]int{"2026-08-08": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +188,100 @@ func TestAdvancePreservesCredit(t *testing.T) {
 	}
 	if got := s.Suppressed(); got != 1 {
 		t.Errorf("억제 횟수 %d, want 1 — 진단이 억제를 못 센다", got)
+	}
+}
+
+// ★★ **면제는 표시만 건너뛰게 하고, 기록은 언제나 간다.**
+//
+// 과도기에는 옛 이름 `Store.Credit` 이 "언제나 false" 껍데기로 남아 있었다 —
+// 호출부(scan.go)를 같은 작업에서 못 고쳐서, 기록이 새지 않는 쪽으로 기울여 둔
+// 임시 상태였다. 호출부가 CreditQuiet 로 옮긴 뒤 그 껍데기는 지웠다.
+//
+// 이 테스트는 그 이행이 **되돌아가지 않는지**를 본다: 면제가 걸려도 그 답은
+// 표시용일 뿐이고, 장부와 진단 계수는 그대로 굴러야 한다(doctor 가 "조용히 넘김
+// N회" 를 이 계수로 낸다).
+func TestQuietingConsumesLedgerAndCounts(t *testing.T) {
+	s := newStore(t)
+	// 그날 노트가 하나 있고 아직 아무것도 소모하지 않았다 — 면제가 걸린다.
+	quiet, err := s.CreditQuiet("/p", 1, map[string]int{"2026-08-08": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quiet {
+		t.Fatal("노트가 새로 생겼는데 면제가 안 걸렸다")
+	}
+	// **소모성이다.** 같은 노트로 두 번 면제되면 크레딧이 무한해지고, 그러면
+	// 한 번 기록한 세션이 영원히 조용해진다 — 컷오버 1일차가 그 상태였다.
+	if quiet, err := s.CreditQuiet("/p", 1, map[string]int{"2026-08-08": 1}); err != nil || quiet {
+		t.Errorf("같은 노트로 또 면제됐다 (%v %v)", quiet, err)
+	}
+	// 진단이 세어야 한다. doctor 가 이 계수로 "조용히 넘김 N회" 를 낸다 —
+	// 안 세면 안전망이 왜 조용한지 밖에서 알 수 없다.
+	if got := s.Suppressed(); got != 1 {
+		t.Errorf("억제 횟수 %d, want 1 — doctor 가 조용한 이유를 못 말한다", got)
+	}
+}
+
+// ★★ 리뷰가 잡은 정반대 고장: 바쁜 날을 지나면 **영영 면제되지 않는다.**
+//
+// 처음 구현은 크레딧을 개수 하나로 두고 `Credited = count` 로 최댓값 래칫을 걸었다.
+// 그런데 count 는 *그 구간이 걸친 날짜*로 걸러진다 — 고점을 넓은 창으로 찍고 비교를
+// 좁은 창으로 하는 구조라, 노트 6건이 있는 날을 한 번 지나면 그 뒤로는 매일 성실히
+// 기록해도 count 가 6 을 못 넘어 면제가 안 걸린다. 자정 넘김 · claude --continue ·
+// 데몬 정지 뒤 backfill · 볼트 아카이브가 전부 이 상태를 만든다.
+func TestBusyDayDoesNotPoisonLaterDays(t *testing.T) {
+	s := newStore(t)
+	if quiet, err := s.CreditQuiet("/p", 0, map[string]int{"2026-08-01": 6}); err != nil || !quiet {
+		t.Fatalf("바쁜 날은 면제돼야 한다: %v %v", quiet, err)
+	}
+	// 이튿날. 그날 노트는 1건뿐이다 — 통짜 최댓값 래칫이면 6 을 못 넘어 막힌다.
+	if quiet, err := s.CreditQuiet("/p", 0, map[string]int{"2026-08-02": 1}); err != nil || !quiet {
+		t.Errorf("성실히 기록했는데 면제가 안 걸렸다 (%v %v) — 넓은 창의 고점이 좁은 창을 막고 있다", quiet, err)
+	}
+	if quiet, err := s.CreditQuiet("/p", 0, map[string]int{"2026-08-03": 1}); err != nil || !quiet {
+		t.Errorf("사흘째도 면제가 안 걸렸다 (%v %v) — 래칫이 살아 있다", quiet, err)
+	}
+}
+
+// 세션 축과 날짜 축이 서로를 오염시키면 안 된다. 같은 날 **다른 세션**이 남긴 노트가
+// 이쪽 세션의 고점을 밀어 올려 이쪽을 영구히 막던 경로다.
+func TestOtherSessionsNotesDoNotPoisonThisSession(t *testing.T) {
+	s := newStore(t)
+	// 같은 날 다른 세션의 노트 5건이 날짜 축을 채운다.
+	if quiet, err := s.CreditQuiet("/p", 0, map[string]int{"2026-08-07": 5}); err != nil || !quiet {
+		t.Fatalf("같은 날 노트가 있으니 첫 구간은 면제된다: %v %v", quiet, err)
+	}
+	// 이 세션이 자기 결정을 기록한다. 날짜 축의 고점(5)에 막히면 안 된다.
+	quiet, err := s.CreditQuiet("/p", 1, map[string]int{"2026-08-07": 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quiet {
+		t.Error("내 세션 노트가 다른 세션의 고점에 막혔다 — 축이 섞였다")
+	}
+}
+
+// ★ 안전망은 **자기 출력으로 자기를 억제하면 안 된다.**
+//
+// 승격이 만든 노트는 그 구간의 스캔 뒤에 생긴다. 다음 스캔이 그것을 "새로 생겼다" 로
+// 세면, 아직 아무도 안 본 다음 구간이 면제된다 — 자동 경로에서만 깨지는 off-by-one 이다.
+// 노트에 출처 필드가 없어 사후 구분이 불가능하므로 만든 자리에서 소모시켜야 한다.
+//
+// 면제가 표시 전용이 된 뒤에도 유효하다. 막는 것이 '기록 누락' 에서 '알림 누락' 으로
+// 가벼워졌을 뿐, 판별기가 "기록 안 함" 으로 본 구간까지 사람 눈에서 사라지는 것은 같다.
+func TestAutoPromotedNoteDoesNotBuyFutureExemption(t *testing.T) {
+	s := newStore(t)
+	// 승격이 노트를 만들고, 그 자리에서 크레딧을 소모시킨다.
+	if err := s.CreditNote("/p", "2026-08-07", "S1"); err != nil {
+		t.Fatal(err)
+	}
+	// 다음 스캔이 그 노트를 세어 온다.
+	quiet, err := s.CreditQuiet("/p", 1, map[string]int{"2026-08-07": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quiet {
+		t.Error("승격이 만든 노트가 다음 구간을 면제했다 — 안전망이 자기 출력으로 자기를 껐다")
 	}
 }
 
@@ -180,162 +313,6 @@ func TestScanLeavesTraceEvenWhenNothingToRead(t *testing.T) {
 	}
 	if !s.LastScan().After(firstTrace) {
 		t.Error("아무 일도 안 한 스캔이 흔적을 안 남겼다 — 안전망이 도는 증거가 사라진다")
-	}
-}
-
-// ★ 나중에 면제가 다시 걸려도 **이미 표시된 구간을 지우지는 않는다.**
-//
-// 날짜 축은 구간이 걸친 날짜로 세므로, 세션이 길어져 날짜 범위가 넓어지면 그동안
-// 안 세던 노트를 집어와 크레딧을 또 산다. 실 트랜스크립트로 재보니 실제로 그랬다
-// (1구간 억제 → 2구간 표시 → 3구간 다시 억제). 그 자체는 옳다 — 그 날짜에 노트가
-// 있다는 것은 그날 기록이 있었다는 증거다. 다만 **앞서 표시한 것이 그것 때문에
-// 사라지면** 안전망이 뒤늦게 자기 일을 취소하는 꼴이 된다.
-func TestLaterSuppressionDoesNotEraseEarlierFlag(t *testing.T) {
-	vc := creditCfg(t)
-	l := store.NewLayout(vc)
-	note(t, vc, "첫기록", "2026-01-01", "S1")
-
-	tp := filepath.Join(t.TempDir(), "s.jsonl")
-	s := newStore(t)
-
-	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
-		t.Fatal("1구간은 면제돼야 한다")
-	}
-
-	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Flagged {
-		t.Fatal("2구간은 표시돼야 한다")
-	}
-
-	// 새 노트가 생겨 3구간이 다시 면제된다.
-	note(t, vc, "둘째기록", "2026-01-02", "S1")
-	writeLines(t, tp, turns(t, 8, "세 번째 결정을 했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
-		t.Fatal("3구간은 새 노트로 면제돼야 한다")
-	}
-
-	items, err := ReadPending(s.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 {
-		t.Errorf("표시가 %d건 — 2구간의 표시가 3구간의 면제에 지워졌다", len(items))
-	}
-}
-
-// ★★ 리뷰가 잡은 정반대 고장: 바쁜 날을 지나면 **영영 면제되지 않는다.**
-//
-// 처음 구현은 크레딧을 개수 하나로 두고 `Credited = count` 로 최댓값 래칫을 걸었다.
-// 그런데 count 는 *그 구간이 걸친 날짜*로 걸러진다 — 고점을 넓은 창으로 찍고 비교를
-// 좁은 창으로 하는 구조라, 8-01 에 노트 6건이 있는 날을 한 번 지나면 그 뒤로는 매일
-// 성실히 기록해도 count 가 6 을 못 넘어 면제가 안 걸린다. 자정 넘김 · claude --continue ·
-// 데몬 정지 뒤 backfill · 볼트 아카이브가 전부 이 상태를 만든다.
-//
-// 안전망이 소음이 되면 에이전트가 무시하는 법을 배운다 — 이 프로젝트가 죄목으로 드는 상태다.
-func TestBusyDayDoesNotPoisonLaterDays(t *testing.T) {
-	vc := creditCfg(t)
-	l := store.NewLayout(vc)
-	for i := 0; i < 6; i++ {
-		note(t, vc, fmt.Sprintf("남이쓴%d", i), "2026-08-01", "")
-	}
-
-	tp := filepath.Join(t.TempDir(), "s.jsonl")
-	s := newStore(t)
-	seg := func(day string) []string {
-		var out []string
-		for i := 0; i < 8; i++ {
-			out = append(out, fmt.Sprintf(
-				`{"type":"assistant","cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"%sT01:00:%02dZ","message":{"role":"assistant","content":[{"type":"text","text":"여기서 결정했다"}]}}`+"\n",
-				day, i))
-		}
-		return out
-	}
-
-	writeLines(t, tp, seg("2026-08-01")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
-		t.Fatal("바쁜 날은 면제돼야 한다")
-	}
-
-	// 이튿날. 에이전트가 이 세션으로 결정을 제대로 남겼다.
-	note(t, vc, "제대로기록", "2026-08-02", "S1")
-	writeLines(t, tp, seg("2026-08-02")...)
-	r2, err := Scan(s, vc, l, tp, false, anyHost(tp))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r2.Recorded {
-		t.Error("성실히 기록했는데 면제가 안 걸렸다 — 넓은 창의 고점이 좁은 창을 막고 있다")
-	}
-
-	// 사흘째. 또 기록했다.
-	note(t, vc, "또기록", "2026-08-03", "S1")
-	writeLines(t, tp, seg("2026-08-03")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
-		t.Error("사흘째도 면제가 안 걸렸다 — 래칫이 살아 있다")
-	}
-}
-
-// 세션 축과 날짜 축이 서로를 오염시키면 안 된다. 같은 날 **다른 세션**이 남긴 노트가
-// 이쪽 세션의 고점을 밀어 올려 이쪽을 영구히 막던 경로다.
-func TestOtherSessionsNotesDoNotPoisonThisSession(t *testing.T) {
-	vc := creditCfg(t)
-	l := store.NewLayout(vc)
-	for i := 0; i < 5; i++ {
-		note(t, vc, fmt.Sprintf("다른세션%d", i), "2026-08-07", "다른세션ID")
-	}
-
-	tp := filepath.Join(t.TempDir(), "s.jsonl")
-	s := newStore(t)
-	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...) // 2026-08-07, S1
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Recorded {
-		t.Fatal("같은 날 노트가 있으니 첫 구간은 면제된다")
-	}
-
-	// 이 세션이 자기 결정을 기록한다. 날짜 축의 고점(5)에 막히면 안 된다.
-	note(t, vc, "내가기록", "2026-08-07", "S1")
-	writeLines(t, tp, turns(t, 8, "또 여기서 결정했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.Recorded {
-		t.Error("내 세션 노트가 다른 세션의 고점에 막혔다 — 축이 섞였다")
-	}
-}
-
-// ★ 안전망은 **자기 출력으로 자기를 억제하면 안 된다.**
-//
-// 승격이 만든 노트는 그 구간의 스캔 뒤에 생긴다. 다음 스캔이 그것을 "새로 생겼다" 로
-// 세면, 아직 아무도 안 본 다음 구간이 면제된다 — 자동 경로에서만 깨지는 off-by-one 이다.
-// 노트에 출처 필드가 없어 사후 구분이 불가능하므로 만든 자리에서 소모시켜야 한다.
-func TestAutoPromotedNoteDoesNotBuyFutureExemption(t *testing.T) {
-	vc := creditCfg(t)
-	l := store.NewLayout(vc)
-	tp := filepath.Join(t.TempDir(), "s.jsonl")
-	s := newStore(t)
-
-	writeLines(t, tp, turns(t, 8, "여기서 결정했다", "/tmp/proj/alpha")...)
-	if r, _ := Scan(s, vc, l, tp, false, anyHost(tp)); !r.Flagged {
-		t.Fatal("1구간은 표시돼야 한다 (볼트에 가려 줄 노트가 없다)")
-	}
-
-	// 승격이 노트를 만들고, 그 자리에서 크레딧을 소모시킨다.
-	note(t, vc, "판별기가만듦", "2026-08-07", "S1")
-	if err := s.CreditNote(tp, "2026-08-07", "S1"); err != nil {
-		t.Fatal(err)
-	}
-
-	writeLines(t, tp, turns(t, 8, "또 다른 결정을 했다", "/tmp/proj/alpha")...)
-	r, err := Scan(s, vc, l, tp, false, anyHost(tp))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Recorded {
-		t.Error("승격이 만든 노트가 다음 구간을 면제했다 — 안전망이 자기 출력으로 자기를 껐다")
-	}
-	if !r.Flagged {
-		t.Error("2구간을 표시하지 않았다")
 	}
 }
 

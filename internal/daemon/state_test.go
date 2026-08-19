@@ -108,6 +108,55 @@ func TestPendingUpdatesInPlace(t *testing.T) {
 	}
 }
 
+// ★★ **면제된 구간은 표시에서만 빠진다. 목록에서 빠지는 것이 아니다.**
+//
+// 면제가 pending 을 아예 안 만들던 시절에는 이 구분이 없었고, 그래서 판별기가 붙은
+// 뒤로 면제 한 번이 곧 기록 하나의 소멸이었다(실측: 면제 6회 / 자동 기록 0건).
+// 이제 면제는 Quiet 로만 남고, **묻지 않았는데 들이미는 자리**에서만 걸러진다.
+func TestForNudgeDropsQuietOnly(t *testing.T) {
+	items := []Pending{
+		{Path: "/t/a.jsonl", From: 0, Quiet: true},
+		{Path: "/t/a.jsonl", From: 400},
+		{Path: "/t/b.jsonl", From: 0, Quiet: true},
+	}
+	got := ForNudge(items)
+	if len(got) != 1 || got[0].From != 400 {
+		t.Fatalf("ForNudge = %+v — 면제된 것만 빠져야 한다", got)
+	}
+	// **원본은 그대로다.** 승격은 같은 목록을 거르지 않고 받아야 한다 — 거기서 빠지면
+	// 판별기가 그 대화를 못 보고, 체크포인트는 이미 지나갔다.
+	if len(items) != 3 || !items[0].Quiet {
+		t.Errorf("원본이 변했다: %+v", items)
+	}
+	// 전부 면제여도 nil 이 아니라 빈 목록이다 — 호출부가 len 으로만 판정한다.
+	if got := ForNudge([]Pending{{Quiet: true}}); len(got) != 0 {
+		t.Errorf("ForNudge = %+v, 비어야 한다", got)
+	}
+}
+
+// 면제 표시가 상태 파일을 건너 살아남아야 한다. 안 그러면 데몬이 재시작할 때마다
+// 조용하던 구간이 전부 다시 들이밀어져 안전망이 소음이 된다.
+func TestQuietSurvivesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPending(Pending{Path: "/t/a.jsonl", From: 0, Quiet: true, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadPending(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("pending %d건, 1건이어야 한다", len(got))
+	}
+	if !got[0].Quiet {
+		t.Error("면제 표시가 저장을 못 넘겼다 — 재시작마다 다시 들이민다")
+	}
+}
+
 func TestPendingSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
