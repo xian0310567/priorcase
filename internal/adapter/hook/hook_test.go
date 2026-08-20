@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"os/exec"
 	"context"
 	"os"
 	"path/filepath"
@@ -337,5 +338,82 @@ func TestSessionStartInEnglishDistinguishesBrokenStateFromZero(t *testing.T) {
 	}
 	if !strings.Contains(r.out, "safety net") {
 		t.Errorf("안전망이 꺼졌다는 사실을 안 알린다:\n%s", r.out)
+	}
+}
+
+// ── 볼트 동기화 ──────────────────────────────────────────────────────────
+
+// ★ **동기화 결과가 에이전트 컨텍스트로 새면 안 된다.**
+//
+// session-start 의 stdout 은 통째로 모델이 읽는다. "2개 보냄" 같은 줄이 거기
+// 섞이면 매 세션 컨텍스트를 축내고, 실패 메시지가 섞이면 에이전트가 그것을
+// 과거 결정으로 오독할 여지까지 생긴다. 진단은 stderr 다.
+func TestSyncNeverWritesToAgentContext(t *testing.T) {
+	c := cfg(t)
+	r := runHook(t, c, t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	for _, bad := range []string{"보냄", "가져옴", "리모트", "sync"} {
+		if strings.Contains(r.out, bad) {
+			t.Errorf("동기화 결과가 컨텍스트에 샜다 (%q):\n%s", bad, r.out)
+		}
+	}
+}
+
+// 리모트가 없는 볼트(대부분의 사용자)에서 훅이 조용해야 한다.
+// 매번 "리모트가 없다" 가 뜨면 그 경고는 무시하는 법을 가르치고 진짜 실패까지 묻는다.
+func TestSyncIsSilentWithoutRemote(t *testing.T) {
+	c := cfg(t)
+	r := runHook(t, c, t.TempDir(), EventSessionEnd, Input{Cwd: "/tmp/proj/alpha"})
+	if strings.Contains(r.err, "리모트") {
+		t.Errorf("리모트 없음을 매번 알린다 — 무시를 학습시킨다:\n%s", r.err)
+	}
+}
+
+// gitVault 는 픽스처 볼트를 git 저장소로 만들고 베어 리모트를 붙인다.
+func gitVault(t *testing.T, c *config.Config) string {
+	t.Helper()
+	v := c.DefaultVaultPath()
+	bare := t.TempDir() + "/remote.git"
+	g := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	g(v, "init", "--bare", "-b", "main", bare)
+	g(v, "init", "-b", "main")
+	g(v, "config", "user.email", "t@example.com")
+	g(v, "config", "user.name", "t")
+	g(v, "remote", "add", "origin", bare)
+	g(v, "add", "-A")
+	g(v, "commit", "-m", "seed")
+	g(v, "push", "-u", "origin", "main")
+	return v
+}
+
+// ★ 세션이 끝나면 볼트가 리모트로 간다. 이게 이 기능의 존재 이유다 —
+// 집에서 내린 결정이 회사에서 회수되려면 누가 밀어야 한다.
+func TestSessionEndPushesVault(t *testing.T) {
+	c := cfg(t)
+	v := gitVault(t, c)
+	if err := os.WriteFile(v+"/alpha/decisions/alpha-결정-세션중-2026-08-20.md",
+		[]byte("---\ntype: decision\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runHook(t, c, t.TempDir(), EventSessionEnd, Input{Cwd: "/tmp/proj/alpha"})
+
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = v
+	out, _ := cmd.Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("세션이 끝났는데 커밋 안 된 것이 남았다:\n%s", out)
+	}
+	cmd = exec.Command("git", "rev-list", "--count", "@{upstream}..HEAD")
+	cmd.Dir = v
+	out, _ = cmd.Output()
+	if strings.TrimSpace(string(out)) != "0" {
+		t.Errorf("안 밀린 커밋이 %s개 남았다", strings.TrimSpace(string(out)))
 	}
 }

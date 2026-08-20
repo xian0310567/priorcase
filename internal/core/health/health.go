@@ -22,6 +22,8 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/schema"
 	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/sync"
+	"github.com/xian0310567/priorcase/internal/core/xdgpath"
 )
 
 // Level 은 검사 결과의 심각도다.
@@ -85,6 +87,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSupersedeSymmetry(r, notes)
 	checkIndex(r, l, notes)
 	checkIndexInGit(r, l)
+	checkSync(r, c)
 	return r
 }
 
@@ -170,6 +173,77 @@ func checkSimilarSlugs(r *Report, notes []store.Note) {
 	sort.Strings(dups)
 	r.add("유사 slug", Warn, strings.Join(dups, " · "),
 		"둘 중 하나를 지우거나 prior review --supersedes 로 엮어라")
+}
+
+// checkSync 는 **동기화가 조용히 죽어 있는지** 본다.
+//
+// 훅은 실패해도 대화를 막지 않는다(설계). 그 대가로 회사망에서 push 가 일주일간
+// 막혀 있어도 아무도 모른다 — 이 프로젝트가 계속 경계해 온 "조용한 무동작" 이
+// 정확히 여기다.
+//
+// # 왜 시각이 아니라 상태인가
+//
+// "마지막 동기화가 N일 전" 은 며칠 안 썼을 때 거짓 경고가 된다. 반면 **쓴 것이
+// 안 밀린 것**은 언제 그랬든 손해다 — 다른 머신에서 그 결정이 안 보이고,
+// 그러면 같은 것을 다시 정한다. 그래서 지금 상태를 직접 본다.
+//
+// **리모트가 없으면 경고하지 않는다.** 한 머신에서만 쓰는 볼트가 그렇고,
+// 그건 고장이 아니라 설정이다. 매번 뜨는 경고는 무시하는 법을 가르친다.
+func checkSync(r *Report, c *config.Config) {
+	if c == nil {
+		return
+	}
+	var warn []string
+	used := 0
+	for _, v := range c.Vaults {
+		st := sync.Status(v.Path)
+		if !st.HasRemote {
+			continue
+		}
+		used++
+		var parts []string
+		if st.Ahead > 0 {
+			parts = append(parts, fmt.Sprintf("커밋 %d개", st.Ahead))
+		}
+		if st.Dirty > 0 {
+			parts = append(parts, fmt.Sprintf("파일 %d개", st.Dirty))
+		}
+		if len(parts) > 0 {
+			// 볼트가 하나면 이름을 안 붙인다. "default: …" 은 이름이 아니라 잡음이다.
+			label := v.Name + ": "
+			if len(c.Vaults) == 1 {
+				label = ""
+			}
+			warn = append(warn, label+strings.Join(parts, " · ")+" 안 밀렸다")
+		}
+	}
+	if used == 0 {
+		r.add("동기화", OK, "리모트가 없다 — 이 머신에서만 쓴다", "")
+		return
+	}
+	// 마지막 시도가 실패로 끝났으면 그것도 알린다. 지금은 밀 것이 없어도
+	// **다음에 또 실패한다** — 원인은 그대로 있다.
+	if st, ok := sync.ReadStamp(stampDir()); ok && !st.OK {
+		warn = append(warn, fmt.Sprintf("마지막 시도 실패 (%s, %s)",
+			st.At.Format("2006-01-02 15:04"), st.Detail))
+	}
+	if len(warn) == 0 {
+		r.add("동기화", OK, fmt.Sprintf("볼트 %d개가 리모트와 같다", used), "")
+		return
+	}
+	sort.Strings(warn)
+	r.add("동기화", Warn, strings.Join(warn, " · "),
+		"prior sync 를 돌려라 — 다른 머신에서는 이것들이 안 보인다")
+}
+
+// stampDir 는 동기화 도장이 사는 자리다. 못 구하면 빈 문자열이고
+// ReadStamp 이 조용히 "없다" 로 답한다 — 도장이 없는 것은 고장이 아니다.
+func stampDir() string {
+	d, err := xdgpath.StateDir()
+	if err != nil {
+		return ""
+	}
+	return d
 }
 
 // checkLinks 는 **가리키는 대상이 없는 frontmatter 위키링크**를 찾는다.

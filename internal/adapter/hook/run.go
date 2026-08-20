@@ -32,11 +32,23 @@ type Options struct {
 func Run(ctx context.Context, o Options) error {
 	switch o.Event {
 	case EventSessionStart:
+		// **가져온 뒤에 컨텍스트를 만든다.** 순서가 반대면 그 세션은 어제 볼트로
+		// 시작하고, 방금 다른 머신에서 내린 결정을 못 본 채 같은 것을 다시 정한다.
+		o.syncPull()
 		return o.sessionStart()
 	case EventUserPromptSubmit:
 		return o.userPromptSubmit()
 	case EventStop, EventPreCompact, EventSessionEnd:
-		return o.safetyNet(ctx)
+		err := o.safetyNet(ctx)
+		// **세션이 끝날 때만 민다.** stop 은 턴마다 도는데 거기서 밀면 대화 한 번에
+		// 네트워크를 수십 번 탄다. pre-compact 도 세션 중간이라 마찬가지다.
+		//
+		// 안전망 뒤에 두는 이유: 안전망이 이번 세션의 결정을 볼트에 쓸 수 있고,
+		// 먼저 밀면 그것이 빠진다.
+		if o.Event == EventSessionEnd {
+			o.syncPush()
+		}
+		return err
 	default:
 		return fmt.Errorf("알 수 없는 훅 이벤트: %q (쓸 수 있는 것: %s)", o.Event, eventList())
 	}

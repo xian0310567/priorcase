@@ -37,6 +37,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newPathCmd())
 	root.AddCommand(newReviewedCmd())
 	root.AddCommand(newSettingsCmd())
+	root.AddCommand(newSyncCmd())
 	root.AddCommand(newVaultCmd())
 	root.AddCommand(newDomainCmd())
 	root.AddCommand(newHostsCmd())

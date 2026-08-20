@@ -33,13 +33,7 @@ const stateFile = "state.json"
 
 // DefaultDir 은 상태 파일이 놓이는 자리다. **볼트 밖이다** (스펙 §5) — 볼트에는
 // 사람이 읽을 문서만 두고, 기계 상태는 XDG state 로 보낸다.
-func DefaultDir() (string, error) {
-	state, err := xdgpath.StateHome()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(state, "priorcase"), nil
-}
+func DefaultDir() (string, error) { return xdgpath.StateDir() }
 
 // Checkpoint 는 transcript 파일 하나의 진행 지점이다.
 type Checkpoint struct {

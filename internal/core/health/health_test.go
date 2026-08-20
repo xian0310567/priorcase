@@ -2,6 +2,7 @@ package health
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -559,5 +560,60 @@ func TestOrphanSupersededNoteIsWarned(t *testing.T) {
 	}
 	if !strings.Contains(got.Detail, "alpha-결정-고아-2026-08-09") {
 		t.Errorf("어느 노트인지 안 알려 준다: %s", got.Detail)
+	}
+}
+
+// ★ 동기화가 **조용히 죽어 있는 것**을 doctor 가 잡아야 한다.
+//
+// 훅은 실패해도 대화를 막지 않는다(설계). 그 대가로 회사망에서 push 가 일주일간
+// 막혀 있어도 아무도 모른다 — 이 프로젝트가 계속 경계해 온 "조용한 무동작" 이다.
+func TestUnpushedWorkIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	v := c.DefaultVaultPath()
+	g := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = v
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	bare := t.TempDir() + "/r.git"
+	g("init", "--bare", "-b", "main", bare)
+	g("init", "-b", "main")
+	g("config", "user.email", "t@e.com")
+	g("config", "user.name", "t")
+	g("remote", "add", "origin", bare)
+	g("add", "-A")
+	g("commit", "-m", "seed")
+	g("push", "-u", "origin", "main")
+
+	// 깨끗하면 조용해야 한다.
+	if got := find(t, Vault(c, store.NewLayout(c)), "동기화"); got.Level != OK {
+		t.Fatalf("깨끗한데 경고한다: [%v] %s", got.Level, got.Detail)
+	}
+
+	// 안 민 것이 생기면 알려야 한다.
+	if err := os.WriteFile(filepath.Join(v, "alpha", "decisions", "alpha-결정-안민것-2026-08-20.md"),
+		[]byte("---\ntype: decision\ndate: 2026-08-20\ndomain: [alpha]\nsummary: \"x\"\n"+
+			"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: [decision]\n"+
+			"source_session: \"\"\n---\n\n## 결정\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := find(t, Vault(c, store.NewLayout(c)), "동기화")
+	if got.Level != Warn {
+		t.Fatalf("안 민 것이 있는데 조용하다: [%v] %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Fix, "sync") {
+		t.Errorf("무엇을 하라는 말이 없다: %s", got.Fix)
+	}
+}
+
+// 리모트가 없는 볼트(대부분의 사용자)에서는 경고하지 않는다.
+// 매번 뜨는 경고는 무시하는 법을 가르치고 진짜 실패까지 같이 묻는다.
+func TestNoRemoteIsNotWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	if got := find(t, Vault(c, store.NewLayout(c)), "동기화"); got.Level != OK {
+		t.Errorf("동기화를 안 쓰는 볼트에 경고한다: [%v] %s", got.Level, got.Detail)
 	}
 }
