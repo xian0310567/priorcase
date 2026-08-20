@@ -417,3 +417,38 @@ func TestSessionEndPushesVault(t *testing.T) {
 		t.Errorf("안 밀린 커밋이 %s개 남았다", strings.TrimSpace(string(out)))
 	}
 }
+
+// ★ **지난 세션이 비정상 종료됐으면 그 기록이 안 밀린 채 남는다.**
+//
+// session-end 가 못 뜨는 경우가 있다 — 터미널을 닫거나 죽이면 훅이 안 돈다.
+// session-start 가 pull 만 하면 그 커밋은 다음에도, 그다음에도 안 밀린다.
+// 회사에 가서 "어제 것이 없네" 가 정확히 이 자리다.
+//
+// 그래서 진입에서도 **밀 것이 있으면** 민다. 없으면 네트워크를 안 탄다 —
+// Status 는 로컬만 보므로 평소에는 공짜다.
+func TestSessionStartPushesWorkLeftBehind(t *testing.T) {
+	c := cfg(t)
+	v := gitVault(t, c)
+	// 지난 세션이 커밋까지는 했는데 못 민 상태를 만든다.
+	if err := os.WriteFile(v+"/alpha/decisions/alpha-결정-지난세션-2026-08-20.md",
+		[]byte("---\ntype: decision\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "지난 세션"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = v
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	runHook(t, c, t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+
+	cmd := exec.Command("git", "rev-list", "--count", "@{upstream}..HEAD")
+	cmd.Dir = v
+	out, _ := cmd.Output()
+	if strings.TrimSpace(string(out)) != "0" {
+		t.Errorf("진입에서 밀리지 않은 커밋 %s개가 남았다 — 회사에서 어제 것이 안 보인다",
+			strings.TrimSpace(string(out)))
+	}
+}

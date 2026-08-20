@@ -27,8 +27,27 @@ const (
 	pushBudget = 15 * time.Second
 )
 
-// syncPull 은 세션 진입에서 리모트를 가져온다.
-func (o Options) syncPull() { o.doSync(sync.Budget{Timeout: pullBudget}, true, false) }
+// syncPull 은 세션 진입에서 리모트를 가져오고, **지난 세션이 남긴 것이 있으면
+// 그것도 민다.**
+//
+// session-end 가 못 뜨는 경우가 있다 — 터미널을 닫거나 죽이면 훅이 안 돈다.
+// 진입에서 pull 만 하면 그 커밋은 다음에도, 그다음에도 안 밀리고, 회사에 가서
+// "어제 것이 없네" 가 된다.
+//
+// **평소에는 공짜다.** Status 는 로컬만 보므로(네트워크를 안 탄다) 밀 것이 없으면
+// push 를 아예 안 부른다 — 세션 진입에 네트워크를 한 번 더 태우지 않는다.
+func (o Options) syncPull() {
+	catchUp := false
+	if o.Config != nil {
+		for _, v := range o.Config.Vaults {
+			if st := sync.Status(v.Path); st.HasRemote && (st.Ahead > 0 || st.Dirty > 0) {
+				catchUp = true
+				break
+			}
+		}
+	}
+	o.doSync(sync.Budget{Timeout: pullBudget}, true, catchUp)
+}
 
 // syncPush 는 세션 종료에서 볼트를 밀어낸다.
 func (o Options) syncPush() { o.doSync(sync.Budget{Timeout: pushBudget}, false, true) }
