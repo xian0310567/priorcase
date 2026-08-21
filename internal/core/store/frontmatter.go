@@ -148,6 +148,48 @@ func quote(s string) string {
 // bare 는 따옴표 없이 인라인 배열에 넣는다.
 func bare(items []string) string { return "[" + strings.Join(items, ", ") + "]" }
 
+// wikilink 는 stem 을 `[[stem]]` 으로 만든다. 이미 그 모양이면 그대로 둔다.
+//
+// **옵시디언은 `[[ ]]` 가 있어야 링크로 만든다.** 맨 문자열로 두면 속성 창에 회색
+// 글자로 보이고 **그래프에도 백링크에도 그 관계가 없다** — related 를 적은 목적이
+// 통째로 사라진다.
+//
+// 실측으로 물렸다. 볼트 274건에서 맨 문자열이 57건이었고, 한 노트 안에서도 섞여 있었다:
+//
+//	related:
+//	  - editup-결정-ga4-word채널-…              ← 링크 안 됨
+//	  - "[[editup-결정-ga4-gp1510-인수기준-…]]"   ← 링크 됨
+//
+// 사용자가 옵시디언 속성 창을 보고 "세 개 중 하나만 의존성이 걸려 있다" 고 지적했다.
+// 깨진 대상(존재하지 않는 노트)을 고치는 것과는 **다른 결함**이다 — 이쪽은 대상이
+// 멀쩡한데도 관계가 안 생긴다.
+//
+// **호출부에 맡기지 않는다.** capture·review·MCP·CLI·판별기가 각자 넣는데, 실제로
+// 어떤 경로는 대괄호를 붙이고 어떤 경로는 안 붙였다. 방출기가 유일한 쓰기 경로이므로
+// 여기서 강제하면 누가 무엇을 주든 링크가 된다.
+func wikilink(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return ""
+	}
+	if strings.HasPrefix(t, "[[") && strings.HasSuffix(t, "]]") {
+		return t
+	}
+	// 대괄호가 한쪽만 있거나 겹친 것도 벗겨서 다시 씌운다 — 손으로 고치다 생긴다.
+	return "[[" + strings.Trim(t, "[]") + "]]"
+}
+
+// wikilinks 는 목록 전체에 wikilink 를 적용한다. 빈 항목은 버린다.
+func wikilinks(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		if v := wikilink(s); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func quoted(items []string) string {
 	q := make([]string, len(items))
 	for i, s := range items {
@@ -177,11 +219,11 @@ func EmitFrontmatter(m Meta) []byte {
 	}
 	b.WriteString("status: " + m.Status + "\n")
 	b.WriteString("outcome: " + m.Outcome + "\n")
-	b.WriteString("supersedes: " + quote(m.Supersedes) + "\n")
+	b.WriteString("supersedes: " + quote(wikilink(m.Supersedes)) + "\n")
 	if strings.TrimSpace(m.SupersededReason) != "" {
 		b.WriteString("superseded_reason: " + quote(m.SupersededReason) + "\n")
 	}
-	b.WriteString("related: " + quoted(m.Related) + "\n")
+	b.WriteString("related: " + quoted(wikilinks(m.Related)) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")
 	b.WriteString("source_session: " + quote(m.SourceSession) + "\n")
 	// 판이 1(기본)이면 안 쓴다. 기존 노트가 재기록될 때 바이트가 안 바뀐다.

@@ -139,13 +139,20 @@ func checkLinks(r *Report, l *store.Layout, notes []store.Note) {
 	have := allStems(l)
 	// **NFC 로 접어 비교한다.** 파일명은 ReadDir 이 준 NFC 이고 frontmatter 는 사람이
 	// 쓴 NFD 일 수 있다 — 접지 않으면 멀쩡한 링크가 깨진 것으로 보인다.
-	var broken, self []string
+	var broken, self, bare []string
 	for _, n := range notes {
 		for _, ref := range append([]string{n.Meta.Supersedes}, n.Meta.Related...) {
-			stem := store.NFC(strings.Trim(strings.TrimSpace(ref), "[]"))
-			if stem == "" {
+			raw := strings.TrimSpace(ref)
+			if raw == "" {
 				continue
 			}
+			// **대괄호가 없으면 옵시디언이 링크로 안 만든다.** 대상이 멀쩡해도
+			// 그래프와 백링크에 그 관계가 없다 — 깨진 참조와 **다른 결함**이고
+			// 조용하기 때문에 더 오래 남는다(실볼트 274건 중 57건이 이 상태였다).
+			if !(strings.HasPrefix(raw, "[[") && strings.HasSuffix(raw, "]]")) {
+				bare = append(bare, n.Stem+" → "+raw)
+			}
+			stem := store.NFC(strings.Trim(raw, "[]"))
 			switch {
 			case stem == store.NFC(n.Stem):
 				self = append(self, n.Stem)
@@ -156,18 +163,31 @@ func checkLinks(r *Report, l *store.Layout, notes []store.Note) {
 	}
 	sort.Strings(broken)
 	sort.Strings(self)
+	sort.Strings(bare)
 
 	switch {
-	case len(broken) == 0 && len(self) == 0:
-		r.add("링크", OK, fmt.Sprintf("related·supersedes 가 전부 실재하는 노트를 가리킨다 (%d건 검사)",
+	case len(broken) == 0 && len(self) == 0 && len(bare) == 0:
+		r.add("링크", OK, fmt.Sprintf("related·supersedes 가 전부 실재하는 노트를 [[링크]]로 가리킨다 (%d건 검사)",
 			len(notes)), "")
 	case len(broken) > 0:
 		detail := fmt.Sprintf("깨진 참조 %d건 %v", len(broken), clip(broken))
+		if len(bare) > 0 {
+			detail += fmt.Sprintf(" · [[ ]] 없는 것 %d건", len(bare))
+		}
 		if len(self) > 0 {
 			detail += fmt.Sprintf(" · 자기참조 %d건", len(self))
 		}
 		r.add("링크", Fail, detail,
 			"이름을 정확히 옮겨 적어라 — 에이전트가 기억으로 타이핑하면 한 글자씩 틀린다")
+	case len(bare) > 0:
+		detail := fmt.Sprintf("대상은 있는데 [[ ]] 가 없어 링크가 안 걸린 참조 %d건 %v",
+			len(bare), clip(bare))
+		if len(self) > 0 {
+			detail += fmt.Sprintf(" · 자기참조 %d건", len(self))
+		}
+		r.add("링크", Fail, detail,
+			"그 노트를 다시 저장하면 방출기가 [[ ]] 를 씌운다 (store.wikilink) — "+
+				"옵시디언 그래프·백링크에 관계가 안 생긴 상태다")
 	default:
 		r.add("링크", Warn, fmt.Sprintf("자기 자신을 가리키는 참조 %d건 %v", len(self), clip(self)),
 			"related 에서 자기 stem 을 빼라 — 관계가 아니라 잡음이다")
