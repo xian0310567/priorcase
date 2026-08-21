@@ -12,6 +12,7 @@ package health
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,6 +82,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	notes := checkNotes(r, l)
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
+	checkLinks(r, l, notes)
 	checkIndex(r, l, notes)
 	checkIndexInGit(r, l)
 	return r
@@ -103,6 +105,108 @@ func RecentDecisions(l *store.Layout, now time.Time, days int) int {
 		}
 	}
 	return n
+}
+
+// checkLinks 는 **`related`·`supersedes` 가 가리키는 노트가 실제로 있는지** 본다.
+//
+// # 왜 필요한가
+//
+// 이 값들은 에이전트가 채운다. 그런데 에이전트는 참조할 노트 이름을 **기억으로
+// 타이핑한다** — 그래서 한 글자씩 틀린다. 실측(볼트 254건):
+//
+//	"업스테이지직"  ← 실제는 업스테이지측
+//	"바이드전달"    ← 실제는 빌드전달
+//	"전잴요약"      ← 실제는 전체요약
+//	"읽기키불일지"  ← 실제는 읽기키불일치
+//
+// 틀려도 **아무것도 실패하지 않는다.** 스키마 검증은 문자열이 있는지만 보고,
+// 옵시디언은 안 걸리는 링크를 그냥 회색 글자로 보여 준다. 그래서 사람이 속성 창을
+// 열어 보고서야 알았다 — 볼트에 20건이 그 상태였다.
+//
+// **잃는 것이 크다.** related 는 "이것과 같이 봐야 한다" 는 연결이고, 그게 끊기면
+// 옵시디언 그래프에서도 회수에서도 그 관계가 없는 것과 같다. 특히 supersedes 가
+// 끊기면 뒤집힌 결정이 뒤집힌 줄 모르는 채로 남는다.
+//
+// **자기 자신을 가리키는 것도 잡는다.** 에이전트가 방금 만든 노트 이름을 related 에
+// 넣는 일이 있는데, 그건 관계가 아니라 잡음이다.
+func checkLinks(r *Report, l *store.Layout, notes []store.Note) {
+	// **볼트 전체 파일로 대조한다. 결정 노트 목록으로는 안 된다.**
+	//
+	// 처음에 notes 로 대조했더니 깨진 참조가 75건 나왔는데 대부분 거짓이었다 —
+	// `00-볼트-네이밍-규약` 처럼 **실재하지만 결정 노트가 아닌** 문서를 가리키는
+	// 것들이다. l.List() 는 type: decision 만 주므로 그것들이 없는 것처럼 보였다.
+	// 회수의 사각지대(볼트의 55%)가 이 검사에까지 물린 것이다.
+	have := allStems(l)
+	// **NFC 로 접어 비교한다.** 파일명은 ReadDir 이 준 NFC 이고 frontmatter 는 사람이
+	// 쓴 NFD 일 수 있다 — 접지 않으면 멀쩡한 링크가 깨진 것으로 보인다.
+	var broken, self []string
+	for _, n := range notes {
+		for _, ref := range append([]string{n.Meta.Supersedes}, n.Meta.Related...) {
+			stem := store.NFC(strings.Trim(strings.TrimSpace(ref), "[]"))
+			if stem == "" {
+				continue
+			}
+			switch {
+			case stem == store.NFC(n.Stem):
+				self = append(self, n.Stem)
+			case !have[stem]:
+				broken = append(broken, n.Stem+" → "+stem)
+			}
+		}
+	}
+	sort.Strings(broken)
+	sort.Strings(self)
+
+	switch {
+	case len(broken) == 0 && len(self) == 0:
+		r.add("링크", OK, fmt.Sprintf("related·supersedes 가 전부 실재하는 노트를 가리킨다 (%d건 검사)",
+			len(notes)), "")
+	case len(broken) > 0:
+		detail := fmt.Sprintf("깨진 참조 %d건 %v", len(broken), clip(broken))
+		if len(self) > 0 {
+			detail += fmt.Sprintf(" · 자기참조 %d건", len(self))
+		}
+		r.add("링크", Fail, detail,
+			"이름을 정확히 옮겨 적어라 — 에이전트가 기억으로 타이핑하면 한 글자씩 틀린다")
+	default:
+		r.add("링크", Warn, fmt.Sprintf("자기 자신을 가리키는 참조 %d건 %v", len(self), clip(self)),
+			"related 에서 자기 stem 을 빼라 — 관계가 아니라 잡음이다")
+	}
+}
+
+// allStems 는 볼트의 모든 마크다운 파일명(확장자 없이)을 NFC 로 접어 준다.
+//
+// 위키링크는 경로가 아니라 **파일명**으로 풀리므로(볼트 규약 문서의 실측) 대조도
+// 파일명으로 한다. `.obsidian` 은 앱 설정이고 `.trash` 는 지운 것이라 뺀다.
+func allStems(l *store.Layout) map[string]bool {
+	out := map[string]bool{}
+	root := l.Vault()
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // 못 읽는 자리는 건너뛴다 — 링크 검사는 곁다리다
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".obsidian", ".git", ".trash", "_derived":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".md") {
+			out[store.NFC(strings.TrimSuffix(d.Name(), ".md"))] = true
+		}
+		return nil
+	})
+	return out
+}
+
+// clip 은 진단 줄이 화면을 넘기지 않게 앞 몇 개만 보여 준다.
+func clip(ss []string) []string {
+	const n = 4
+	if len(ss) <= n {
+		return ss
+	}
+	return append(ss[:n:n], fmt.Sprintf("… 그 밖 %d건", len(ss)-n))
 }
 
 // checkSchema 는 **`prior capture` 가 거부했을 노트를 찾는다.**
