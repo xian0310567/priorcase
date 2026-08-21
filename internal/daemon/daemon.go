@@ -323,6 +323,57 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 			Err: d.promoteWriter(), Label: "prior watch",
 		})
 	}
+
+	// **취소된 세션 끝 훅을 메운다.**
+	//
+	// 결정 노트는 아크 판정에서만 나오고, 아크는 세션 경계에서만 볼 수 있다. 그런데
+	// 그 경계의 훅이 안 돌 수 있다 — 실측으로 사용자가
+	// `SessionEnd hook ... failed: Hook cancelled` 를 봤다. 호스트가 종료 과정에서
+	// 훅을 취소하면 그 세션의 결정은 영영 없다.
+	//
+	// 그래서 데몬이 오래 잠잠한 transcript 를 대신 판정한다. 이 도구가 "안전망" 인
+	// 이유가 원래 이것이다 — 협조하지 않는 경로가 있으면 그 뒤에 서는 것.
+	if promote {
+		d.arcStale(ctx)
+	}
+}
+
+// arcQuietFor 는 "이 세션은 끝났다고 봐도 된다" 는 침묵의 길이다.
+//
+// 세션이 정상적으로 끝나면 훅이 즉시 아크를 판정하므로 이 경로는 **취소·크래시
+// 전용**이다. 그래서 늦는 것이 거의 손해가 아니고, 반대로 짧게 잡으면 사람이 잠깐
+// 자리를 비운 대화를 끝난 것으로 오해해 아직 진행 중인 흐름에서 결정 노트가 나온다.
+//
+// 20분으로 둔다. 대화 중이면 도구 호출만으로도 transcript 가 몇 분 안에 자란다 —
+// 20분 완전 침묵은 활동 중인 세션에서 나오기 어렵다.
+//
+// 오판해도 손실은 아니다. Decided 표식이 전진하므로 남은 대화는 다음 아크가 본다.
+const arcQuietFor = 20 * time.Minute
+
+// arcStale 은 오래 잠잠하고 아직 결정 판정하지 않은 transcript 하나를 판정한다.
+//
+// **한 판에 하나만 한다.** 판별기 호출은 초 단위인데 여기서 여러 개를 돌리면
+// 데몬의 감시 루프가 그만큼 멎고, 밀린 파일이 많을 때(--backfill 뒤) 호스트 CLI 를
+// 두들긴다. 후보는 매 drain 마다 다시 보므로 결국 전부 처리된다.
+func (d *watcher) arcStale(ctx context.Context) {
+	st := NewStore(d.o.StateDir)
+	if err := st.Load(); err != nil {
+		return
+	}
+	now := time.Now()
+	for path, cp := range st.CheckpointSnapshot() {
+		if cp.At.IsZero() || now.Sub(cp.At) < arcQuietFor {
+			continue // 아직 활동 중이거나 흔적이 없다
+		}
+		if cp.Decided >= cp.Offset {
+			continue // 이미 판정했다
+		}
+		PromoteArc(ctx, ArcOptions{
+			StateDir: d.o.StateDir, Config: d.o.Config, Layout: d.l,
+			Path: path, Err: d.promoteWriter(), Label: "prior watch (잠잠한 세션)",
+		})
+		return
+	}
 }
 
 // promoteWriter 는 승격 진행 보고가 나갈 자리다. 데몬은 이벤트로 말하므로

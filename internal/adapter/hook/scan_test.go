@@ -274,8 +274,14 @@ func TestSessionEndPromotes(t *testing.T) {
 			if r.e != nil {
 				t.Fatal(r.e)
 			}
-			if !strings.Contains(r.err, "자동 기록") {
-				t.Fatalf("승격하지 않았다:\n%s", r.err)
+			// **아크 판정에서 나와야 한다.** 옛 판은 이 자리에서 pending 큐를
+			// ScopeEnd 로 돌렸는데, 데몬이 대화 도중 그 큐를 비우므로 실제 사용에서는
+			// 판정할 것이 없었다 — 실측으로 자동 기록 63건이 전부 작업 로그이고
+			// 결정 노트 0건이었다. 그래서 대상을 transcript 아크로 바꿨다.
+			// 문구까지 못 박는 이유: "결정 노트가 생겼다" 만 보면 pending 경로로
+			// 되돌아가도 통과한다.
+			if !strings.Contains(r.err, "아크 → 결정 노트") {
+				t.Fatalf("아크가 결정 노트를 만들지 않았다:\n%s", r.err)
 			}
 			// 노트가 실제로 생겼나 — capture.Do 를 거쳤으므로 정본형이어야 한다.
 			// writeTranscript 의 타임스탬프가 2026-08-07 이라 그 날짜로 만들어진다.
@@ -316,7 +322,11 @@ func TestNotRecordedClearsPending(t *testing.T) {
 	if r.e != nil {
 		t.Fatal(r.e)
 	}
-	if !strings.Contains(r.err, "기록 안 함") || !strings.Contains(r.err, "진행 보고다") {
+	// 문구가 "기록 안 함" 에서 "아크에 남길 것이 없다" 로 바뀌었다 — 세션 끝의 판정
+	// 대상이 pending 큐에서 transcript 아크로 옮겨졌기 때문이다. 못 박는 것은 문구가
+	// 아니라 **이유가 밖으로 나온다**는 사실이다: 안 남긴 것과 판별기가 안 돈 것이
+	// 구별되지 않으면 조용한 무동작을 진단할 수 없다.
+	if !strings.Contains(r.err, "남길 것이 없다") || !strings.Contains(r.err, "진행 보고다") {
 		t.Errorf("이유를 안 알린다:\n%s", r.err)
 	}
 	if items, _ := daemon.ReadPending(sd); len(items) != 0 {

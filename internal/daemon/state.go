@@ -77,6 +77,39 @@ type Checkpoint struct {
 	// 날짜별로 나누면 각 날의 비교 창이 고정되어 그 고장이 사라진다.
 	DayCredited map[string]int `json:"day_credited,omitempty"`
 
+	// Decided 는 **결정 노트 판정을 끝낸** 바이트 수다. Offset 과 따로 둔다.
+	//
+	// # 왜 축이 둘이어야 하나
+	//
+	// Offset 은 "훑어서 표시까지 끝냈다" 는 축이고 대화 도중 계속 전진한다. 그 축에
+	// 얹혀 있던 승격은 표시된 구간(pending)을 하나씩 소모하는데, 데몬이 도중에
+	// 작업 로그로 승격하면서 그 구간을 해소한다 — 그래서 세션이 끝날 때 큐가 비고,
+	// **결정 노트를 쓰는 경로에 판정할 것이 남지 않았다.**
+	//
+	// 실측으로 그 상태였다: 자동 기록 63건이 전부 작업 로그이고 **결정 노트 0건.**
+	// 판별기는 136번 돌았는데 결정 등급은 한 번도 못 나왔다 — 나올 자리가 없었다.
+	//
+	// 그래서 "아크를 어디까지 결정 판정했나" 를 별도 축으로 든다. 이 축은 세션이
+	// 끝날 때(또는 압축될 때, 또는 대화가 오래 잠잠할 때)만 전진한다.
+	//
+	// 판별기 호출이 **실패했을 때는 전진하지 않는다.** 그래야 다음 기회에 다시 본다.
+	// 반대로 "결정 아님" 판정은 전진한다 — 같은 구간을 매 세션 끝마다 다시 물으면
+	// 예산을 거기서 다 쓴다.
+	Decided int64 `json:"decided,omitempty"`
+
+	// ArcFails 는 이 파일의 아크 판정이 **연속으로 실패한 횟수**다.
+	//
+	// [[priorcase-결정-판별기-상한과-포기-카운터-2026-08-12]] 와 같은 함정이 아크에도
+	// 있다. 실측으로 확인했다: 35MB transcript 의 아크(발췌 24KB·발화 126)를 실제
+	// 판별기에 넣으니 **75초 상한에 killed** 되고, 그 한 번이 승격 예산 90초를 통째로
+	// 먹어서 구간 드레인이 아무것도 못 했다. 표식은 전진하지 않으므로 다음 세션 끝에
+	// 같은 아크를 또 넣는다 — 매 세션을 그 한 건이 태운다.
+	//
+	// 그래서 실패마다 **되짚는 양을 반으로 줄인다**(DecidedFrom). 큰 아크가 안 되면
+	// 작은 아크로라도 남기는 편이 낫다. maxArcFails 번을 넘기면 그 아크를 포기하고
+	// 표식을 전진시킨다 — 그 대화 하나를 잃지만 시스템이 계속 돈다.
+	ArcFails int `json:"arc_fails,omitempty"`
+
 	// Suppressed 는 이 파일에서 면제 판정이 선 구간 수다. 진단용이다 — 억제가 그냥
 	// 사라지면 안전망이 일을 안 하는 것과 구분되지 않는다.
 	//
@@ -349,6 +382,84 @@ func (s *Store) Advance(path string, offset, size int64) error {
 		st.Checkpoints[path] = cp
 	})
 }
+
+// DecidedFrom 은 아크 판정을 **어디서부터** 시작할지 준다.
+//
+// 표식이 없으면 파일 끝에서 initialArcLookback 만큼 되짚는다. 0 에서 시작하면
+// 이미 쌓인 대화 전체(실측 35MB)를 한 번에 판정하게 되는데, 발췌 상한이 24KB 라
+// 그 판정은 통째로 뭉개진다 — 그리고 그 한 번으로 표식이 끝까지 전진해서 **다시
+// 볼 기회도 사라진다.** 최근 것만 보는 편이 낫다.
+//
+// 파일이 줄었으면(잘렸거나 다른 파일로 바뀌었으면) 표식을 믿을 수 없으므로 같은
+// 규칙으로 되짚는다 — CheckpointFor 가 Offset 에 하는 것과 같은 판단이다.
+func (s *Store) DecidedFrom(path string, size int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := s.st.Checkpoints[path]
+	if cp.Decided > 0 && cp.Decided <= size {
+		return cp.Decided
+	}
+	// **실패한 만큼 되짚기를 줄인다.** 같은 크기로 다시 넣으면 같은 이유로 또 죽는다.
+	back := int64(initialArcLookback) >> cp.ArcFails
+	if back < minArcLookback {
+		back = minArcLookback
+	}
+	if size > back {
+		return size - back
+	}
+	return 0
+}
+
+// ArcFailed 는 아크 판정 실패를 새기고 누적 횟수를 준다.
+func (s *Store) ArcFailed(path string) (int, error) {
+	n := 0
+	err := s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.ArcFails++
+		n = cp.ArcFails
+		st.Checkpoints[path] = cp
+	})
+	return n, err
+}
+
+// ArcSucceeded 는 실패 횟수를 지운다. 한 번 성공하면 다음 아크는 온전한 크기로 본다.
+func (s *Store) ArcSucceeded(path string) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.ArcFails = 0
+		st.Checkpoints[path] = cp
+	})
+}
+
+// MarkDecided 는 아크 판정을 끝낸 지점을 새긴다.
+func (s *Store) MarkDecided(path string, offset int64) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		if offset > cp.Decided {
+			cp.Decided = offset
+		}
+		st.Checkpoints[path] = cp
+	})
+}
+
+// initialArcLookback 은 표식이 없을 때 되짚는 양이다.
+//
+// 1MB 는 발췌 상한(24KB)의 40배가 넘지만, 그 사이를 생략 표시가 메운다 — 앞뒤를
+// 담고 가운데를 버리므로 "이 세션에서 무엇이 오갔나" 의 윤곽은 남는다. 반대로
+// 이 값을 발췌 상한 수준으로 줄이면 아크가 아니라 또 하나의 구간이 되어, 세션
+// 끝에 아크 전체를 보기로 한 이유가 사라진다.
+const initialArcLookback = 1 << 20
+
+// minArcLookback 은 되짚기를 줄여도 이보다 작게는 안 간다. 이보다 작으면 아크가
+// 아니라 또 하나의 구간이 되어, 세션 끝에 아크 전체를 보기로 한 이유가 사라진다.
+const minArcLookback = 64 << 10
+
+// maxArcFails 는 한 아크를 판별기에 넣어 볼 횟수다.
+//
+// [[priorcase-결정-판별기-상한과-포기-카운터-2026-08-12]] 의 MaxJudgeFails 와 같은
+// 이유와 같은 값이다. 넘기면 표식을 전진시켜 포기한다 — 그 대화 하나를 잃는 대신
+// 매 세션이 그 한 건에 타지 않는다.
+const maxArcFails = 3
 
 // CreditQuiet 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
 //
@@ -744,10 +855,16 @@ func (s *Store) SeedAll(sizes map[string]int64) error {
 
 // Empty 는 이 체크포인트가 **아무 진행도 담고 있지 않은가**다.
 //
-// 훑은 흔적(At)만 있고 소비한 바이트도, 소모한 크레딧도, 억제한 구간도 없는 상태다.
-// 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피 0부터 읽는다.
+// 훑은 흔적(At)만 있고 소비한 바이트도, 결정 판정 지점도, 소모한 크레딧도, 억제한
+// 구간도 없는 상태다. 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피
+// 0부터 읽는다.
+//
+// ⚠️ **필드 화이트리스트다.** 새 필드를 여기 안 넣으면 그 정보만 가진 항목이 조용히
+// 지워진다. `Decided` 를 추가하면서 실제로 그 상태를 만들었고, 짝 테스트
+// (TestCheckpointEmptyCoversEveryField)가 잡았다 — 필드 수를 세는 가드가 여기 있는
+// 이유가 그것이다.
 func (cp Checkpoint) Empty() bool {
-	return cp.Offset == 0 && cp.Size == 0 &&
+	return cp.Offset == 0 && cp.Size == 0 && cp.Decided == 0 && cp.ArcFails == 0 &&
 		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0
 }
 

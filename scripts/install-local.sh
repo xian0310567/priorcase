@@ -48,7 +48,11 @@ codesign --force --sign - "$BIN"
 "$BIN" --version
 
 # 데몬을 다시 띄운다. 홈에서 띄우는 이유: cwd 가 도메인 판정에 안 쓰이는 경로다.
-( cd "$HOME" && nohup "$BIN" watch >/dev/null 2>&1 & )
+# **서브셸까지 리다이렉트한다.** 자식만 `>/dev/null 2>&1 </dev/null` 로 막아도
+# 부족하다 — 서브셸이 파이프 fd 를 물려받은 뒤에 자식을 띄우기 때문에, 이 스크립트의
+# 출력을 파이프로 받는 호출부(`./install-local.sh | tail`)에서 tail 이 EOF 를 못 받고
+# 매달린다. 실측: 파이프 없이 3.9초, 파이프로 받으면 300초+ 매달렸다.
+( cd "$HOME" && nohup "$BIN" watch >/dev/null 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
 sleep 2
 if [ -n "$(watchpids)" ]; then
   echo "데몬 재시작됨"

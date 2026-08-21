@@ -46,7 +46,14 @@ func (o Options) safetyNet(ctx context.Context) error {
 	//
 	// 스캔이 실패해도 부른다. 이미 표시된 구간은 그것과 무관하게 처리해야 한다.
 	if o.Event == EventSessionEnd || o.Event == EventPreCompact {
-		o.promote(ctx)
+		// **아크를 먼저 본다.** 결정 노트가 나올 수 있는 자리는 여기 하나뿐이고,
+		// 시간이 모자랄 때 밀려야 하는 쪽은 구간 드레인이다 — 그쪽은 데몬이 대화
+		// 도중에도 계속 돌지만, 아크는 세션 경계에서만 볼 수 있다.
+		deadline := time.Now().Add(promoteBudget)
+		o.promoteArc(ctx)
+		if rest := time.Until(deadline); rest > 0 {
+			o.promote(ctx, rest)
+		}
 	}
 
 	// **다른 호스트의 기록도 훑는다.** 훅은 자기를 부른 호스트의 transcript 하나만
@@ -126,29 +133,44 @@ const (
 	sweepBudget = daemon.DefaultSweepBudget
 )
 
-// promote 는 승격을 daemon 에 위임한다.
+// promoteArc 는 이 세션의 아크를 판정한다. **결정 노트가 나오는 유일한 자리다.**
+//
+// 훅이 데몬보다 더 아는 것이 정확히 이것이다 — 데몬은 파일이 잠잠해진 것만 알고
+// 세션이 끝난 것은 모른다. 실측으로 그 차이가 얼마나 큰지 나왔다: 구간 @3467548 은
+// 마지막 발화 3초 뒤에 판정됐는데 대화는 그 7초 뒤에 이어졌다. 데몬이 "끝났다" 고
+// 짐작하면 그런 창에서 결정 노트가 나온다.
+func (o Options) promoteArc(ctx context.Context) {
+	daemon.PromoteArc(ctx, daemon.ArcOptions{
+		StateDir: o.StateDir,
+		Config:   o.Config,
+		Layout:   o.Layout,
+		Path:     o.Input.TranscriptPath,
+		Author:   o.Config.AuthorFor(o.Input.Cwd),
+		Err:      o.Err,
+		Label:    "prior hook " + string(o.Event),
+	})
+}
+
+// promote 는 표시된 구간의 승격을 daemon 에 위임한다.
 //
 // **로직을 여기 두지 않는다.** 승격은 볼트에 쓰는 일이고, 훅과 데몬이 각자 구현하면
 // 쓰기 경로가 둘로 갈라진다 — 그건 이 프로젝트가 죄목으로 드는 바로 그것이다.
 // 훅이 더 아는 것은 "지금 끝나는 세션이 어느 것인가" 하나뿐이라 그것만 넘긴다.
-func (o Options) promote(ctx context.Context) {
+func (o Options) promote(ctx context.Context, budget time.Duration) {
 	daemon.Promote(ctx, daemon.PromoteOptions{
 		StateDir: o.StateDir,
 		Config:   o.Config,
 		Layout:   o.Layout,
 		First:    o.Input.TranscriptPath,
 		Author:   o.Config.AuthorFor(o.Input.Cwd),
-		Budget:   promoteBudget,
-		// **여기가 결정 노트가 나올 수 있는 유일한 자리다.**
+		Budget:   budget,
+		// **세션 끝이어도 ScopeMid 다.** 여기 남은 구간은 대화 도중에 표시된 6발화
+		// 창들이고 아크가 아니다. 세션이 끝났다는 이유로 ScopeEnd 를 주면 그 파편
+		// 하나하나가 결정 노트가 될 수 있는데, 그게 "한 논의가 노트 4건으로 갈린다"
+		// 는 바로 그 문제다 (2계층 결정문의 기각된 대안 넷째).
 		//
-		// 훅이 데몬보다 더 아는 것이 정확히 이것이다 — 데몬은 파일이 잠잠해진 것만
-		// 알고 세션이 끝난 것은 모른다. 실측으로 그 차이가 얼마나 큰지 나왔다:
-		// 구간 @3467548 은 마지막 발화 3초 뒤에 판정됐는데 대화는 그 7초 뒤에
-		// 이어졌다. 데몬이 "끝났다" 고 짐작하면 그런 창에서 결정 노트가 나온다.
-		//
-		// 이 함수는 EventSessionEnd·EventPreCompact 에서만 불린다(safetyNet 참고).
-		// 그래서 여기서는 무조건 ScopeEnd 다.
-		Scope: judge.ScopeEnd,
+		// 결정은 promoteArc 가 담당한다. 이쪽은 파편을 작업 로그로 비우는 일만 한다.
+		Scope: judge.ScopeMid,
 		Err:   o.Err,
 		Label: "prior hook " + string(o.Event),
 	})
