@@ -133,6 +133,20 @@ func mentionedDomains(c *config.Config, keywords []string) map[string]bool {
 	return m
 }
 
+// minHeadHits 는 후보로 남기려면 필요한 head 히트 수다. scoreAll 주석에 근거가 있다.
+func minHeadHits(nKeywords int) int {
+	if nKeywords >= conversationalKeywords {
+		return 2
+	}
+	return 1
+}
+
+// conversationalKeywords 는 "이건 골라 넣은 질의가 아니라 대화체다" 로 보는 경계다.
+//
+// 실측: 이 세션의 자연어 프롬프트들이 키워드 4·9·11개를 냈고, 사람이 CLI 에 치는
+// 질의는 2~3개였다. 4를 경계로 두면 둘이 갈린다.
+const conversationalKeywords = 4
+
 func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool) []Hit {
 	var hits []Hit
 	for _, n := range notes {
@@ -159,8 +173,32 @@ func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned
 				bodyHits++
 			}
 		}
-		// head 히트가 없으면 점수 0 — 본문만 스치는 문서를 버린다
-		if headHits == 0 {
+		// **히트 하나로는 부족하다 — 질의가 길 때는 둘을 요구한다.**
+		//
+		// CJK 는 부분 문자열로 매칭하므로(match.go 의 근거) 2음절 대화체 토큰이
+		// 아무 데나 걸린다. 실측: "무슨 작업을 하다가 멈춘것같은데 확인해줄 수 있어" 의
+		// 키워드는 `멈춘것같은데·무슨·있어·확인해줄` 로 **내용어가 하나도 없는데**,
+		// `있어` 가 10개 노트의 head 에("…있어야…" 안쪽) 걸려서 후보 11건이 나오고
+		// 상위 3칸이 무관한 것으로 찼다.
+		//
+		// 흔한 낱말을 걸러도 안 된다 — 그 토큰들은 **드물다**(있어 3.7%, 무슨 0.4%).
+		// 문서빈도 필터로는 안 잡힌다. 우연한 매칭이라 빈도가 아니라 **개수**로 걸러야 한다.
+		//
+		// 실측 비교(같은 질의 4개, 후보 수):
+		//
+		//	                내용어0    pull/push   npm배포   어휘어긋남
+		//	현행(≥1)          11         24         19        32
+		//	≥2                 0          1          3         1
+		//	2음절 낱말경계      11         24         19        31
+		//
+		// ≥2 는 내용어 없는 질의에 **침묵하면서** 좋은 질의의 1위를 그대로 지켰다.
+		// 낱말경계 요구는 거의 효과가 없어 기각했다.
+		//
+		// **질의가 짧으면 하나로 만족한다.** `prior recall "볼트 동기화"` 처럼 사람이
+		// 골라 넣은 두 낱말에 둘을 요구하면 정작 정확한 질의가 아무것도 못 찾는다.
+		// 대화체 프롬프트는 어미가 살아남아 거의 언제나 4개를 넘으므로, 그 경계가
+		// "자동 주입" 과 "사람이 물은 것" 을 자연스럽게 가른다.
+		if headHits < minHeadHits(len(keywords)) {
 			continue
 		}
 
