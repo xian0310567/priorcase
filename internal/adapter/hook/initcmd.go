@@ -91,7 +91,14 @@ func NewInitCommand() *cobra.Command {
 			}
 			fmt.Fprintf(out, "\n배선했다: %s\n", settingsPath)
 			if p.BackupPath != "" {
-				fmt.Fprintf(out, "되돌리려면: prior init --revert   (백업: %s)\n", p.BackupPath)
+				// **호스트를 빼면 엉뚱한 파일이 되돌아간다.** --revert 도 기본 호스트의
+				// 설정 경로를 쓰므로, Codex 를 배선하고 이 문구를 그대로 따르면
+				// 손대지도 않은 Claude Code 설정이 되돌아가고 Codex 배선은 남는다.
+				hostArg := ""
+				if h != HostClaudeCode {
+					hostArg = "--host " + string(h) + " "
+				}
+				fmt.Fprintf(out, "되돌리려면: prior init %s--revert   (백업: %s)\n", hostArg, p.BackupPath)
 			}
 			fmt.Fprintln(out, "\n데몬은 자동 등록하지 않는다 — 필요하면 `prior watch` 를 직접 띄운다.")
 			fmt.Fprintln(out, "안 띄워도 훅이 턴 경계마다 대신 훑으므로 안전망은 동작한다.")

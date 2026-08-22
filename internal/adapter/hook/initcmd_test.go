@@ -251,3 +251,31 @@ func TestInitRejectsUnknownHost(t *testing.T) {
 		t.Error("모르는 호스트인데 에러가 없다")
 	}
 }
+
+// ★ **되돌리기 안내가 엉뚱한 파일을 가리키면 안 된다.**
+//
+// `prior init --revert` 는 기본 호스트(Claude Code)의 설정을 되돌린다. Codex 를
+// 배선한 뒤 그 문구를 그대로 따르면 **손대지도 않은 Claude Code 설정이 되돌아가고**
+// 정작 되돌리려던 Codex 배선은 그대로 남는다.
+func TestInitRevertHintNamesTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// 되돌릴 백업이 생기도록 기존 파일을 하나 둔다.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "hooks.json"),
+		[]byte(realCodexHooks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+
+	r, out := root(t, "init", "--host", "codex", "--apply", "--config", cfgPath)
+	if err := r.Execute(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "--host codex --revert") {
+		t.Errorf("되돌리기 안내가 호스트를 안 말한다 — 그대로 따르면 엉뚱한 파일이 되돌아간다:\n%s",
+			out.String())
+	}
+}
