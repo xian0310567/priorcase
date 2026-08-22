@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,7 +310,9 @@ func TestDoctorReportsActualActivity(t *testing.T) {
 	if err := s.NoteScan("/t.jsonl", now.Add(-30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	// 판별기가 12번 봤고 그중 3번 기록했다.
+	// 판별기가 12번 봤고 그중 3번 기록했다. **tier 키가 없는 옛 원장 줄이다** —
+	// 이 머신의 옛 원장 23줄이 그 모양이고, 그때는 등급이 하나뿐이라 전부 결정
+	// 노트 시도였다. 새 계수가 그 줄들을 결정으로 세는지 여기서 못 박는다.
 	for i := 0; i < 12; i++ {
 		p := daemon.Promotion{At: now.Add(-time.Hour), ID: "/t@0", Domain: "alpha"}
 		if i < 3 {
@@ -325,9 +328,51 @@ func TestDoctorReportsActualActivity(t *testing.T) {
 	self, _ := os.Executable()
 	got := check(t, wiringReport(t, DoctorOptions{
 		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
-	for _, want := range []string{"마지막 훑기", "30분 전", "자동 기록 3건", "판정 12건"} {
+	for _, want := range []string{"마지막 훑기", "30분 전", "자동 기록 3건", "결정 3건", "판정 12건"} {
 		if !strings.Contains(got.Detail, want) {
 			t.Errorf("%q 가 없다 — 실제 활동이 안 보인다: %s", want, got.Detail)
+		}
+	}
+}
+
+// ★★ **작업 로그 한 건과 결정 노트 한 건을 같은 "자동 기록 1건" 으로 합치면 안 된다.**
+//
+// 기록 계층이 둘로 갈렸다 — 결정 노트는 회수가 자동 주입하고, 작업 로그는 물어볼
+// 때만 검색된다. 무게가 전혀 다른데 합계 하나로 내면 **작업 로그만 잔뜩 쌓이고 결정이
+// 0인 상태**와 결정이 꾸준히 나오는 상태가 똑같이 "자동 기록 N건" 으로 보인다.
+//
+// 그 둘을 가르는 것이 이번 변경의 성패이고, 사람이 그것을 확인하는 계기판은 이 줄
+// 하나뿐이다. 합쳐 놓으면 컷오버 1일차와 같은 오진이 등급 축에서 되풀이된다.
+func TestDoctorSplitsAutoRecordByTier(t *testing.T) {
+	sd := t.TempDir()
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	s := daemon.NewStore(sd)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NoteScan("/t.jsonl", now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// 결정 1건 · 작업 로그 4건 · 기각 2건.
+	rows := []daemon.Promotion{
+		{Recorded: true, Tier: "decision", Path: "alpha/decisions/x.md"},
+		{Recorded: true, Tier: "worklog"}, {Recorded: true, Tier: "worklog"},
+		{Recorded: true, Tier: "worklog"}, {Recorded: true, Tier: "worklog"},
+		{Tier: "none", Reason: "진행 보고다"}, {Tier: "none", Reason: "진행 보고다"},
+	}
+	for i, p := range rows {
+		p.At, p.ID, p.Domain = now.Add(-time.Hour), fmt.Sprintf("/t@%d", i), "alpha"
+		if err := daemon.AppendPromotion(sd, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	self, _ := os.Executable()
+	got := check(t, wiringReport(t, DoctorOptions{
+		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
+	for _, want := range []string{"결정 1건", "작업 로그 4건", "판정 7건"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Errorf("%q 가 없다 — 등급이 뭉개져 성패를 읽을 수 없다: %s", want, got.Detail)
 		}
 	}
 }
@@ -385,7 +430,16 @@ func TestDoctorDoesNotAlarmOnFreshInstall(t *testing.T) {
 	}
 }
 
-// 억제 횟수가 안 보이면 "볼 게 없어서 조용하다" 와 "N번 눈감았다" 가 여전히 같다.
+// ★ 억제 횟수가 안 보이면 "볼 게 없어서 조용하다" 와 "N번 눈감았다" 가 여전히 같다.
+//
+// **다만 그 문구가 두 가지로 거짓말을 하고 있었다.**
+//
+//  1. "면제 N회" 는 "기록을 N번 눈감았다" 로 읽힌다. 그건 없앤 동작이다 — 면제는
+//     이제 pending 을 지우지 않고 Quiet 표만 단다(daemon.Store.Credit). 기록은 간다.
+//  2. 이 수는 **설치 이후 누적**인데 같은 줄의 자동 기록·판정은 최근 7일이다.
+//     기간이 다른 수를 나란히 놓아 "면제 6회 / 최근 7일 자동 기록 0건" 이라는
+//     가짜 인과를 읽게 만들었다. 실제 원인은 횟수가 아니라 면제가 pending 을
+//     지운다는 사실 자체였고, 그건 이 줄로는 영영 안 보였다.
 func TestDoctorShowsSuppressionCount(t *testing.T) {
 	sd := t.TempDir()
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
@@ -397,7 +451,7 @@ func TestDoctorShowsSuppressionCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 3; i++ {
-		if _, err := s.Credit("/t.jsonl", i, nil); err != nil {
+		if _, err := s.CreditQuiet("/t.jsonl", i, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -405,8 +459,17 @@ func TestDoctorShowsSuppressionCount(t *testing.T) {
 	self, _ := os.Executable()
 	got := check(t, wiringReport(t, DoctorOptions{
 		SettingsPath: wiredSettings(t, self), StateDir: sd, Now: now}), "안전망")
-	if !strings.Contains(got.Detail, "면제 3회") {
-		t.Errorf("면제 횟수가 안 보인다 — 조용한 이유를 알 수 없다: %s", got.Detail)
+	if !strings.Contains(got.Detail, "조용히 넘김 3회") {
+		t.Errorf("조용히 넘긴 횟수가 안 보인다 — 조용한 이유를 알 수 없다: %s", got.Detail)
+	}
+	// **누적이라는 것이 보여야 한다.** 안 보이면 옆의 "최근 7일" 수와 나란히 읽혀
+	// 없는 인과가 생긴다.
+	if !strings.Contains(got.Detail, "누적") {
+		t.Errorf("창이 다르다는 것을 안 알린다 (옆의 수는 최근 7일이다): %s", got.Detail)
+	}
+	// 옛 문구는 "기록을 눈감았다" 로 읽힌다 — 그 동작은 없앴다.
+	if strings.Contains(got.Detail, "면제") {
+		t.Errorf("아직 '면제' 라고 말한다 — 기록을 건너뛴다는 뜻으로 읽힌다: %s", got.Detail)
 	}
 }
 

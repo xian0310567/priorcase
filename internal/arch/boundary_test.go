@@ -181,6 +181,24 @@ func TestOnlyDaemonWritesState(t *testing.T) {
 //
 // daemon.ResolveHosts 가 그 통로다. hosts.All() 은 막지 않는다 — 설정 화면은
 // 꺼진 것까지 보여 줘야 사람이 다시 켤 수 있다.
+// hasNonCommentCall 은 주석 밖에서 그 호출이 나오는지 본다. 줄 주석만 본다 —
+// 이 저장소에 블록 주석 안의 코드 예시는 없다.
+func hasNonCommentCall(src, needle string) bool {
+	for _, line := range strings.Split(src, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "//") {
+			continue
+		}
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		if strings.Contains(line, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestHostResolutionGoesThroughOneDoor(t *testing.T) {
 	err := filepath.WalkDir("..", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -198,7 +216,9 @@ func TestHostResolutionGoesThroughOneDoor(t *testing.T) {
 		if rerr != nil {
 			return nil
 		}
-		if strings.Contains(string(b), "hosts.Resolve(") {
+		// **주석은 세지 않는다.** 왜 그 함수를 안 쓰는지 설명하는 주석이 실제로
+		// 있고(daemon/arc.go), 그걸 위반으로 잡으면 설명을 지우게 만든다.
+		if hasNonCommentCall(string(b), "hosts.Resolve(") {
 			t.Errorf("%s 가 hosts.Resolve 를 직접 부른다 — 설정의 호스트 켜기/끄기를 건너뛴다. "+
 				"daemon.ResolveHosts 를 써라", p)
 		}

@@ -355,3 +355,83 @@ func TestSupersedesEmitsScalarUnlessMultiple(t *testing.T) {
 		}
 	}
 }
+
+// ★★ **기존 노트가 안 깨져야 한다.**
+//
+// 아래 frontmatter 는 실볼트의 editup-decision-codecommit-…-2026-08-18.md 원문이다
+// (실볼트 18노트 전부가 이 모양 — summary_history·superseded_reason 이 없다).
+// 새 키를 더하면서 이 노트를 다시 저장할 때 **바이트가 하나도 안 바뀌어야** 한다.
+// 안 그러면 새 판을 깔았다는 이유만으로 볼트 전체가 diff 로 뜬다.
+func TestExistingNoteBytesUnchangedByNewKeys(t *testing.T) {
+	const real = `---
+type: decision
+date: 2026-08-18
+domain: [editup]
+summary: "CodeCommit 클론 인증은 git 전역 설정 대신 레포 로컬 credential.helper 로 한다"
+status: active
+outcome: bad
+supersedes: ""
+related: []
+tags: [decision, codecommit, git, 인증, aws, 프로필, 클론]
+source_session: "58d4ab65-90ff-4519-9f9a-afc79cb7b345"
+---
+
+## 결정
+CodeCommit 레포는 레포 로컬 credential.helper 로 받는다.
+`
+	m, body, err := ParseFrontmatter([]byte(real))
+	if err != nil {
+		t.Fatalf("실볼트 노트를 못 읽는다: %v", err)
+	}
+	if m.SupersededReason != "" || len(m.SummaryHistory) != 0 {
+		t.Fatalf("없는 키가 채워졌다: reason=%q history=%v", m.SupersededReason, m.SummaryHistory)
+	}
+	if got := string(EmitNote(m, body)); got != real {
+		t.Errorf("기존 노트를 되쓰니 바이트가 변했다\n--- got ---\n%s\n--- want ---\n%s", got, real)
+	}
+}
+
+// TestOverturnKeysRoundTrip 은 새 키 둘이 왕복하는지, 그리고 방출 위치가
+// 의도대로인지 본다 — superseded_reason 은 supersedes 바로 뒤(같은 사건의 양쪽),
+// summary_history 는 summary 바로 뒤.
+func TestOverturnKeysRoundTrip(t *testing.T) {
+	m := Meta{
+		Type: "decision", Date: "2026-08-07", Domain: []string{"alpha"},
+		Summary:          `고쳐진 한 줄 " 따옴표 포함`,
+		SummaryHistory:   []string{"옛 한 줄", "그 전 한 줄"},
+		Status:           "superseded",
+		Outcome:          "bad",
+		SupersededReason: `실측에서 뒤집혔다 " 따옴표 포함`,
+	}
+	got := string(EmitFrontmatter(m))
+
+	wantOrder := []string{"summary:", "summary_history:", "status:", "outcome:",
+		"supersedes:", "superseded_reason:", "related:"}
+	pos := -1
+	for _, k := range wantOrder {
+		i := strings.Index(got, "\n"+k)
+		if i < 0 {
+			t.Fatalf("키 %q 가 없다:\n%s", k, got)
+		}
+		if i <= pos {
+			t.Fatalf("키 순서가 틀렸다 (%q):\n%s", k, got)
+		}
+		pos = i
+	}
+
+	rt, _, err := ParseFrontmatter(append(EmitFrontmatter(m), []byte("\n본문\n")...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.SupersededReason != m.SupersededReason {
+		t.Errorf("superseded_reason 왕복 실패: %q", rt.SupersededReason)
+	}
+	if len(rt.SummaryHistory) != 2 || rt.SummaryHistory[0] != "옛 한 줄" {
+		t.Errorf("summary_history 왕복 실패: %v", rt.SummaryHistory)
+	}
+
+	// 멱등: 두 번 방출해도 같아야 한다.
+	if once, twice := EmitFrontmatter(m), EmitFrontmatter(rt); !bytes.Equal(once, twice) {
+		t.Errorf("멱등하지 않다\n--- 1회 ---\n%s\n--- 2회 ---\n%s", once, twice)
+	}
+}

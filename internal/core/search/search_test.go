@@ -447,3 +447,186 @@ func setStatus(t *testing.T, c *config.Config, dir, stem, status string) {
 		t.Fatal(err)
 	}
 }
+
+// ★★ **뒤집힌 결정이 회수에서 사실상 사라지던 자리.**
+//
+// 감점(penaltySuperseded=5)이 head 히트 하나(weightHead=3)보다 커서, 히트가 하나뿐인
+// 질의에서는 점수가 음수가 되고 `score > 0` 이 노트를 통째로 버렸다. 즉 뒤집힌
+// 결정은 head 히트가 **둘은 있어야** 회수에 떴다.
+//
+// 그게 왜 치명적인가 — capture 가 번복 이유를 summary 꼬리표로 붙이는 이유가
+// "head 밖에 두면 검색이 안 된다" 인데(markOverturned 주석), 정작 그 이유에만
+// 나오는 낱말은 대개 한 개짜리 질의로 들어온다. 실볼트 측정에서 "osxkeychain",
+// "403" 같은 질의가 전부 0건이었다 — 이유를 head 에 올려 놓고도 못 찾은 것이다.
+//
+// 픽스처의 alpha-결정-스키마 는 superseded 이고 "테이블" 은 그 노트에만 있다.
+// head 1건 + body 1건 = 4점, 감점 후 -1 — 바닥이 없으면 결과가 통째로 빈다.
+func TestSupersededSurvivesSingleHeadHit(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	hits := mustRecall(t, l, c, "테이블", Options{CrossProject: true, Limit: 3, MinScore: 1})
+	if len(hits) != 1 {
+		t.Fatalf("뒤집힌 결정이 히트 하나짜리 질의에서 사라졌다 (%d건): %+v", len(hits), hits)
+	}
+	if hits[0].Note.Meta.Status != "superseded" {
+		t.Fatalf("엉뚱한 노트가 걸렸다: %s (%s)", hits[0].Note.Stem, hits[0].Note.Meta.Status)
+	}
+	if hits[0].Score != supersededFloor {
+		t.Errorf("바닥값이 아니다: %d, want %d — 감점을 건너뛰었으면 순위가 오른 것이다",
+			hits[0].Score, supersededFloor)
+	}
+}
+
+// TestSupersededFloorNeverOutranksActive 는 **바닥이 순위를 건드리지 않는지** 본다.
+//
+// 이게 이 안(바닥)을 감점 완화(5→2) 대신 고른 이유다. 실볼트 49질의 측정에서
+// 감점을 2로 낮추면 뒤집힌 노트가 살아 있는 결정을 제치고 1위가 되는 질의가 생겼고
+// (역전 10→12건), 슬롯 3개짜리 회수에서 active 노트 하나를 밀어냈다. 바닥은 순위를
+// 그대로 두고(역전 10건 유지·밀려남 0건) 빈 슬롯만 채운다.
+func TestSupersededFloorNeverOutranksActive(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	hits := mustRecall(t, l, c, "테이블 저장 엔진", Options{CrossProject: true, Limit: 3, MinScore: 1})
+	if len(hits) < 2 {
+		t.Fatalf("비교할 결과가 부족하다: %+v", hits)
+	}
+	last := hits[len(hits)-1]
+	if last.Note.Meta.Status != "superseded" {
+		t.Fatalf("뒤집힌 노트가 맨 끝이 아니다: %+v", hits)
+	}
+	for _, h := range hits[:len(hits)-1] {
+		if h.Note.Meta.Status == "superseded" {
+			continue
+		}
+		if h.Score <= last.Score {
+			t.Errorf("살아 있는 결정(%s, %d)이 뒤집힌 것(%d)보다 높지 않다",
+				h.Note.Stem, h.Score, last.Score)
+		}
+	}
+}
+
+// TestSupersededFloorStaysBelowAnyRealHit 은 "언제나 맨 끝" 을 상수 수준에서 못 박는다.
+//
+// 감점 없는 노트의 최소 점수는 weightHead 다 (headHits==0 이면 위에서 이미 탈락한다).
+// 바닥이 그보다 크거나 같아지는 순간 뒤집힌 결정이 살아 있는 결정을 밀어내기 시작하고,
+// 그건 이 변경이 하지 않기로 한 바로 그 일이다. 실볼트 측정의 "밀려남 0건" 은 이
+// 부등식이 성립할 때만 참이다.
+func TestSupersededFloorStaysBelowAnyRealHit(t *testing.T) {
+	if supersededFloor >= weightHead {
+		t.Fatalf("supersededFloor(%d) 가 weightHead(%d) 이상이다 — 뒤집힌 결정이 슬롯을 빼앗는다",
+			supersededFloor, weightHead)
+	}
+}
+
+// ★★ **딱지만으로는 부족하다.**
+//
+// 예전 주입은 `(superseded/bad)` 만 찍었다. 그건 "쓰지 마라" 는 말이지 "무엇을
+// 대신 하라" 는 말이 아니라서, 읽는 에이전트는 왜 버렸는지를 처음부터 다시 판다 —
+// 번복 이유를 기록하기로 한 목적이 정확히 그걸 막는 것이었다.
+func TestRenderInjectShowsOverturnReason(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	const reason = "osxkeychain 이 helper 목록에 누적돼 push 가 403 이 됐다"
+	hits := []Hit{{
+		Score: supersededFloor,
+		Note: store.Note{
+			Path: filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장엔진-2026-08-01.md"),
+			Stem: "alpha-결정-저장엔진-2026-08-01",
+			Meta: store.Meta{
+				Type: "decision", Date: "2026-08-01", Domain: []string{"alpha"},
+				Summary: "저장 엔진을 임베디드 DB 로 고른다",
+				Status:  "superseded", Outcome: "pending", SupersededReason: reason,
+			},
+		},
+	}}
+
+	out := RenderInject(l, hits)
+	if !strings.Contains(out, "(superseded/pending)") {
+		t.Fatalf("status/outcome 표기가 사라졌다:\n%s", out)
+	}
+	if !strings.Contains(out, reason) {
+		t.Errorf("번복 이유가 안 실렸다 — 딱지만 보고는 무엇을 대신할지 알 수 없다:\n%s", out)
+	}
+}
+
+// TestRenderInjectSkipsReasonAlreadyInSummary 는 같은 문장이 두 번 나가지 않는지 본다.
+//
+// markOverturned 는 이유를 frontmatter 와 **summary 꼬리표** 양쪽에 쓴다(회수 head 에
+// 실으려면 summary 밖에 자리가 없다). 그래서 아무 조건 없이 한 줄 더 찍으면 주입
+// 블록에 같은 이유가 두 번 나간다. 회수는 매 프롬프트마다 실려 나가는 예산이라
+// 중복 한 줄이 그냥 낭비가 아니다.
+//
+// 꼬리표는 80자로 잘려 있으므로(summaryReasonRunes) 전문 대조로는 못 잡는다 —
+// 앞머리로 본다. 여기서는 잘림까지 재현해서 그 경로를 실제로 태운다.
+func TestRenderInjectSkipsReasonAlreadyInSummary(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	reason := "helper 목록에 osxkeychain 이 누적됐다 " + strings.Repeat("가", 200)
+	clipped := string([]rune(reason)[:80]) + "…"
+
+	hits := []Hit{{
+		Score: supersededFloor,
+		Note: store.Note{
+			Path: filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장엔진-2026-08-01.md"),
+			Stem: "alpha-결정-저장엔진-2026-08-01",
+			Meta: store.Meta{
+				Type: "decision", Date: "2026-08-01", Domain: []string{"alpha"},
+				Summary:          "저장 엔진을 임베디드 DB 로 고른다 — 번복: " + clipped,
+				Status:           "superseded",
+				Outcome:          "pending",
+				SupersededReason: reason,
+			},
+		},
+	}}
+
+	out := RenderInject(l, hits)
+	if strings.Contains(out, "번복 이유:") {
+		t.Errorf("summary 가 이미 이유를 담고 있는데 한 줄 더 찍었다:\n%s", out)
+	}
+	if strings.Count(out, "osxkeychain") != 1 {
+		t.Errorf("이유가 %d번 나갔다 — 한 번이어야 한다:\n%s", strings.Count(out, "osxkeychain"), out)
+	}
+}
+
+// TestRenderInjectReasonSurvivesSelfOverturn 은 **status 가 아니라 키의 유무로**
+// 판단하는지 본다.
+//
+// 대체할 새 결정 없는 번복(capture/review.go 의 자기 번복)은 status 를 regretted 로
+// 두는 것이 정상이고, 측정으로 가정이 깨져 "그냥 그만둔다" 로 끝나는 그쪽이 실제로
+// 더 흔하다. `status == "superseded"` 로 좁히면 그 경우가 통째로 빠진다.
+func TestRenderInjectReasonSurvivesSelfOverturn(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	const reason = "임베디드 DB 로는 다중 프로세스 쓰기가 안 된다는 것이 실측으로 드러났다"
+	hits := []Hit{{
+		Score: 9,
+		Note: store.Note{
+			Path: filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-저장엔진-2026-08-01.md"),
+			Stem: "alpha-결정-저장엔진-2026-08-01",
+			Meta: store.Meta{
+				Type: "decision", Date: "2026-08-01", Domain: []string{"alpha"},
+				Summary: "저장 엔진을 임베디드 DB 로 고른다",
+				Status:  "regretted", Outcome: "bad", SupersededReason: reason,
+			},
+		},
+	}}
+	if out := RenderInject(l, hits); !strings.Contains(out, reason) {
+		t.Errorf("자기 번복(status=regretted)의 이유가 빠졌다:\n%s", out)
+	}
+}
+
+// TestRenderInjectQuietWithoutReason 은 이유가 없으면 줄을 안 만드는지 본다.
+// 실볼트 18노트 전부가 이 상태다 — 여기서 빈 줄이 붙으면 모든 주입이 부풀어 오른다.
+func TestRenderInjectQuietWithoutReason(t *testing.T) {
+	l, c := fixtureLayoutConfig(t)
+	hits := []Hit{{
+		Score: 4,
+		Note: store.Note{
+			Path: filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-스키마-2026-08-02.md"),
+			Stem: "alpha-결정-스키마-2026-08-02",
+			Meta: store.Meta{
+				Type: "decision", Date: "2026-08-02", Domain: []string{"alpha"},
+				Summary: "스키마를 단일 테이블로 유지한다", Status: "superseded", Outcome: "pending",
+			},
+		},
+	}}
+	out := RenderInject(l, hits)
+	if n := strings.Count(out, "\n"); n != 2 { // 헤더 + 노트 한 줄
+		t.Errorf("이유가 없는데 줄이 늘었다 (%d줄):\n%s", n, out)
+	}
+}

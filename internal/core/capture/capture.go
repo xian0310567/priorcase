@@ -17,12 +17,20 @@ import (
 )
 
 type Request struct {
-	Domain        string
-	Slug          string
-	Summary       string
-	Date          string // 비면 오늘
-	Supersedes    []string
-	SourceSession string
+	Domain     string
+	Slug       string
+	Summary    string
+	Date       string // 비면 오늘
+	Supersedes []string
+	// SupersedeReason 은 **왜 그 결정을 뒤집는가** 다. Supersedes 와 짝이다.
+	//
+	// 뒤집히는 **옛 노트**에 적힌다 — 새 노트가 아니다. 사유는 옛 결정의 성질이고,
+	// 회수에 옛 노트가 올라오는 순간 그 자리에 이유가 있어야 읽는 쪽이 "이건 왜
+	// 버렸지" 를 다시 파지 않는다. 자세한 배치 근거는 markOverturned 참고.
+	//
+	// 비어도 된다. 강제하면 아직 이 인자를 안 넘기는 호출부에서 뒤집기가 통째로 막힌다.
+	SupersedeReason string
+	SourceSession   string
 	// Author 는 이 결정을 내린 사람이다. 비면 호출부가 설정·git 에서 정해 넣는다.
 	//
 	// **여기서 자동으로 채우지 않는다.** capture 는 core 이고, "지금 어느 디렉토리에서
@@ -90,8 +98,11 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	}
 
 	// --supersedes 는 prior review 와 같은 로직(supersedeAll)을 탄다 — 대상 검증,
-	// "[[stem]]" 형식, 옛 노트의 status·related 갱신이 두 명령에서 동일하다.
-	supLinks, olds, err := supersedeAll(l, r.Supersedes, stem)
+	// "[[stem]]" 형식, 옛 노트의 status·related·번복 사유 갱신이 두 명령에서 동일하다.
+	//
+	// 날짜는 r.Date 를 넘긴다 — 뒤집는 결정이 내려진 날이 곧 번복이 일어난 날이다.
+	// (review 는 노트 date 가 과거일 수 있어 오늘을 쓴다. reviewDate 주석 참고.)
+	supLinks, olds, err := supersedeAll(l, r.Supersedes, stem, r.SupersedeReason, r.Date)
 	if err != nil {
 		return Result{}, err
 	}

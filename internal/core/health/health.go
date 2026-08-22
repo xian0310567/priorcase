@@ -12,6 +12,7 @@ package health
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -108,6 +109,41 @@ func RecentDecisions(l *store.Layout, now time.Time, days int) int {
 		}
 	}
 	return n
+}
+
+// allStems 는 볼트의 모든 마크다운 파일명(확장자 없이)을 NFC 로 접어 준다.
+//
+// 위키링크는 경로가 아니라 **파일명**으로 풀리므로(볼트 규약 문서의 실측) 대조도
+// 파일명으로 한다. `.obsidian` 은 앱 설정이고 `.trash` 는 지운 것이라 뺀다.
+func allStems(l *store.Layout) map[string]bool {
+	out := map[string]bool{}
+	root := l.Vault()
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // 못 읽는 자리는 건너뛴다 — 링크 검사는 곁다리다
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".obsidian", ".git", ".trash", "_derived":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".md") {
+			out[store.NFC(strings.TrimSuffix(d.Name(), ".md"))] = true
+		}
+		return nil
+	})
+	return out
+}
+
+// clip 은 진단 줄이 화면을 넘기지 않게 앞 몇 개만 보여 준다.
+func clip(ss []string) []string {
+	const n = 4
+	if len(ss) <= n {
+		return ss
+	}
+	return append(ss[:n:n], fmt.Sprintf("… 그 밖 %d건", len(ss)-n))
 }
 
 // checkSchema 는 **`prior capture` 가 거부했을 노트를 찾는다.**

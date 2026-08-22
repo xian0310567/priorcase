@@ -28,25 +28,31 @@ func TestToolSchemasMatchArgStructs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(lt.Tools) != 4 {
-				t.Fatalf("도구 %d개, want 4", len(lt.Tools))
-			}
-
+			// 기대 목록이 **정본**이다. 도구를 늘리면서 여기를 안 고치면 아래
+			// "모르는 도구" 가 잡는다 — 그래서 개수는 want 에서 센다. 숫자를 손으로
+			// 박아 두면 도구를 하나 더하고 숫자만 올려 놓고 스키마 대응 검사는
+			// 빠뜨리는 일이 생긴다(실제로 note 를 더할 때 그럴 뻔했다).
 			want := map[string]struct {
 				props    []string
 				required []string
 			}{
 				"priorcase_recall":  {[]string{"query", "limit", "cross_project"}, []string{"query"}},
-				"priorcase_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "date", "session_id"}, []string{"domain", "slug", "summary"}},
-				"priorcase_review":  {[]string{"stem", "outcome", "status", "retrospective", "supersedes"}, []string{"stem"}},
+				"priorcase_note":    {[]string{"domain", "summary", "body", "tags", "date", "session_id"}, []string{"domain", "summary"}},
+				"priorcase_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "supersede_reason", "date", "session_id"}, []string{"domain", "slug", "summary"}},
+				"priorcase_review":  {[]string{"stem", "outcome", "status", "summary", "retrospective", "supersedes", "supersede_reason"}, []string{"stem"}},
 				"priorcase_pending": {[]string{"resolve"}, nil},
 			}
+			if len(lt.Tools) != len(want) {
+				t.Fatalf("도구 %d개, want %d", len(lt.Tools), len(want))
+			}
+			seen := map[string]bool{}
 			for _, tool := range lt.Tools {
 				w, ok := want[tool.Name]
 				if !ok {
-					t.Errorf("모르는 도구: %s", tool.Name)
+					t.Errorf("모르는 도구: %s — 스키마 ↔ 구조체 대응 검사를 안 받고 있다", tool.Name)
 					continue
 				}
+				seen[tool.Name] = true
 				raw, err := json.Marshal(tool.InputSchema)
 				if err != nil {
 					t.Fatal(err)
@@ -77,11 +83,16 @@ func TestToolSchemasMatchArgStructs(t *testing.T) {
 					t.Errorf("%s: 설명이 비었다", tool.Name)
 				}
 			}
+			for name := range want {
+				if !seen[name] {
+					t.Errorf("%s 가 등록되지 않았다 — 기대 목록에만 있다", name)
+				}
+			}
 		})
 	}
 }
 
-// 스키마가 진짜로 통하는지는 **실제 호출**로만 안다. 네 도구를 두 언어에서 전부 부른다.
+// 스키마가 진짜로 통하는지는 **실제 호출**로만 안다. 도구 전부를 두 언어에서 부른다.
 func TestEveryToolIsCallableInBothLanguages(t *testing.T) {
 	for _, lang := range []string{"ko", "en"} {
 		t.Run(lang, func(t *testing.T) {
@@ -95,12 +106,25 @@ func TestEveryToolIsCallableInBothLanguages(t *testing.T) {
 				args map[string]any
 			}{
 				{"priorcase_recall", map[string]any{"query": "저장", "limit": 2, "cross_project": true}},
+				{"priorcase_note", map[string]any{
+					"domain": "alpha", "summary": "스키마가 통하는지 본다 " + lang,
+					"body": "#### 대안\n안 해 봤다.\n", "tags": []string{"t"},
+					"date": "2026-08-09", "session_id": "S1",
+				}},
 				{"priorcase_capture", map[string]any{
 					"domain": "alpha", "slug": "스키마검증-" + lang, "summary": "스키마가 통하는지 본다",
 					"body": "## x\n", "tags": []string{"t"}, "related": []string{}, "date": "2026-08-09",
-					"session_id": "S1",
+					"session_id": "S1", "supersede_reason": "",
 				}},
-				{"priorcase_review", map[string]any{"stem": "alpha-결정-스키마검증-" + lang + "-2026-08-09", "outcome": "good"}},
+				// review 는 인자를 **전부** 실어 보낸다. summary·supersede_reason 은 core 에
+				// 필드만 있고 여기 인자가 없어서 에이전트가 영영 못 쓰던 것들이라,
+				// 배선이 끊기면 바로 잡혀야 한다. 사유만 오는 번복은 status 도 함께
+				// 바뀌어야 통과한다(capture.Review 가 그걸 요구한다).
+				{"priorcase_review", map[string]any{
+					"stem": "alpha-결정-스키마검증-" + lang + "-2026-08-09", "outcome": "bad",
+					"status": "regretted", "summary": "실측으로 뒤집혔다 " + lang,
+					"retrospective": "돌려봤더니 아니었다.", "supersede_reason": "실측 23건 중 0건이 기록됐다",
+				}},
 				{"priorcase_pending", map[string]any{}},
 			}
 			for _, call := range calls {

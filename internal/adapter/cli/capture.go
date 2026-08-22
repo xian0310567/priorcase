@@ -66,7 +66,12 @@ func newCaptureCmd() *cobra.Command {
 	f.StringVar(&r.Slug, "slug", "", "파일명 slug (필수)")
 	f.StringVar(&r.Summary, "summary", "", "한 줄 요약 (필수)")
 	f.StringVar(&r.Date, "date", "", "YYYY-MM-DD (기본: 오늘)")
-	f.StringSliceVar(&r.Supersedes, "supersedes", nil, "뒤집는 결정의 stem (반복 가능 — 한 결정이 여럿을 뒤집을 수 있다)")
+	f.StringSliceVar(&r.Supersedes, "supersedes", nil,
+		"뒤집는 결정의 stem (반복 가능 — 한 결정이 여럿을 뒤집을 수 있다)")
+	// **--supersedes 만으로는 "왜" 가 안 남는다.** 옛 노트에는 status=superseded 와
+	// 양방향 링크만 찍혔고, 실볼트 18노트 중 번복 사유가 기록된 것은 0건이었다.
+	// 링크만 보고서는 다음 사람이 "이건 왜 버렸지" 를 처음부터 다시 판다.
+	f.StringVar(&r.SupersedeReason, "reason", "", "뒤집는 이유 — 측정 결과·계기를 한 줄로 (--supersedes 와 짝)")
 	f.StringVar(&r.SourceSession, "session", "", "출처 세션 ID")
 	f.StringVar(&r.Author, "author", "", "이 결정을 내린 사람 (기본: 설정의 author 또는 git 신원)")
 	f.StringSliceVar(&r.Tags, "tag", nil, "태그 (반복 가능)")

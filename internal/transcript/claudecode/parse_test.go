@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/xian0310567/priorcase/internal/transcript"
 )
@@ -281,6 +282,349 @@ func mustJSON(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// ───────────────────────── tool_result (2026-08-19) ─────────────────────────
+//
+// 배경: content-block switch 에 tool_result case 가 없어서 결과를 통째로 버렸다.
+// 그래서 **AskUserQuestion 의 사용자 답변이 발췌에 없었고**, 판별기가 원장에
+// (promotions.jsonl 11행) "실제로 무엇을 정했는지 불명확" 이라 적고 record=false 를
+// 냈다. 최근 7일 판정 23건 / 자동 기록 0건이 그렇게 나왔다.
+
+// useRec 는 tool_use 레코드 한 줄이다 (결과가 이름을 찾을 수 있게 id 를 준다).
+func useRec(id, name, path string) string {
+	return `{"type":"assistant","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:00.000Z",` +
+		`"message":{"role":"assistant","content":[{"type":"tool_use","id":` + mustJSON(id) +
+		`,"name":` + mustJSON(name) + `,"input":{"file_path":` + mustJSON(path) + `}}]}}`
+}
+
+// resultRec 는 tool_result 레코드 한 줄이다. 실물처럼 **user 레코드**에 담긴다 —
+// 그래서 이걸 발화로 세면 턴 수 관문이 오염된다.
+func resultRec(id, body string, isErr bool) string {
+	e := "false"
+	if isErr {
+		e = "true"
+	}
+	return `{"type":"user","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:01.000Z",` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":` + mustJSON(id) +
+		`,"content":` + mustJSON(body) + `,"is_error":` + e + `}]}}`
+}
+
+// toolTexts 는 도구 줄(호출+결과)만 뽑는다.
+func toolTexts(turns []transcript.Turn) []string {
+	var out []string
+	for _, tn := range turns {
+		if tn.Kind == transcript.KindTool {
+			out = append(out, tn.Text)
+		}
+	}
+	return out
+}
+
+// resultTexts 는 **결과 줄만** 뽑는다. 호출 줄("Read foo.go")과 달리 결과 줄에는
+// 화살표 표지가 있다.
+func resultTexts(turns []transcript.Turn) []string {
+	var out []string
+	for _, s := range toolTexts(turns) {
+		if strings.Contains(s, "→") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func joinLines(lines ...string) string { return strings.Join(lines, "\n") + "\n" }
+
+// 실측한 AskUserQuestion 결과의 두 문형. 값만 줄였고 **형태는 실물 그대로**다.
+const askAnsweredBody = `Your questions have been answered: "늘어난 기록을 어디에 담을까요?"="2계층 — 결정 노트 + 작업로그 (권장)", ` +
+	`"판별기가 언제 판정하게 할까요?"="둘 다 — 도중엔 작업로그, 끝날 때 결정 (권장)". You can now continue with these answers in mind.`
+
+const askUserAnsweredBody = `The user answered: "git 커밋에 박힐 이름을 무엇으로 할까요?"="LeeJeongHan", ` +
+	`"회사 레포와 개인 레포의 git 이메일을 분리할까요?"=(no option selected) notes: 분리하는데 개인 계정은 내일 등록할게.`
+
+// ★★ 이 테스트가 이 변경의 전부다. 사용자가 **실제로 무엇을 골랐는지**가 발췌에 남아야 한다.
+func TestAskUserQuestionAnswerSurvives(t *testing.T) {
+	body := joinLines(
+		useRec("tq", "AskUserQuestion", ""),
+		resultRec("tq", askAnsweredBody, false),
+	)
+	turns, _, _, bad := parse(t, body)
+	if bad != 0 {
+		t.Fatalf("깨진 줄 %d개", bad)
+	}
+	got := resultTexts(turns)
+	if len(got) != 1 {
+		t.Fatalf("결과 줄 %d개, 1개여야 한다: %v", len(got), got)
+	}
+	// 고른 답이 **글자 그대로** 남아야 한다. 이름만 남으면 고치기 전과 같다.
+	for _, want := range []string{
+		"AskUserQuestion",
+		"2계층 — 결정 노트 + 작업로그 (권장)",
+		"둘 다 — 도중엔 작업로그, 끝날 때 결정 (권장)",
+	} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("답변이 잘렸다 — %q 가 없다:\n%s", want, got[0])
+		}
+	}
+}
+
+// ★ 이름으로만 판별하면 **체크포인트에 걸린 답변을 도로 잃는다.**
+//
+// 데몬은 체크포인트부터 읽으므로, 호출(assistant)이 이전 구간이고 결과(user)만 이번
+// 구간에 오는 일이 흔하다. 그때 id→이름 지도가 비어 있어 이름을 모른다. 머리말로도
+// 판별해야 그 답변이 200B 로 잘려 사라지지 않는다.
+func TestAskUserQuestionAnswerSurvivesWithoutItsToolUse(t *testing.T) {
+	for _, body := range []string{askAnsweredBody, askUserAnsweredBody} {
+		turns, _, _, _ := parse(t, joinLines(resultRec("없는id", body, false)))
+		got := resultTexts(turns)
+		if len(got) != 1 {
+			t.Fatalf("결과 줄 %d개, 1개여야 한다: %v", len(got), got)
+		}
+		if len(got[0]) < len(body)/2 {
+			t.Errorf("호출을 못 본 답변이 잘렸다 (%dB → %dB):\n%s", len(body), len(got[0]), got[0])
+		}
+	}
+	// 실제로 고른 답이 남았는지도 본다.
+	turns, _, _, _ := parse(t, joinLines(resultRec("없는id", askUserAnsweredBody, false)))
+	if got := resultTexts(turns); len(got) == 0 || !strings.Contains(got[0], "LeeJeongHan") {
+		t.Errorf("답변 본문이 안 남았다: %v", got)
+	}
+}
+
+// ★★ 결과는 **발화가 아니다.** 감사 결함 6 이 정확히 그것이었다 — 툴 한 번에
+// tool_use + tool_result 로 두 턴이 차서 min_turns=6 관문이 6배 빨리 채워졌다.
+//
+// 실측 대조(스냅샷 85개 파일): 이 변경 전후로 세는 발화가 user 171 · assistant 288 로
+// **완전히 같았다**. 전체 Turn 만 1809 → 2957 로 늘었다.
+func TestToolResultNeverCountsTowardThreshold(t *testing.T) {
+	// 사용자가 끼어들면 한 레코드에 결과와 사람의 말이 같이 온다. 사람의 말만 세야 한다.
+	mixed := `{"type":"user","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:02.000Z",` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tb","content":"ok 0.3s"},` +
+		`{"type":"text","text":"그만하고 다른 걸 하자"}]}}`
+	body := joinLines(
+		useRec("tb", "Bash", "/tmp/x"),
+		resultRec("tb", "ok github.com/x/y 0.301s", false),
+		mixed,
+	)
+	turns, _, _, _ := parse(t, body)
+
+	counted := 0
+	for _, tn := range turns {
+		if tn.Kind.Counts() {
+			counted++
+		}
+	}
+	if counted != 1 {
+		t.Errorf("세는 발화 %d개, 1개(사람의 말)여야 한다 — 결과가 관문을 오염시킨다", counted)
+	}
+	if got := len(resultTexts(turns)); got != 2 {
+		t.Errorf("결과 줄 %d개, 2개여야 한다 — 결과를 여전히 버리고 있다", got)
+	}
+	// user 레코드에 실렸다고 사람의 말로 둔갑하면 안 된다.
+	for _, tn := range turns {
+		if tn.Kind == transcript.KindUser && strings.Contains(tn.Text, "0.301s") {
+			t.Error("도구 결과가 사람의 발화로 들어왔다")
+		}
+	}
+}
+
+// 조회성 도구의 덤프는 버린다. **무엇을 봤는지는 호출 줄이 이미 말한다.**
+//
+// 실측: tool_result 본문 3,610,097B 중 Read 하나가 1,353,763B(37.5%)이고 p50 이 6,296B 다.
+func TestLookupResultsAreDropped(t *testing.T) {
+	dump := strings.Repeat("1\tpackage main 2\timport \"fmt\" ", 400)
+	for _, name := range []string{"Read", "Grep", "Glob", "WebFetch"} {
+		body := joinLines(useRec("t1", name, "/tmp/big.go"), resultRec("t1", dump, false))
+		turns, _, _, _ := parse(t, body)
+		if got := resultTexts(turns); len(got) != 0 {
+			t.Errorf("%s 덤프가 발췌에 들어왔다: %.80s…", name, got[0])
+		}
+		// 호출 줄은 그대로 남아야 한다 — 그게 "무엇을 봤나" 다.
+		if got := toolTexts(turns); len(got) != 1 || !strings.HasPrefix(got[0], name+" ") {
+			t.Errorf("%s 호출 줄이 사라졌다: %v", name, got)
+		}
+	}
+}
+
+// ★ 단 **실패한 조회는 살린다.** "pdftoppm is not installed" 는 덤프가 아니라
+// 계획을 뒤집는 사실이다 — 무엇이 이 선택을 뒤집었나가 우리가 찾는 것이다.
+func TestFailedLookupSurvives(t *testing.T) {
+	const msg = "pdftoppm is not installed. Install poppler-utils to enable PDF page rendering."
+	body := joinLines(useRec("t1", "Read", "/tmp/a.pdf"), resultRec("t1", msg, true))
+	turns, _, _, _ := parse(t, body)
+	got := resultTexts(turns)
+	if len(got) != 1 {
+		t.Fatalf("실패한 조회가 버려졌다: %v", got)
+	}
+	if !strings.Contains(got[0], "poppler-utils") {
+		t.Errorf("실패 사유가 안 담겼다: %q", got[0])
+	}
+	if !strings.Contains(got[0], "실패") {
+		t.Errorf("실패 표시가 없다 — 성공한 출력과 구별이 안 된다: %q", got[0])
+	}
+}
+
+// 사용자가 도구 실행을 거부한 것도 **사용자의 결정**이다. is_error 가 안 붙는 경우가
+// 있어 머리말로도 잡는다.
+func TestUserRefusalSurvives(t *testing.T) {
+	const msg = "The user doesn't want to proceed with this tool use. The tool use was rejected " +
+		"(eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing."
+	turns, _, _, _ := parse(t, joinLines(resultRec("없는id", msg, false)))
+	got := resultTexts(turns)
+	if len(got) != 1 || !strings.Contains(got[0], "doesn't want to proceed") {
+		t.Errorf("사용자의 거부가 사라졌다: %v", got)
+	}
+}
+
+// ★ 거부 문구를 본문 전체에서 찾으면 안 된다.
+//
+// 실측에서 걸렸다 — 전문 검색을 돌렸더니 **소스 파일을 읽은 Bash 결과**가 걸렸다
+// (파일 안에 "rejected" 가 들어 있었다). 호스트 문구는 언제나 본문 맨 앞에 온다.
+func TestRefusalMarkerIsNotMatchedDeepInsideBody(t *testing.T) {
+	body := strings.Repeat("x", 600) + " The user doesn't want to proceed " + strings.Repeat("y", 600)
+	turns, _, _, _ := parse(t, joinLines(useRec("t1", "Bash", "/tmp/x"), resultRec("t1", body, false)))
+	got := resultTexts(turns)
+	if len(got) != 1 {
+		t.Fatalf("결과 줄 %d개", len(got))
+	}
+	// 거부로 오인했다면 320B 예산을 받았을 것이다. 일반 결과 예산으로 잘려야 한다.
+	if len(got[0]) > 260 {
+		t.Errorf("본문 깊숙한 문구를 거부로 오인했다 (%dB): %.120s…", len(got[0]), got[0])
+	}
+}
+
+// 짧은 결과는 그대로, 긴 결과는 **가운데**를 버린다.
+//
+// 앞만 자르면 결말(ok/FAIL)을 잃고, 뒤만 자르면 무엇을 한 건지를 잃는다.
+func TestLongResultKeepsHeadAndTail(t *testing.T) {
+	const short = "ok github.com/xian0310567/priorcase/internal/core/judge 0.301s"
+	turns, _, _, _ := parse(t, joinLines(useRec("t1", "Bash", "/tmp/x"), resultRec("t1", short, false)))
+	got := resultTexts(turns)
+	if len(got) != 1 || !strings.HasSuffix(got[0], short) {
+		t.Fatalf("짧은 결과가 그대로 안 담겼다: %v", got)
+	}
+
+	long := "START-여기가앞머리 " + strings.Repeat("중간은버려도된다 ", 200) + "FAIL-여기가결말"
+	turns, _, _, _ = parse(t, joinLines(useRec("t2", "Bash", "/tmp/x"), resultRec("t2", long, false)))
+	got = resultTexts(turns)
+	if len(got) != 1 {
+		t.Fatalf("결과 줄 %d개", len(got))
+	}
+	if !strings.Contains(got[0], "START-여기가앞머리") {
+		t.Errorf("앞머리가 없다: %q", got[0])
+	}
+	if !strings.Contains(got[0], "FAIL-여기가결말") {
+		t.Errorf("결말이 없다 — 뒤를 잘랐다: %q", got[0])
+	}
+	if !strings.Contains(got[0], "생략") {
+		t.Errorf("생략 표시가 없다 — 잘린 줄을 온전한 출력으로 읽으면 안 된다: %q", got[0])
+	}
+}
+
+// ★ 한 줄이 발췌 예산(daemon.maxExcerpt=6000)을 넘으면 excerpt 가 거기서 멈춰
+// **그 앞이 통째로 사라진다.** 상한이 바이트여야 하는 이유가 이것이다.
+func TestResultLinesStayWellUnderExcerptBudget(t *testing.T) {
+	huge := strings.Repeat("한글이라한글자가삼바이트다 ", 4000) // ≈160KB
+	for _, tc := range []struct {
+		name string
+		max  int
+	}{
+		{"Bash", 260},
+		{"AskUserQuestion", 1300},
+	} {
+		turns, _, _, _ := parse(t, joinLines(
+			useRec("t1", tc.name, "/tmp/x"),
+			resultRec("t1", huge, false),
+		))
+		got := resultTexts(turns)
+		if len(got) != 1 {
+			t.Fatalf("%s: 결과 줄 %d개", tc.name, len(got))
+		}
+		if len(got[0]) > tc.max {
+			t.Errorf("%s 결과가 %dB — %dB 이하여야 한다 (발췌가 여기서 끊긴다)", tc.name, len(got[0]), tc.max)
+		}
+		// 바이트로 잘라도 한글이 깨지면 안 된다. 깨진 줄은 판별기가 못 읽는다.
+		if !utf8.ValidString(got[0]) {
+			t.Errorf("%s 결과가 UTF-8 문자 가운데서 잘렸다", tc.name)
+		}
+	}
+}
+
+// ★ 결과 본문에도 자격증명이 섞인다 — `env` 출력, 설정 파일 덤프. 발화보다 위험하다.
+// 가림은 toolsum 것을 그대로 쓴다(복제된 보안 규칙은 반드시 어긋난다).
+func TestToolResultRedactsSecrets(t *testing.T) {
+	for _, tc := range []struct{ body, mustNot string }{
+		{"GITHUB_TOKEN=ghp_abcdefghijklmnop", "ghp_abcdefghijklmnop"},
+		{"Authorization: Bearer sk-abc123456789", "sk-abc123456789"},
+		{"AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"},
+	} {
+		turns, _, _, _ := parse(t, joinLines(
+			useRec("t1", "Bash", "/tmp/x"),
+			resultRec("t1", tc.body, false),
+		))
+		for _, s := range resultTexts(turns) {
+			if strings.Contains(s, tc.mustNot) {
+				t.Errorf("결과 본문의 자격증명이 그대로 남았다: %q", s)
+			}
+		}
+	}
+}
+
+// content 는 문자열이거나 블록 배열이다 — 실측 1,249건 중 문자열 1,212(97.0%) ·
+// 배열 37(3.0%). 배열 안에는 text 말고 tool_reference·image 도 섞여 온다.
+func TestToolResultContentBlockArray(t *testing.T) {
+	line := `{"type":"user","cwd":"/tmp/p","sessionId":"S1","timestamp":"2026-08-07T01:00:01.000Z",` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[` +
+		`{"type":"text","text":"빌드 통과"},` +
+		`{"type":"image","source":{"type":"base64","data":"AAAA"}},` +
+		`{"type":"tool_reference","name":"Bash"}]}]}}`
+	turns, _, _, bad := parse(t, joinLines(useRec("t1", "Bash", "/tmp/x"), line))
+	if bad != 0 {
+		t.Fatalf("깨진 줄 %d개 — 배열 모양 content 를 못 읽었다", bad)
+	}
+	got := resultTexts(turns)
+	if len(got) != 1 || !strings.Contains(got[0], "빌드 통과") {
+		t.Fatalf("배열 모양 결과에서 본문을 못 뽑았다: %v", got)
+	}
+	if strings.Contains(got[0], "AAAA") {
+		t.Error("이미지 데이터가 발췌에 들어왔다")
+	}
+}
+
+// 빈 결과는 줄을 만들지 않는다 (실측: ToolSearch·Read 에 본문 0B 가 나온다).
+// 내용 없는 줄이 발췌 예산과 반복 접기를 오염시킨다.
+func TestEmptyToolResultProducesNoTurn(t *testing.T) {
+	for _, empty := range []string{"", "   \n\t "} {
+		turns, _, _, bad := parse(t, joinLines(useRec("t1", "Bash", "/tmp/x"), resultRec("t1", empty, false)))
+		if bad != 0 {
+			t.Fatalf("bad = %d", bad)
+		}
+		if got := resultTexts(turns); len(got) != 0 {
+			t.Errorf("빈 결과에서 줄이 나왔다: %v", got)
+		}
+	}
+}
+
+// 결과 줄은 **어느 도구의 결과인지**를 달고 있어야 한다. 호출과 결과 사이에 다른
+// 도구가 끼어드는 일이 흔해서, 앞줄을 보고 짐작하게 두면 판별기가 틀린다.
+func TestToolResultCarriesToolName(t *testing.T) {
+	body := joinLines(
+		useRec("a", "Edit", "internal/core/store/frontmatter.go"),
+		useRec("b", "Bash", "/tmp/x"),
+		resultRec("b", "ok 0.3s", false),
+		resultRec("a", "The file frontmatter.go has been updated successfully.", false),
+	)
+	turns, _, _, _ := parse(t, body)
+	got := resultTexts(turns)
+	if len(got) != 2 {
+		t.Fatalf("결과 줄 %d개, 2개여야 한다: %v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "Bash ") {
+		t.Errorf("첫 결과가 Bash 것이 아니다: %q", got[0])
+	}
+	if !strings.HasPrefix(got[1], "Edit ") {
+		t.Errorf("둘째 결과가 Edit 것이 아니다: %q", got[1])
+	}
 }
 
 // ★★ 명령 첫 줄만 담으면 **아무것도 안 담는 것과 같다.**

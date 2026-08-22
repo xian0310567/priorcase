@@ -44,19 +44,6 @@ type Options struct {
 	// JudgeAvailable 이 true 면 키워드 시그널을 건너뛴다. 판정은 판별기가 한다.
 	JudgeAvailable bool
 
-	// StartupBudget 은 기동 패스의 drain 에 주는 시간이다. 0 이면 기본값.
-	//
-	// **기동이 밀린 구간에 붙잡히면 안 된다.** 데몬이 오래 꺼져 있었거나
-	// --backfill 이면 밀린 파일이 수백 개일 수 있고, 그걸 다 훑는 동안
-	// `prior watch` 가 뜨지 않는다. 남은 것은 정상 감시 루프의 drain 이 가져간다.
-	StartupBudget time.Duration
-
-	// BacklogInterval 은 **밀린 구간을 소화하러 도는 주기**다. 0 이면 기본값.
-	//
-	// 시험이 밀리초로 돌 수 있어야 해서 여기서 받는다 — 5분을 기다리는 시험은
-	// 아무도 안 돌린다.
-	BacklogInterval time.Duration
-
 	// OnEvent 는 진행 상황을 알린다. nil 이면 아무 데도 안 알린다.
 	OnEvent func(Event)
 }
@@ -64,7 +51,7 @@ type Options struct {
 // Event 는 데몬이 밖에 알리는 사건이다. 데몬은 백그라운드라 조용히 실패하면
 // 아무도 모른다 — 그래서 성공·실패를 다 흘려보내고 호출자가 어디로 낼지 정한다.
 type Event struct {
-	Kind   string // "seed" | "scan" | "error" | "ready" | "promote" | "backlog"
+	Kind   string // "seed" | "scan" | "error" | "ready"
 	Path   string
 	Result ScanResult
 	Err    error
@@ -125,8 +112,6 @@ type watcher struct {
 	hosts []hosts.Resolved
 	mu    sync.Mutex
 	dirty map[string]bool
-	// backlog 는 밀린 구간을 소화하는 루프의 상태다 (backlog.go).
-	backlog backlogState
 }
 
 func (d *watcher) emit(e Event) {
@@ -170,11 +155,6 @@ func (d *watcher) run(ctx context.Context) error {
 		<-timer.C
 	}
 	armed := false
-
-	// **밀린 구간을 갚는 타이머.** drain 은 새 표시가 생겼을 때만 승격하므로
-	// 이미 쌓인 것은 아무도 안 건드린다 (backlog.go 참고).
-	chew := time.NewTimer(d.backlogInterval())
-	defer chew.Stop()
 
 	for {
 		select {
@@ -225,12 +205,6 @@ func (d *watcher) run(ctx context.Context) error {
 		case <-timer.C:
 			armed = false
 			d.drain(ctx, true)
-
-		case <-chew.C:
-			d.chewBacklog(ctx)
-			// 성과가 없으면 주기가 길어진다 — 판별기가 못 도는 상태에서
-			// 5분마다 부르는 것은 호스트 CLI 를 두들기는 일이다.
-			chew.Reset(d.backlog.wait(d.backlogInterval()))
 		}
 	}
 }
@@ -284,36 +258,14 @@ func (d *watcher) startupPass(ctx context.Context) {
 	// **데몬도 정리한다.** 정리를 훑기에만 넣으면 데몬을 켠 사용자는 한 번도 안
 	// 돈다 — 훑기는 락을 못 얻으면 통째로 건너뛰기 때문이다. 정리를 그쪽에 둔
 	// 근거("훑기가 이미 파일 목록과 락을 쥐고 있다")가 데몬에도 그대로 적용된다.
-	// **호스트가 더는 목록에 넣지 않는 파일의 체크포인트도 지운다.**
-	//
-	// 서브에이전트 기록을 제외하기 시작하면서 1,417개가 죽은 채 남는다. 상태
-	// 파일은 mutate 마다 통째로 다시 쓰므로 그 무게가 모든 쓰기에 실린다.
-	if n, err := PruneUnlisted(d.st, plan.Roots, plan.Listed); err != nil {
-		d.emit(Event{Kind: "error", Err: err})
-	} else if n > 0 {
-		d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
-			"체크포인트 %d개를 정리했다 (호스트가 더는 다루지 않는 기록)", n)})
-	}
 	if n, err := PruneMissing(d.st); err != nil {
 		d.emit(Event{Kind: "error", Err: err})
 	} else if n > 0 {
 		d.emit(Event{Kind: "seed", Note: fmt.Sprintf("체크포인트 %d개를 정리했다 "+
 			"(사라진 파일 · 진행 없음)", n)})
 	}
-	// **자라지 않은 파일은 큐에 넣지 않는다.**
-	//
-	// Scan 은 읽을 것이 없어도 나가면서 흔적을 남기는데 그건 상태 파일 전체를
-	// 다시 쓰는 일이다. 실측으로 이 기계의 체크포인트 3,605건 중 3,563건이 이미
-	// 따라잡은 상태라, 필터가 없으면 매 기동에 그만큼을 헛돈다
-	// (실측 29초 · 상태 쓰기 3,417회).
-	//
-	// **sweepPlanned 와 같은 판단이다.** 두 곳에 두면 한쪽만 고쳐진 채로 남는다.
-	cps := d.st.CheckpointSnapshot()
 	queued := 0
 	for _, p := range plan.Scan {
-		if fi, err := os.Stat(p); err == nil && !cps[p].Behind(fi.Size()) {
-			continue
-		}
 		d.mu.Lock()
 		d.dirty[p] = true
 		d.mu.Unlock()
@@ -327,12 +279,6 @@ func (d *watcher) startupPass(ctx context.Context) {
 	}
 }
 
-// DefaultStartupBudget 은 기동 패스 drain 의 기본 상한이다.
-//
-// 훑기(SweepOnce)의 10초와 같은 수를 쓴다 — 같은 일을 하는 두 자리가 다른
-// 상한을 가지면 어느 쪽이 옳은지 물을 자리가 생긴다.
-const DefaultStartupBudget = 10 * time.Second
-
 // drain 은 쌓인 파일을 훑는다.
 func (d *watcher) drain(ctx context.Context, promote bool) {
 	d.mu.Lock()
@@ -343,26 +289,8 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 	d.dirty = map[string]bool{}
 	d.mu.Unlock()
 
-	// **예산을 넘기면 남은 것을 dirty 로 되돌린다.** 버리면 그 파일은 다시
-	// 바뀌지 않는 한 영영 안 읽힌다 — fsnotify 이벤트가 두 번 다시 안 온다.
-	budget := d.o.StartupBudget
-	if budget <= 0 {
-		budget = DefaultStartupBudget
-	}
-	deadline := time.Now().Add(budget)
-
 	flagged := false
-	for i, p := range paths {
-		if time.Now().After(deadline) {
-			d.mu.Lock()
-			for _, rest := range paths[i:] {
-				d.dirty[rest] = true
-			}
-			d.mu.Unlock()
-			d.emit(Event{Kind: "seed", Note: fmt.Sprintf(
-				"예산(%v)을 넘겨 %d개를 다음 기회로 넘긴다", budget, len(paths)-i)})
-			break
-		}
+	for _, p := range paths {
 		r, err := Scan(d.st, d.o.Config, d.l, p, d.o.JudgeAvailable, d.hosts)
 		if err != nil {
 			d.emit(Event{Kind: "error", Path: p, Err: err})
@@ -394,6 +322,57 @@ func (d *watcher) drain(ctx context.Context, promote bool) {
 			StateDir: d.o.StateDir, Config: d.o.Config, Layout: d.l,
 			Err: d.promoteWriter(), Label: "prior watch",
 		})
+	}
+
+	// **취소된 세션 끝 훅을 메운다.**
+	//
+	// 결정 노트는 아크 판정에서만 나오고, 아크는 세션 경계에서만 볼 수 있다. 그런데
+	// 그 경계의 훅이 안 돌 수 있다 — 실측으로 사용자가
+	// `SessionEnd hook ... failed: Hook cancelled` 를 봤다. 호스트가 종료 과정에서
+	// 훅을 취소하면 그 세션의 결정은 영영 없다.
+	//
+	// 그래서 데몬이 오래 잠잠한 transcript 를 대신 판정한다. 이 도구가 "안전망" 인
+	// 이유가 원래 이것이다 — 협조하지 않는 경로가 있으면 그 뒤에 서는 것.
+	if promote {
+		d.arcStale(ctx)
+	}
+}
+
+// arcQuietFor 는 "이 세션은 끝났다고 봐도 된다" 는 침묵의 길이다.
+//
+// 세션이 정상적으로 끝나면 훅이 즉시 아크를 판정하므로 이 경로는 **취소·크래시
+// 전용**이다. 그래서 늦는 것이 거의 손해가 아니고, 반대로 짧게 잡으면 사람이 잠깐
+// 자리를 비운 대화를 끝난 것으로 오해해 아직 진행 중인 흐름에서 결정 노트가 나온다.
+//
+// 20분으로 둔다. 대화 중이면 도구 호출만으로도 transcript 가 몇 분 안에 자란다 —
+// 20분 완전 침묵은 활동 중인 세션에서 나오기 어렵다.
+//
+// 오판해도 손실은 아니다. Decided 표식이 전진하므로 남은 대화는 다음 아크가 본다.
+const arcQuietFor = 20 * time.Minute
+
+// arcStale 은 오래 잠잠하고 아직 결정 판정하지 않은 transcript 하나를 판정한다.
+//
+// **한 판에 하나만 한다.** 판별기 호출은 초 단위인데 여기서 여러 개를 돌리면
+// 데몬의 감시 루프가 그만큼 멎고, 밀린 파일이 많을 때(--backfill 뒤) 호스트 CLI 를
+// 두들긴다. 후보는 매 drain 마다 다시 보므로 결국 전부 처리된다.
+func (d *watcher) arcStale(ctx context.Context) {
+	st := NewStore(d.o.StateDir)
+	if err := st.Load(); err != nil {
+		return
+	}
+	now := time.Now()
+	for path, cp := range st.CheckpointSnapshot() {
+		if cp.At.IsZero() || now.Sub(cp.At) < arcQuietFor {
+			continue // 아직 활동 중이거나 흔적이 없다
+		}
+		if cp.Decided >= cp.Offset {
+			continue // 이미 판정했다
+		}
+		PromoteArc(ctx, ArcOptions{
+			StateDir: d.o.StateDir, Config: d.o.Config, Layout: d.l,
+			Path: path, Err: d.promoteWriter(), Label: "prior watch (잠잠한 세션)",
+		})
+		return
 	}
 }
 

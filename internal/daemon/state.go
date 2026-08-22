@@ -33,7 +33,13 @@ const stateFile = "state.json"
 
 // DefaultDir 은 상태 파일이 놓이는 자리다. **볼트 밖이다** (스펙 §5) — 볼트에는
 // 사람이 읽을 문서만 두고, 기계 상태는 XDG state 로 보낸다.
-func DefaultDir() (string, error) { return xdgpath.StateDir() }
+func DefaultDir() (string, error) {
+	state, err := xdgpath.StateHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(state, "priorcase"), nil
+}
 
 // Checkpoint 는 transcript 파일 하나의 진행 지점이다.
 type Checkpoint struct {
@@ -71,28 +77,47 @@ type Checkpoint struct {
 	// 날짜별로 나누면 각 날의 비교 창이 고정되어 그 고장이 사라진다.
 	DayCredited map[string]int `json:"day_credited,omitempty"`
 
-	// Suppressed 는 이 파일에서 면제로 넘긴 구간 수다. 진단용이다 — 억제가 그냥
+	// Decided 는 **결정 노트 판정을 끝낸** 바이트 수다. Offset 과 따로 둔다.
+	//
+	// # 왜 축이 둘이어야 하나
+	//
+	// Offset 은 "훑어서 표시까지 끝냈다" 는 축이고 대화 도중 계속 전진한다. 그 축에
+	// 얹혀 있던 승격은 표시된 구간(pending)을 하나씩 소모하는데, 데몬이 도중에
+	// 작업 로그로 승격하면서 그 구간을 해소한다 — 그래서 세션이 끝날 때 큐가 비고,
+	// **결정 노트를 쓰는 경로에 판정할 것이 남지 않았다.**
+	//
+	// 실측으로 그 상태였다: 자동 기록 63건이 전부 작업 로그이고 **결정 노트 0건.**
+	// 판별기는 136번 돌았는데 결정 등급은 한 번도 못 나왔다 — 나올 자리가 없었다.
+	//
+	// 그래서 "아크를 어디까지 결정 판정했나" 를 별도 축으로 든다. 이 축은 세션이
+	// 끝날 때(또는 압축될 때, 또는 대화가 오래 잠잠할 때)만 전진한다.
+	//
+	// 판별기 호출이 **실패했을 때는 전진하지 않는다.** 그래야 다음 기회에 다시 본다.
+	// 반대로 "결정 아님" 판정은 전진한다 — 같은 구간을 매 세션 끝마다 다시 물으면
+	// 예산을 거기서 다 쓴다.
+	Decided int64 `json:"decided,omitempty"`
+
+	// ArcFails 는 이 파일의 아크 판정이 **연속으로 실패한 횟수**다.
+	//
+	// [[priorcase-결정-판별기-상한과-포기-카운터-2026-08-12]] 와 같은 함정이 아크에도
+	// 있다. 실측으로 확인했다: 35MB transcript 의 아크(발췌 24KB·발화 126)를 실제
+	// 판별기에 넣으니 **75초 상한에 killed** 되고, 그 한 번이 승격 예산 90초를 통째로
+	// 먹어서 구간 드레인이 아무것도 못 했다. 표식은 전진하지 않으므로 다음 세션 끝에
+	// 같은 아크를 또 넣는다 — 매 세션을 그 한 건이 태운다.
+	//
+	// 그래서 실패마다 **되짚는 양을 반으로 줄인다**(DecidedFrom). 큰 아크가 안 되면
+	// 작은 아크로라도 남기는 편이 낫다. maxArcFails 번을 넘기면 그 아크를 포기하고
+	// 표식을 전진시킨다 — 그 대화 하나를 잃지만 시스템이 계속 돈다.
+	ArcFails int `json:"arc_fails,omitempty"`
+
+	// Suppressed 는 이 파일에서 면제 판정이 선 구간 수다. 진단용이다 — 억제가 그냥
 	// 사라지면 안전망이 일을 안 하는 것과 구분되지 않는다.
+	//
+	// ⚠️ **이 수는 "기록을 건너뛴 횟수" 가 아니다.** 한때는 그랬고(면제 = pending 없음
+	// = 판별기 입력 없음), 그 시절의 실측이 "면제 6회 / 같은 기간 자동 기록 0건" 이다.
+	// 지금 면제는 **표시 경로에만** 적용되므로(Credit·CreditQuiet 주석) 이 수는
+	// "들이밀지 않고 조용히 넘긴 구간" 을 센다. 기록은 그대로 간다.
 	Suppressed int `json:"suppressed,omitempty"`
-
-	// Turns 는 **임계 미만으로 누적 중인** 발화 수다.
-	//
-	// 이것이 없으면 임계 미만 구간을 누적하는 유일한 방법이 "전진하지 않는 것"
-	// 이고, 그러면 Offset 이 0 으로 굳는다. PlanSweep 은 Offset 으로 아는 파일을
-	// 판정하므로 **이미 훑은 파일이 처음 보는 파일로 분류돼 끝으로 시딩된다** —
-	// 그 앞의 대화가 통째로 사라진다. 안전망 자신의 데이터 손실이다.
-	//
-	// 판정을 항목 존재로 바꿔 봤다가 되돌린 것도 같은 뿌리다. 그때는 임계 미만
-	// 파일이 영원히 재훑기 집합에 남아 예산을 태웠다 (실측: 임계 미만이
-	// Claude Code 68.7% · Codex 92.2%). 누적을 체크포인트가 들면 **전진하면서도
-	// 누적**할 수 있어 둘이 같이 풀린다.
-	Turns int `json:"turns,omitempty"`
-
-	// Seg 는 누적 중인 구간이 시작한 오프셋이다.
-	//
-	// 임계를 넘길 때 여기서부터 다시 읽어 발췌·시그널·날짜를 만든다. 마지막
-	// 조각만 담으면 사람이 앞부분을 못 보고 판단한다.
-	Seg int64 `json:"seg,omitempty"`
 }
 
 // Pending 은 "이 구간에 결정이 있었을 수 있다" 는 표시다. 결정 노트가 아니다.
@@ -122,6 +147,18 @@ type Pending struct {
 	// 여기 담아 두면 ② 훅 주입(에이전트에게 들이밀기)과 ③ 자동 승격(판별기에 넘기기)이
 	// 둘 다 transcript 없이 된다.
 	Excerpt string `json:"excerpt,omitempty"`
+
+	// Quiet 는 **면제가 걸린 구간**이다. 표시(알림)에서만 뺀다.
+	//
+	// 면제가 pending 자체를 없애던 시절에는 이 필드가 필요 없었다 — 없는 pending 은
+	// 표시도 기록도 안 됐으니까. 그게 바로 고친 고장이다(Credit 주석). 이제 면제는
+	// **구간을 지우지 않고 조용히 만들 뿐**이므로, "기록에는 넘기되 사람·에이전트에게
+	// 들이밀지는 않는다" 를 실어 나를 자리가 필요하다. 그 자리가 여기다.
+	//
+	// 읽는 쪽 규칙: **묻지 않았는데 들이미는 곳만** 이걸 본다(ForNudge). 사람이
+	// 직접 물은 `prior pending` 이나 승격 경로는 보지 않는다 — 물어본 사람에게
+	// 감추는 것은 면제가 아니라 은폐다.
+	Quiet bool `json:"quiet,omitempty"`
 
 	// Fails 는 판별기를 부르다 실패한 횟수다 (판정을 못 받은 것만 — "결정이 아니다"
 	// 라는 판정은 성공이고 구간이 해소된다).
@@ -346,39 +383,131 @@ func (s *Store) Advance(path string, offset, size int64) error {
 	})
 }
 
-// CheckpointEntry 는 한 파일의 체크포인트를 통째로 준다.
+// DecidedFrom 은 아크 판정을 **어디서부터** 시작할지 준다.
 //
-// CheckpointSnapshot 은 지도 전체를 복사하므로 파일마다 부르면 O(n²) 다 —
-// 실측에서 그 모양 때문에 훑기가 10초에 119개밖에 못 돌았다.
-func (s *Store) CheckpointEntry(path string) Checkpoint {
-	s.reload()
+// 표식이 없으면 파일 끝에서 initialArcLookback 만큼 되짚는다. 0 에서 시작하면
+// 이미 쌓인 대화 전체(실측 35MB)를 한 번에 판정하게 되는데, 발췌 상한이 24KB 라
+// 그 판정은 통째로 뭉개진다 — 그리고 그 한 번으로 표식이 끝까지 전진해서 **다시
+// 볼 기회도 사라진다.** 최근 것만 보는 편이 낫다.
+//
+// 파일이 줄었으면(잘렸거나 다른 파일로 바뀌었으면) 표식을 믿을 수 없으므로 같은
+// 규칙으로 되짚는다 — CheckpointFor 가 Offset 에 하는 것과 같은 판단이다.
+func (s *Store) DecidedFrom(path string, size int64) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.st.Checkpoints[path]
+	cp := s.st.Checkpoints[path]
+	if cp.Decided > 0 && cp.Decided <= size {
+		return cp.Decided
+	}
+	// **실패한 만큼 되짚기를 줄인다.** 같은 크기로 다시 넣으면 같은 이유로 또 죽는다.
+	back := int64(initialArcLookback) >> cp.ArcFails
+	if back < minArcLookback {
+		back = minArcLookback
+	}
+	if size > back {
+		return size - back
+	}
+	return 0
 }
 
-// AdvanceAccum 은 **임계 미만인 구간을 전진시키면서 누적을 남긴다.**
-//
-// 전진하는 이유: 안 하면 Offset 이 0 으로 굳어 PlanSweep 이 이 파일을 처음 보는
-// 것으로 분류하고, 시딩이 그 앞의 대화를 버린다 (§ Checkpoint.Turns).
-//
-// turns 가 0 이면 누적이 끝났다는 뜻이라 Seg 도 같이 지운다 — 안 지우면 다음
-// 구간이 옛 시작점부터 다시 읽힌다.
-func (s *Store) AdvanceAccum(path string, offset, size int64, turns, seg int64) error {
+// ArcFailed 는 아크 판정 실패를 새기고 누적 횟수를 준다.
+func (s *Store) ArcFailed(path string) (int, error) {
+	n := 0
+	err := s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		cp.ArcFails++
+		n = cp.ArcFails
+		st.Checkpoints[path] = cp
+	})
+	return n, err
+}
+
+// ArcSucceeded 는 실패 횟수를 지운다. 한 번 성공하면 다음 아크는 온전한 크기로 본다.
+func (s *Store) ArcSucceeded(path string) error {
 	return s.mutate(func(st *state) {
 		cp := st.Checkpoints[path]
-		cp.Offset, cp.Size = offset, size
-		cp.Turns = int(turns)
-		if turns == 0 {
-			cp.Seg = 0
-		} else {
-			cp.Seg = seg
+		cp.ArcFails = 0
+		st.Checkpoints[path] = cp
+	})
+}
+
+// MarkDecided 는 아크 판정을 끝낸 지점을 새긴다.
+func (s *Store) MarkDecided(path string, offset int64) error {
+	return s.mutate(func(st *state) {
+		cp := st.Checkpoints[path]
+		if offset > cp.Decided {
+			cp.Decided = offset
 		}
 		st.Checkpoints[path] = cp
 	})
 }
 
-// Credit 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
+// initialArcLookback 은 표식이 없을 때 되짚는 양이다.
+//
+// 1MB 는 발췌 상한(24KB)의 40배가 넘지만, 그 사이를 생략 표시가 메운다 — 앞뒤를
+// 담고 가운데를 버리므로 "이 세션에서 무엇이 오갔나" 의 윤곽은 남는다. 반대로
+// 이 값을 발췌 상한 수준으로 줄이면 아크가 아니라 또 하나의 구간이 되어, 세션
+// 끝에 아크 전체를 보기로 한 이유가 사라진다.
+const initialArcLookback = 1 << 20
+
+// minArcLookback 은 되짚기를 줄여도 이보다 작게는 안 간다. 이보다 작으면 아크가
+// 아니라 또 하나의 구간이 되어, 세션 끝에 아크 전체를 보기로 한 이유가 사라진다.
+const minArcLookback = 64 << 10
+
+// maxArcFails 는 한 아크를 판별기에 넣어 볼 횟수다.
+//
+// [[priorcase-결정-판별기-상한과-포기-카운터-2026-08-12]] 의 MaxJudgeFails 와 같은
+// 이유와 같은 값이다. 넘기면 표식을 전진시켜 포기한다 — 그 대화 하나를 잃는 대신
+// 매 세션이 그 한 건에 타지 않는다.
+const maxArcFails = 3
+
+// CreditQuiet 은 소모성 면제를 판정하고 그 결과를 체크포인트에 새긴다.
+//
+// **답의 뜻은 "표시에서 빼라" 다. "기록하지 마라" 가 아니다.** 그 구별이 이 함수의
+// 전부이고, 그것을 못 하던 시절의 대가가 아래 실측이다.
+//
+// # 무엇이 뒤집혔나
+//
+// 옛 계약은 "true 면 이 구간을 넘겨라" 였고, 호출부(scan.go)는 그 답을 받으면
+// **pending 을 아예 만들지 않았다.** 그때는 pending 이 곧 "에이전트에게 들이미는
+// 알림" 이었으므로 그것이 곧 "이미 기록한 세션은 두 번 조르지 않는다" 였다.
+//
+// 지금 pending 은 **판별기의 유일한 입력이다**(D8 판별기 복원, D12 승격 분리).
+// Promote 는 ReadPending 으로만 대상을 찾는다. 억제 대상이 "알림" 에서 "기록 자체"
+// 로 바뀌었는데 로직은 그대로 남았다.
+//
+// # 실측
+//
+// 최근 7일 판정 23건 / 자동 기록 0건, 같은 기간 `prior doctor` 의 **면제 6회.**
+// 면제된 구간은 pending 이 안 생기고, 깨진 줄이 없으면 Scan 이 그대로 Advance 를
+// 부른다 — 체크포인트가 지나가므로 **그 대화는 다시 오지 않는다.** 볼트에 노트가
+// 하나 생길 때마다 다음 구간 하나가 판별기에 닿지도 못하고 소멸했다는 뜻이다.
+// 사람이 손으로 기록할수록 자동 경로가 더 눈감는 되먹임이고, 정확히 거꾸로다.
+//
+// # 왜 통째로 지우지 않고 경로로 나눴나
+//
+// 두 경로는 **틀렸을 때의 비용이 다르다.** 알림을 잘못 아낀 것은 회복된다 —
+// 구간이 큐에 남아 다음 세션에도 뜬다. 기록을 잘못 아낀 것은 회복되지 않는다 —
+// 체크포인트가 지나가 그 발췌가 사라진다. 어림짐작(노트가 늘었으니 봤겠지)은
+// **회복 가능한 쪽에만** 둔다.
+//
+// 그리고 알림 쪽의 소음 문제는 지금도 실측으로 살아 있다. 판별기가 붙으면 Scan 은
+// 키워드 시그널을 아예 건너뛰므로 임계를 넘는 **모든** 구간이 표시가 된다(실측:
+// 발화 6개 초과 세션 585개). 거기서 면제를 지우면 안전망이 소음이 되고, 에이전트는
+// 무시하는 법을 배운다 — 이 프로젝트가 죄목으로 드는 바로 그 상태다.
+//
+// # 옛 근거를 하나씩
+//
+//   - "Advance 가 필드를 보존해야 한다, 안 그러면 면제가 무한해진다"(Advance 주석):
+//     유효하다. 다만 무한 면제가 이제 잃는 것은 기록이 아니라 알림이다.
+//   - "새 노트 = 에이전트가 기록했다는 직접 증거"(아래): **판별기 앞에서는
+//     깨진다.** 노트는 "그 결정이 기록됐다" 는 증거이지 "이 구간에 남은 결정이 없다"
+//     는 증거가 아니다. 사람에게 조르는 것을 아끼는 데는 그 어림으로 충분하지만,
+//     기록을 통째로 버리는 근거로는 부족하다.
+//   - "안전망이 자기 출력으로 자기를 억제하면 안 된다"(CreditNote): 유효하다.
+//     막는 대상이 '기록 누락' 에서 '알림 누락' 으로 바뀌었을 뿐이다.
+//
+// # 판정 규칙
 //
 // **마지막 확인 이후 새 노트가 생겼으면 면제한다.** 노트가 새로 생겼다는 것은 그
 // 사이에 에이전트가 기록을 했다는 직접 증거이고, 안 늘었다면 이 구간은 아직 아무도
@@ -390,7 +519,7 @@ func (s *Store) AdvanceAccum(path string, offset, size int64, turns, seg int64) 
 //
 // **두 축을 따로 본다.** 하나로 합치면 날짜 축의 창이 바뀔 때 세션 축까지 같이
 // 망가진다(위 DayCredited 주석).
-func (s *Store) Credit(path string, sessionN int, perDay map[string]int) (bool, error) {
+func (s *Store) CreditQuiet(path string, sessionN int, perDay map[string]int) (bool, error) {
 	suppress := false
 	err := s.mutate(func(st *state) {
 		cp := st.Checkpoints[path]
@@ -430,6 +559,11 @@ func (s *Store) Credit(path string, sessionN int, perDay map[string]int) (bool, 
 //
 // 노트에 출처 필드가 없어 사후에는 구분할 수 없다(스펙: 자동/수기를 구분하지 않는다).
 // 그래서 만든 그 자리에서 소모시킨다.
+//
+// **면제가 표시 전용이 된 뒤에도 남긴다.** 막는 것이 '기록 누락' 에서 '알림 누락'
+// 으로 가벼워졌을 뿐, 고장 자체는 그대로다 — 승격이 노트를 만들 때마다 다음 구간이
+// 조용해지면, 판별기가 "기록 안 함" 으로 판정한 구간까지 사람 눈에서 사라진다.
+// 그건 안전망의 마지막 그물이다.
 func (s *Store) CreditNote(path, date, sessionID string) error {
 	return s.mutate(func(st *state) {
 		cp := st.Checkpoints[path]
@@ -556,6 +690,27 @@ func ReadPending(dir string) ([]Pending, error) {
 		return nil, err
 	}
 	return s.Pending(), nil
+}
+
+// ForNudge 는 **묻지 않았는데 들이미는 자리**에 낼 구간만 고른다 (면제된 것은 뺀다).
+//
+// 세션 진입 안내·회수 주입처럼 사람이 청하지 않은 통로가 여기다. 반대로 사람이 직접
+// 물은 `prior pending`, MCP 의 pending 도구, 그리고 **승격(Promote)** 은 이걸 통과시키지
+// 않는다 — 물어본 사람에게 감추는 것은 면제가 아니라 은폐이고, 판별기에게 감추는 것은
+// 이 작업이 고친 바로 그 고장이다(Credit 주석).
+//
+// 목록을 통째로 걸러 주는 함수로 둔 이유: 판정을 `p.Quiet` 하나로 두면 호출부마다
+// `if !p.Quiet` 를 쓰게 되고, **한 곳이 빠져도 아무도 모른다.** 빠진 쪽이 승격이면
+// 기록이 사라지고, 알림이면 소음이 된다. 이름이 붙어 있으면 어느 쪽을 골랐는지가
+// 호출부에 남는다.
+func ForNudge(items []Pending) []Pending {
+	out := make([]Pending, 0, len(items))
+	for _, p := range items {
+		if !p.Quiet {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // ResolvePending 은 확인이 끝난 구간을 지운다.
@@ -700,14 +855,17 @@ func (s *Store) SeedAll(sizes map[string]int64) error {
 
 // Empty 는 이 체크포인트가 **아무 진행도 담고 있지 않은가**다.
 //
-// 훑은 흔적(At)만 있고 소비한 바이트도, 소모한 크레딧도, 억제한 구간도 없는 상태다.
-// 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피 0부터 읽는다.
+// 훑은 흔적(At)만 있고 소비한 바이트도, 결정 판정 지점도, 소모한 크레딧도, 억제한
+// 구간도 없는 상태다. 그런 항목은 지워도 잃을 것이 없다 — 파일이 돌아와도 어차피
+// 0부터 읽는다.
+//
+// ⚠️ **필드 화이트리스트다.** 새 필드를 여기 안 넣으면 그 정보만 가진 항목이 조용히
+// 지워진다. `Decided` 를 추가하면서 실제로 그 상태를 만들었고, 짝 테스트
+// (TestCheckpointEmptyCoversEveryField)가 잡았다 — 필드 수를 세는 가드가 여기 있는
+// 이유가 그것이다.
 func (cp Checkpoint) Empty() bool {
-	return cp.Offset == 0 && cp.Size == 0 &&
-		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0 &&
-		// **누적 중인 항목은 비어 있지 않다.** 임계 미만 발화를 모으는 중이라
-		// 지우면 그만큼의 대화를 잃는다.
-		cp.Turns == 0 && cp.Seg == 0
+	return cp.Offset == 0 && cp.Size == 0 && cp.Decided == 0 && cp.ArcFails == 0 &&
+		cp.SessionCredited == 0 && cp.Suppressed == 0 && len(cp.DayCredited) == 0
 }
 
 // PruneMissing 은 **사라진 파일 중 진행이 없는 항목**을 지운다. 지운 수를 준다.
@@ -730,65 +888,12 @@ func (cp Checkpoint) Empty() bool {
 //
 // **파일이 있는지 없는지를 여기서 판정한다.** 호출자가 미리 걸러 주지 않는 이유는,
 // 그러면 "무엇을 지울 수 있나" 의 규칙이 두 곳에 생기기 때문이다.
-// PruneUnlisted 는 **호스트가 더는 목록에 넣지 않는 파일**의 체크포인트를 지운다.
-//
-// 왜 필요한가: 호스트가 거르는 규칙이 바뀌면(예: 서브에이전트 기록 제외) 그
-// 파일들은 다시는 List 에 안 나오지만 체크포인트는 그대로 남는다. 상태 파일은
-// mutate 마다 통째로 다시 쓰므로 **죽은 항목의 무게가 모든 쓰기에 실린다** —
-// 실측으로 3,648항목 중 1,417개가 이 모양이었다 (836KB 중 대부분).
-//
-// **listed 는 목록이 성공한 루트의 것이어야 한다.** 호스트가 잠깐 안 보일 때
-// (외장 디스크·권한) 그 목록을 넘기면 멀쩡한 체크포인트를 지우고, 그러면 그
-// 파일들이 다시 시딩돼 **그 사이의 대화를 잃는다.** 호출부가 그것을 지킨다.
-//
-// **파일이 없는 것은 여기서 안 지운다** — 그건 PruneMissing 의 몫이고, 그쪽은
-// "진행이 없는 항목만" 이라는 더 좁은 규칙을 쓴다. 여기서 같이 처리하면 그
-// 안전장치가 조용히 넓어진다.
-func PruneUnlisted(st *Store, roots []string, listed map[string]bool) (int, error) {
-	if len(roots) == 0 {
-		return 0, nil
-	}
-	var doomed []string
-	for p := range st.CheckpointSnapshot() {
-		if listed[p] {
-			continue
-		}
-		if !underAny(p, roots) {
-			continue // 우리가 목록을 만든 자리가 아니다 — 판단하지 않는다
-		}
-		if _, err := os.Stat(p); err != nil {
-			continue // 없거나 못 보는 것은 PruneMissing 의 몫이다
-		}
-		doomed = append(doomed, p)
-	}
-	return pruneDoomed(st, doomed, false)
-}
-
-// underAny 는 경로가 주어진 루트 중 하나 아래인지 본다.
-//
-// 문자열 접두사만 보면 /a/bc 가 /a/b 아래로 잡힌다. 경계를 확인한다.
-func underAny(p string, roots []string) bool {
-	for _, r := range roots {
-		if r == "" {
-			continue
-		}
-		rel, err := filepath.Rel(r, p)
-		if err != nil {
-			continue
-		}
-		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
-
 func PruneMissing(st *Store) (int, error) {
-	// **비었는지는 여기서 보지 않는다.** pruneDoomed 가 잠금 안에서 본다 —
-	// 두 곳에서 같은 규칙을 검사하면 앞쪽이 뒤쪽을 가려서, 뒤쪽이 망가져도
-	// 아무 시험이 못 잡는다 (변형 시험으로 실제로 드러났다).
 	var doomed []string
-	for p := range st.CheckpointSnapshot() {
+	for p, cp := range st.CheckpointSnapshot() {
+		if !cp.Empty() {
+			continue
+		}
 		if _, err := os.Stat(p); err == nil {
 			continue // 파일이 있다
 		} else if !os.IsNotExist(err) {
@@ -797,7 +902,7 @@ func PruneMissing(st *Store) (int, error) {
 		}
 		doomed = append(doomed, p)
 	}
-	return pruneDoomed(st, doomed, true)
+	return pruneDoomed(st, doomed)
 }
 
 // pruneDoomed 는 삭제 후보를 **잠금 안에서 다시 보고** 지운다.
@@ -805,16 +910,7 @@ func PruneMissing(st *Store) (int, error) {
 // 따로 뺀 이유는 시험 가능성이다. 경합(스냅샷 → stat 루프 → mutate 사이에 남이
 // 크레딧을 새김)은 시간에 기대지 않고는 재현하기 어려운데, 이 함수는 낡은 목록을
 // 직접 넘겨 그 상황을 결정적으로 만든다.
-// pruneDoomed 는 표적을 지운다.
-//
-// requireEmpty 는 **왜 지우는가**에 따라 다르다.
-//
-//   - 사라진 파일(PruneMissing): 진행이 있으면 안 지운다. 파일이 돌아올 수 있고
-//     (동기화·마운트), 그때 진행을 잃으면 그 사이 대화가 사라진다.
-//   - 호스트가 안 다루는 파일(PruneUnlisted): 진행이 있어도 지운다. 다시는
-//     목록에 안 나오므로 그 진행값은 아무도 안 읽는다 — 남겨 두면 죽은 무게가
-//     모든 상태 쓰기에 실릴 뿐이다.
-func pruneDoomed(st *Store, doomed []string, requireEmpty bool) (int, error) {
+func pruneDoomed(st *Store, doomed []string) (int, error) {
 	if len(doomed) == 0 {
 		return 0, nil
 	}
@@ -829,8 +925,7 @@ func pruneDoomed(st *Store, doomed []string, requireEmpty bool) (int, error) {
 	deleted := 0
 	err := st.mutate(func(s *state) {
 		for _, p := range doomed {
-			cp, ok := s.Checkpoints[p]
-			if ok && (!requireEmpty || cp.Empty()) {
+			if cp, ok := s.Checkpoints[p]; ok && cp.Empty() {
 				delete(s.Checkpoints, p)
 				deleted++
 			}

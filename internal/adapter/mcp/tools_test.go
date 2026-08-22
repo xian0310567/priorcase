@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -80,13 +81,99 @@ func TestListToolsExposesAll(t *testing.T) {
 			t.Errorf("%s 에 설명이 없다 — 모델이 언제 부를지 판단할 근거가 없다", tool.Name)
 		}
 	}
-	for _, want := range []string{"priorcase_recall", "priorcase_capture", "priorcase_review", "priorcase_pending"} {
-		if !got[want] {
-			t.Errorf("%s 가 목록에 없다 (있는 것: %v)", want, got)
+	// 목록이 정본이다 — 개수는 여기서 센다. 숫자를 따로 박아 두면 도구를 늘릴 때
+	// 숫자만 고치고 이름은 안 더하는 반쪽 수정이 통과한다.
+	want := []string{"priorcase_recall", "priorcase_note", "priorcase_capture", "priorcase_review", "priorcase_pending"}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("%s 가 목록에 없다 (있는 것: %v)", w, got)
 		}
 	}
-	if len(res.Tools) != 4 {
-		t.Errorf("도구 %d개, 4개여야 한다", len(res.Tools))
+	if len(res.Tools) != len(want) {
+		t.Errorf("도구 %d개, %d개여야 한다 (있는 것: %v)", len(res.Tools), len(want), got)
+	}
+}
+
+// **등록 순서는 클라이언트에 도달하지 않는다.** note 를 추가할 때 "자주 불릴 것을
+// 앞에 등록하면 모델이 그걸 기본으로 삼는다" 로 배치했는데, 실제 목록은 이름 순으로
+// 나왔다 — go-sdk 가 도구를 map 에 담고 sortedKeys 로 낸다(features.go).
+//
+// 이 사실을 못 박아 두는 이유: 순서를 지렛대로 착각하면 도구 하나를 옮겨 놓고
+// "이제 더 불리겠지" 하고 끝낸다. 실제 지렛대는 설명 문구와 instructions 뿐이다.
+func TestListToolsOrderIsNameSortedNotRegistration(t *testing.T) {
+	cs, _, _ := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range res.Tools {
+		names = append(names, tool.Name)
+	}
+	if !sort.StringsAreSorted(names) {
+		t.Errorf("도구 목록이 이름 순이 아니다: %v — SDK 동작이 바뀌었으면 "+
+			"tools.go 의 등록 순서 주석도 다시 봐야 한다", names)
+	}
+}
+
+// note 는 작업 로그에 실제로 쓰여야 한다. 그리고 **결정 노트 폴더에는 아무것도
+// 안 생겨야 한다** — 두 계층이 섞이면 등급을 나눈 의미가 사라진다.
+func TestNoteWritesToWorklogNotDecisions(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	cs := connectWith(t, c)
+
+	out := text(t, call(t, cs, "priorcase_note", map[string]any{
+		"domain":  "alpha",
+		"summary": "인덱스 자료구조 셋을 재 봤다",
+		"body":    "#### 측정\nB-tree 가 3배 빨랐다.\n",
+		"date":    "2026-08-09",
+	}))
+	if !strings.Contains(out, "작업 로그") {
+		t.Errorf("응답이 어디에 남겼는지 말하지 않는다:\n%s", out)
+	}
+
+	wl := filepath.Join(c.DefaultVaultPath(), "alpha", "99-alpha-작업-로그.md")
+	body, err := os.ReadFile(wl)
+	if err != nil {
+		t.Fatalf("작업 로그가 생기지 않았다 (%s): %v", wl, err)
+	}
+	if !strings.Contains(string(body), "인덱스 자료구조 셋을 재 봤다") {
+		t.Errorf("항목이 작업 로그에 없다:\n%s", body)
+	}
+	if !strings.Contains(string(body), "## 2026-08-09") {
+		t.Errorf("날짜 헤딩이 없다 — rollup 이 그 주를 통째로 못 본다:\n%s", body)
+	}
+
+	ents, err := os.ReadDir(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if strings.Contains(e.Name(), "인덱스") {
+			t.Errorf("note 가 결정 노트를 만들었다: %s", e.Name())
+		}
+	}
+}
+
+// **회수는 작업 로그도 찾아야 한다 — 물어봤을 때만.** 등급을 나눈 이유가 자동
+// 주입을 지키는 것이라, 물어본 자리에서까지 안 나오면 쌓을 이유가 없어진다.
+func TestRecallFindsWorklogEntries(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	cs := connectWith(t, c)
+
+	call(t, cs, "priorcase_note", map[string]any{
+		"domain":  "alpha",
+		"summary": "졸업요건 판정을 규칙엔진으로 뺄지 검토중",
+		"body":    "#### 대안\n하드코딩은 학과가 늘 때마다 배포가 필요해서 기각.\n",
+		"date":    "2026-08-09",
+	})
+
+	out := text(t, call(t, cs, "priorcase_recall", map[string]any{"query": "졸업요건 규칙엔진"}))
+	if !strings.Contains(out, "졸업요건 판정을 규칙엔진으로 뺄지 검토중") {
+		t.Errorf("회수가 작업 로그 항목을 못 찾았다:\n%s", out)
+	}
+	if !strings.Contains(out, "작업 로그") {
+		t.Errorf("작업 로그 절 제목이 없다 — 등급이 안 읽힌다:\n%s", out)
 	}
 }
 
@@ -234,6 +321,31 @@ func TestPendingToolListsAndResolves(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Errorf("해소 후 %d건 남았다", len(left))
+	}
+}
+
+// **면제된 구간도 `priorcase_pending` 에는 나온다.** 사람이 직접 물었기 때문이다 —
+// 물어본 사람에게 감추는 것은 면제가 아니라 은폐다. 거르는 자리는 instructions 뿐이다
+// (짝: TestInstructionsHideQuietPending).
+func TestPendingToolShowsQuietItems(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	stateDir := t.TempDir()
+	s := daemon.NewStore(stateDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	p := daemon.Pending{
+		SessionID: "S9", Path: "/t/조용한.jsonl", Cwd: "/tmp/proj/alpha", Domain: "alpha",
+		Turns: 11, Signals: []string{"결정"}, From: 0, To: 900, Quiet: true, At: time.Now().UTC(),
+	}
+	if err := s.AddPending(p); err != nil {
+		t.Fatal(err)
+	}
+	cs := connectWithState(t, c, stateDir)
+
+	out := text(t, call(t, cs, "priorcase_pending", map[string]any{}))
+	if !strings.Contains(out, p.ID()) {
+		t.Errorf("면제된 구간이 도구 목록에서 감춰졌다 — 지울 방법이 없어진다:\n%s", out)
 	}
 }
 

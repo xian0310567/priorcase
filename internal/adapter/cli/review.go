@@ -36,5 +36,12 @@ func newReviewCmd() *cobra.Command {
 	f.StringVar(&r.Summary, "summary", "", "한 줄 요약을 고친다 (회수에 주입되는 유일한 줄)")
 	f.StringVar(&r.Retrospective, "retro", "", "## 회고 에 붙일 내용")
 	f.StringSliceVar(&r.Supersedes, "supersedes", nil, "이 결정이 뒤집는 결정의 stem (반복 가능)")
+	// **review 는 --supersedes 없이 번복 이유를 남길 수 있는 유일한 경로다.**
+	// 대체할 새 결정이 있으면 사유는 뒤집히는 옛 노트에 붙지만, 측정으로 가정이 깨져
+	// 그냥 그만두는 번복이 실제로 더 흔하다 — 그때 사유가 붙을 곳은 이 노트 자신뿐이고,
+	// capture 에는 그 자리가 없다. 그 경우 --status superseded(또는 regretted)도 함께
+	// 줘야 한다(capture.Review 가 요구한다).
+	f.StringVar(&r.SupersedeReason, "reason", "",
+		"무엇이 이 판단을 뒤집었는가 — 측정 결과·계기를 한 줄로 (--supersedes 없으면 --status 도 함께)")
 	return cmd
 }

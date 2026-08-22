@@ -67,6 +67,19 @@ func NewCommand() *cobra.Command {
 						if r.Flagged {
 							msg += fmt.Sprintf(" · 표시함 (시그널 %v)", r.Signals)
 						}
+						// **판별기가 무엇을 봤는지 여기 적는다.** 이게 없으면 "판별기가
+						// 결정을 못 알아봤다" 와 "판별기에게 근거를 안 보여 줬다" 가
+						// 밖에서 구별되지 않는다 — 원장은 승격 성공 때만 발췌를 싣는데
+						// 이 머신의 원장 32줄 중 excerpt 키가 있는 줄이 0건이었다.
+						// 문구는 훅과 공유한다(ScanResult.ExcerptNote).
+						if note := r.ExcerptNote(); note != "" {
+							msg += " · " + note
+						}
+						// 면제는 이제 **표시를 지우지 않고 조용히 할 뿐**이다. 그 사실이
+						// 로그에 없으면 사람은 이 구간이 판별기로 갔는지 아닌지 모른다.
+						if r.Quiet {
+							msg += " · 조용히 (이미 기록된 세션 — 들이밀지만 않는다)"
+						}
 						if r.Excluded {
 							msg += " · 제외 구역이라 표시 안 함"
 						}

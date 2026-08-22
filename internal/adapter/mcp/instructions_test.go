@@ -171,6 +171,49 @@ func TestInstructionsOmitPendingWhenDisabled(t *testing.T) {
 	}
 }
 
+// **면제된 구간은 instructions 에 안 나온다.** 여기는 사람이 청하지 않았는데
+// 들이미는 통로라, 면제가 듣지 않으면 지울 때까지 매 세션 같은 목록이 다시 뜬다.
+//
+// 반대쪽 짝은 TestPendingToolShowsQuietItems 다 (tools_test.go) — 사람이 직접 물은
+// `priorcase_pending` 에서까지 감추면 그건 면제가 아니라 은폐다. 두 테스트가
+// 함께 있어야 "어느 쪽으로 틀렸는지" 가 갈린다.
+func TestInstructionsHideQuietPending(t *testing.T) {
+	marker := map[string]string{"ko": "미확인", "en": "unreviewed"}
+	for _, tc := range instructionLangs {
+		t.Run(tc.name, func(t *testing.T) {
+			c := testutil.VaultConfig(t)
+			c.Lang = tc.lang
+			quiet := daemon.Pending{Domain: "alpha", Turns: 12, Signals: []string{"결정"},
+				Path: "/t/조용한.jsonl", From: 0, Quiet: true,
+				At: time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)}
+			loud := daemon.Pending{Domain: "beta", Turns: 7, Signals: []string{"채택"},
+				Path: "/t/시끄러운.jsonl", From: 0,
+				At: time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)}
+
+			// 면제만 있으면 문단 자체가 없어야 한다.
+			only, _ := buildInstructions(store.NewLayout(c), pendingView{Enabled: true,
+				Items: []daemon.Pending{quiet}})
+			if strings.Contains(only, marker[tc.name]) {
+				t.Errorf("면제된 구간뿐인데 미확인 문단이 나왔다:\n%s", only)
+			}
+
+			// 섞여 있으면 건수도 남은 것만 세야 한다 — "2건" 이라 해 놓고 하나만
+			// 보여 주면 나머지 하나를 찾다가 못 찾는다.
+			mixed, _ := buildInstructions(store.NewLayout(c), pendingView{Enabled: true,
+				Items: []daemon.Pending{quiet, loud}})
+			if !strings.Contains(mixed, "beta") {
+				t.Errorf("면제 아닌 구간이 사라졌다:\n%s", mixed)
+			}
+			if strings.Contains(mixed, "alpha") {
+				t.Errorf("면제된 구간이 실렸다:\n%s", mixed)
+			}
+			if strings.Contains(mixed, "2건") || strings.Contains(mixed, "2 unreviewed") {
+				t.Errorf("건수를 거르기 전 기준으로 셌다:\n%s", mixed)
+			}
+		})
+	}
+}
+
 // 길어지면 instructions 자체가 소음이 된다 — 세션당 한 번 실리고 갱신되지 않는다.
 func TestInstructionsCapPendingList(t *testing.T) {
 	total := map[string]string{"ko": "12건", "en": "flagged 12 unreviewed segments"}

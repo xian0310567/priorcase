@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/judge"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/testutil"
 )
@@ -128,11 +129,25 @@ func TestOwnFirstReordersWithoutLoss(t *testing.T) {
 
 // ★★ `prior watch` 가 실제로 승격해야 한다. Promote 함수가 있는 것과 데몬이 그걸
 // 부르는 것은 다르다 — 함수만 테스트하면 호출부를 떼어내도 안 잡힌다.
-func TestWatchPromotesInSteadyState(t *testing.T) {
+//
+// **그리고 데몬이 승격하는 곳은 작업 로그다. 결정 노트가 아니다.**
+//
+// 옛 판은 `alpha/decisions/*데몬승격*` 이 생기는지를 봤다. 그때는 등급이 하나뿐이라
+// 그것이 곧 "승격했다" 였는데, 지금은 그 단언이 **고장을 통과시킨다.** 데몬은
+// 대화가 끝났는지 알 수 없다 — 파일이 잠잠해진 것과 세션이 끝난 것은 다르고,
+// 실측으로 구간 @3467548 은 마지막 발화 3초 뒤에 판정됐는데 대화는 그 7초 뒤에
+// 이어졌다. 그 창에서 결정 노트가 나오면 아크의 절반만 보고 확정한 것이 된다.
+//
+// 그래서 여기서 못 박는 것이 둘이다: **작업 로그는 생겼나**, 그리고
+// **결정 노트는 안 생겼나.** 판별기가 tier 를 안 주고 record=true 만 줘도 그렇다 —
+// 모델 출력은 통제할 수 없으므로 등급 강등(promote.One)이 실제로 도는지 본다.
+func TestWatchPromotesToWorklogNotDecision(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	c.Capture = config.Capture{Signals: []string{"결정"}, MinTurns: 2, QuiesceSeconds: 1}
+	// **tier 를 일부러 안 준다.** 옛 형식(record 불리언)으로 오면 Normalized 가
+	// decision 으로 접는데, 도중 판정이므로 promote.One 이 작업 로그로 내려야 한다.
 	c.Capture.JudgePath = stubJudge(t,
-		`{"record":true,"slug":"데몬승격","summary":"데몬이 만들었다","body":"## 결정\n\nx\n"}`)
+		`{"record":true,"slug":"데몬승격","summary":"데몬이 만들었다","body":"검토한 대안과 기각 이유.\n"}`)
 
 	root := t.TempDir()
 	proj := filepath.Join(root, "p")
@@ -162,7 +177,7 @@ func TestWatchPromotesInSteadyState(t *testing.T) {
 			// 구간이 임계를 못 채운다. 여기서 보려는 것은 **정상 감시 루프**다.
 			Quiesce: 200 * time.Millisecond,
 			OnEvent: func(e Event) {
-				if e.Kind == "promote" && strings.Contains(e.Note, "자동 기록") {
+				if e.Kind == "promote" && strings.Contains(e.Note, "작업 로그") {
 					select {
 					case promoted <- struct{}{}:
 					default:
@@ -192,12 +207,41 @@ func TestWatchPromotesInSteadyState(t *testing.T) {
 	cancel()
 	<-done
 
-	m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*데몬승격*"))
-	if len(m) == 0 {
-		t.Error("노트가 안 만들어졌다")
+	// ① 작업 로그에 실제로 쌓였나. 보고 줄만 보면 약하다 — 문구는 맞는데 파일이
+	//    안 생기는 상태가 실제로 가능하다.
+	wp, err := store.NewLayout(c).WorklogPath("alpha")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if proms, _ := ReadPromotions(sd, time.Time{}); len(proms) == 0 {
-		t.Error("원장이 안 남았다")
+	body, err := os.ReadFile(wp)
+	if err != nil {
+		t.Fatalf("작업 로그가 없다: %v", err)
+	}
+	if !strings.Contains(string(body), "데몬이 만들었다") {
+		t.Errorf("작업 로그에 내용이 안 들어갔다:\n%s", body)
+	}
+
+	// ② **결정 노트는 없어야 한다.** 데몬은 세션이 끝난 것을 모르므로 아크 전체를
+	//    본 적이 없다. 여기서 결정 노트가 나오면 옛 실패의 거울상이다 — 예전엔
+	//    아무것도 안 남았고 이번엔 확정되지 않은 것이 확정된 자리에 남는다.
+	if m, _ := filepath.Glob(filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "*데몬승격*")); len(m) != 0 {
+		t.Errorf("데몬이 결정 노트를 만들었다: %v — 도중 판정은 작업 로그까지다", m)
+	}
+
+	// ③ 원장이 등급을 실어야 한다. 이게 없으면 doctor 가 작업 로그 한 건과 결정
+	//    노트 한 건을 같은 "자동 기록 1건" 으로 합쳐 성패를 못 읽는다.
+	proms, _ := ReadPromotions(sd, time.Time{})
+	if len(proms) == 0 {
+		t.Fatal("원장이 안 남았다")
+	}
+	found := false
+	for _, p := range proms {
+		if p.Recorded && p.Tier == string(judge.TierWorklog) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("원장에 worklog 등급이 없다: %+v", proms)
 	}
 }
 
@@ -756,15 +800,7 @@ func TestPromoteFailureClearsClaim(t *testing.T) {
 // "마감 전이면 시작" 으로 두면 마감 직전에 집어 든 구간이 판별기 상한만큼 예산을
 // 넘겨서 돈다. 그러면 훅 상한을 넘겨 호스트가 훅을 통째로 죽이고, 원장도 못 쓴 채
 // 선점 도장만 남는다. 상한을 75초로 올리면서 이 틈이 커졌다.
-// **규칙이 바뀌었다.** 예전에는 "판별기 상한(75초)만큼 남아야 시작" 이었는데,
-// 그 탓에 예산 90초에서 시작 창이 15초뿐이라 한 판에 1.4건만 처리됐다.
-// 지금은 호출마다 남은 예산을 마감으로 씌워 넘칠 수가 없으므로, 시작 조건이
-// "예산의 1/3 이 남았나" 로 낮아졌다.
-//
-// **이 시험이 지키는 것은 그대로다**: 시작도 안 한 구간에 도장·실패 횟수가
-// 남으면 안 된다. 남으면 그 구간이 claimTTL(5분) 동안 건너뛰어지거나, 세 번
-// 쌓여 사람 몫으로 밀려난다.
-func TestPromoteLeavesNoTraceWhenItCannotStart(t *testing.T) {
+func TestPromoteDoesNotStartWhatItCannotFinish(t *testing.T) {
 	c, l, sd := promoteFixture(t, `{"record":true,"slug":"x","summary":"요약","body":"## 결정\n\nx"}`)
 	mark := filepath.Join(t.TempDir(), "called")
 	jp := filepath.Join(t.TempDir(), "judge")
@@ -785,11 +821,11 @@ func TestPromoteLeavesNoTraceWhenItCannotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 해 볼 만한 시간조차 없는 예산.
+	// 판별기 상한보다 짧은 예산 — 시작하면 끝낼 수 없다.
 	var errBuf strings.Builder
 	Promote(context.Background(), PromoteOptions{
 		StateDir: sd, Config: c, Layout: l, Only: "/t.jsonl@5",
-		Budget: time.Nanosecond, Err: &errBuf,
+		Budget: time.Second, Err: &errBuf,
 	})
 
 	if _, err := os.Stat(mark); err == nil {

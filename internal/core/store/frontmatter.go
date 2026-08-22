@@ -28,16 +28,46 @@ type Meta struct {
 
 	Domain  []string `yaml:"domain"`
 	Summary string   `yaml:"summary"`
-	Status  string   `yaml:"status"`
-	Outcome string   `yaml:"outcome"`
 
+	// SummaryHistory 는 review 가 갈아치운 **옛 summary** 들이다. 오래된 것이 앞.
+	//
+	// summary 를 고칠 수 있게 만든 순간 생긴 구멍이다: 고치면 원래 뭐라고 적었는지가
+	// 사라진다. 그런데 "우리가 한때 무엇을 믿었는가" 는 번복 기록의 절반이다 —
+	// 틀린 판단을 지우면 남는 건 정답뿐이고, 다음 사람은 같은 오답을 다시 판다.
+	//
+	// **본문이 아니라 여기에 둔다.** 본문에 두면 review --summary 가 본문을 건드리게
+	// 되는데, summary 한 줄만 고치러 온 사람의 노트 본문이 바뀌는 것은 놀라움이다
+	// (review_test.go 의 TestReviewCanCorrectSummary 가 그 계약을 못 박고 있다).
+	// 게다가 회수의 head 는 stem+summary+tags 라, 옛 summary 를 head 밖에 두는 것이
+	// 오히려 맞다 — 틀려서 갈아치운 줄이 계속 검색에 걸리면 회수가 오염된다.
+	//
+	// 비어 있으면 방출하지 않는다. 기존 노트의 바이트가 안 바뀐다.
+	SummaryHistory []string `yaml:"summary_history,omitempty"`
+
+	Status  string `yaml:"status"`
+	Outcome string `yaml:"outcome"`
 	// Supersedes 는 이 결정이 뒤집은 결정들이다. **여럿일 수 있다.**
 	//
 	// 예전에는 `string` 이었고, 그 한 칸이 실제로 데이터를 잃었다: 2026-08-13
 	// `방향전환-개인도구-다중볼트` 가 전제 6개를 폐기 선언했는데 엮인 것은 1건뿐이고,
-	// 나머지는 본문 산문으로 밀려나 `유료층-순수E2E-복구불가`·`클라이언트비제공` 두
-	// 노트가 "superseded 인데 무엇이 뒤집었는지 아무 데도 없는" 상태로 남았다.
+	// 나머지는 본문 산문으로 밀려나 두 노트가 "superseded 인데 무엇이 뒤집었는지
+	// 아무 데도 없는" 상태로 남았다. 회사 머신의 옛 바이너리가 그 노트를 다시 쓰면서
+	// 첫 값만 남기고 나머지를 related 로 내린 것이 2026-08-21 에 실제로 관측됐다 —
+	// 두 머신의 스키마가 갈리면 마지막에 쓴 쪽이 이긴다.
 	Supersedes LinkList `yaml:"supersedes"`
+
+	// SupersededReason 는 **이 결정이 왜 뒤집혔는가** 다. 뒤집는 쪽이 아니라
+	// 뒤집힌 쪽에 적힌다 — capture/supersede.go 가 옛 노트에 쓴다.
+	//
+	// 없던 자리다. supersede() 가 옛 노트에 하던 일은 status="superseded" 와
+	// related 한 줄이 전부여서, **무엇이** 뒤집었는지(링크)는 남고 **왜** 뒤집혔는지는
+	// 한 글자도 안 남았다. 실측: 실볼트 18노트 중 번복 사유가 기록된 것 0건.
+	//
+	// supersedes 바로 뒤에 방출한다 — 둘은 같은 사건의 양쪽이고, 옵시디언에서
+	// 붙어 있어야 사람이 한눈에 짝을 본다.
+	//
+	// 비어 있으면 방출하지 않는다 — 기존 18노트를 다시 저장해도 바이트가 안 바뀐다.
+	SupersededReason string `yaml:"superseded_reason,omitempty"`
 
 	Related       []string `yaml:"related"`
 	Tags          []string `yaml:"tags"`
@@ -52,7 +82,10 @@ type Meta struct {
 	// 1 일 때는 방출하지 않는다 — 기존 노트의 바이트를 안 건드리기 위해서다.
 	Schema int `yaml:"schema,omitempty"`
 
-	// Extra 는 **10키 밖의 키를 사용자가 쓴 그대로** 담는다.
+	// Extra 는 **위 키 밖의 키를 사용자가 쓴 그대로** 담는다.
+	//
+	// (예전 주석은 "10키" 라고 못 박았는데, summary_history·superseded_reason 이
+	// 늘면서 숫자가 틀렸다. 개수는 이 구조체가 정본이므로 세지 않는다.)
 	//
 	// 이것이 없으면 사용자가 Obsidian 에서 노트에 `aliases:` 한 줄만 넣어도 파싱이
 	// 실패하고, 그 결정이 색인·회수·review 에서 통째로 사라진다. 조용히 버리지 않으려고
@@ -119,9 +152,9 @@ func emitLinkList(ll LinkList) string {
 	case 0:
 		return `""`
 	case 1:
-		return quote(ll[0])
+		return quote(wikilink(ll[0]))
 	}
-	return quoted(ll)
+	return quoted(wikilinks(ll))
 }
 
 // 결정 노트의 status 값. schema.Validate 가 허용 목록을 들고 있고, 여기 상수는
@@ -179,7 +212,7 @@ func ParseFrontmatter(data []byte) (Meta, []byte, error) {
 	body = bytes.TrimLeft(body, "\n")
 
 	dec := yaml.NewDecoder(bytes.NewReader(head))
-	dec.KnownFields(true) // 10키 외의 잉여 키를 조용히 버리지 않는다
+	dec.KnownFields(true) // Meta 밖의 잉여 키를 조용히 버리지 않는다
 	if err := dec.Decode(&m); err != nil {
 		return m, nil, fmt.Errorf("frontmatter 파싱 실패: %w", err)
 	}
@@ -205,6 +238,48 @@ func quote(s string) string {
 // bare 는 따옴표 없이 인라인 배열에 넣는다.
 func bare(items []string) string { return "[" + strings.Join(items, ", ") + "]" }
 
+// wikilink 는 stem 을 `[[stem]]` 으로 만든다. 이미 그 모양이면 그대로 둔다.
+//
+// **옵시디언은 `[[ ]]` 가 있어야 링크로 만든다.** 맨 문자열로 두면 속성 창에 회색
+// 글자로 보이고 **그래프에도 백링크에도 그 관계가 없다** — related 를 적은 목적이
+// 통째로 사라진다.
+//
+// 실측으로 물렸다. 볼트 274건에서 맨 문자열이 57건이었고, 한 노트 안에서도 섞여 있었다:
+//
+//	related:
+//	  - editup-결정-ga4-word채널-…              ← 링크 안 됨
+//	  - "[[editup-결정-ga4-gp1510-인수기준-…]]"   ← 링크 됨
+//
+// 사용자가 옵시디언 속성 창을 보고 "세 개 중 하나만 의존성이 걸려 있다" 고 지적했다.
+// 깨진 대상(존재하지 않는 노트)을 고치는 것과는 **다른 결함**이다 — 이쪽은 대상이
+// 멀쩡한데도 관계가 안 생긴다.
+//
+// **호출부에 맡기지 않는다.** capture·review·MCP·CLI·판별기가 각자 넣는데, 실제로
+// 어떤 경로는 대괄호를 붙이고 어떤 경로는 안 붙였다. 방출기가 유일한 쓰기 경로이므로
+// 여기서 강제하면 누가 무엇을 주든 링크가 된다.
+func wikilink(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return ""
+	}
+	if strings.HasPrefix(t, "[[") && strings.HasSuffix(t, "]]") {
+		return t
+	}
+	// 대괄호가 한쪽만 있거나 겹친 것도 벗겨서 다시 씌운다 — 손으로 고치다 생긴다.
+	return "[[" + strings.Trim(t, "[]") + "]]"
+}
+
+// wikilinks 는 목록 전체에 wikilink 를 적용한다. 빈 항목은 버린다.
+func wikilinks(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		if v := wikilink(s); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func quoted(items []string) string {
 	q := make([]string, len(items))
 	for i, s := range items {
@@ -226,10 +301,19 @@ func EmitFrontmatter(m Meta) []byte {
 	}
 	b.WriteString("domain: " + bare(m.Domain) + "\n")
 	b.WriteString("summary: " + quote(m.Summary) + "\n")
+	// 아래 두 키는 **비면 줄 자체를 안 쓴다**. author·schema 와 같은 규칙이다 —
+	// 기존 노트를 다시 저장해도 바이트가 안 바뀌어야 한다(실볼트 18노트 전부가
+	// 이 두 키가 없는 상태다).
+	if len(m.SummaryHistory) > 0 {
+		b.WriteString("summary_history: " + quoted(m.SummaryHistory) + "\n")
+	}
 	b.WriteString("status: " + m.Status + "\n")
 	b.WriteString("outcome: " + m.Outcome + "\n")
 	b.WriteString("supersedes: " + emitLinkList(m.Supersedes) + "\n")
-	b.WriteString("related: " + quoted(m.Related) + "\n")
+	if strings.TrimSpace(m.SupersededReason) != "" {
+		b.WriteString("superseded_reason: " + quote(m.SupersededReason) + "\n")
+	}
+	b.WriteString("related: " + quoted(wikilinks(m.Related)) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")
 	b.WriteString("source_session: " + quote(m.SourceSession) + "\n")
 	// 판이 1(기본)이면 안 쓴다. 기존 노트가 재기록될 때 바이트가 안 바뀐다.
@@ -241,7 +325,7 @@ func EmitFrontmatter(m Meta) []byte {
 	return []byte(b.String())
 }
 
-// emitExtra 는 10키 밖의 키를 **10키 뒤에** 되쓴다.
+// emitExtra 는 Meta 밖의 키를 **알려진 키 뒤에** 되쓴다.
 //
 // 키 순서를 사전순으로 고정한다 — 맵은 순회 순서가 무작위라, 안 그러면 같은 노트를
 // 두 번 저장할 때마다 바이트가 달라져 diff 가 소음이 된다.

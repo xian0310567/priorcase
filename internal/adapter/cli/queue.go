@@ -231,12 +231,8 @@ func newQueueCmd() *cobra.Command {
 				if rerr != nil {
 					q.Warnings = append(q.Warnings, "승격 원장을 읽지 못했다: "+rerr.Error())
 				}
-				// **검토 표시된 것은 뺀다.** 안 빼면 큐가 영영 안 줄어들고,
-				// 사람은 같은 줄을 매번 다시 보다가 화면 전체를 무시하는 법을
-				// 배운다 — 그러면 판별기 검증이라는 이 화면의 존재 이유가 죽는다.
-				reviewed := daemon.ReviewedIDs(recs)
 				for _, r := range recs {
-					if r.Recorded && !reviewed[r.ID] {
+					if r.Recorded {
 						q.Review = append(q.Review, QueueReview{
 							ID: r.ID, Domain: r.Domain, Vault: vaultName(c, r.Domain),
 							At: r.At.Format(time.RFC3339), Path: r.Path,

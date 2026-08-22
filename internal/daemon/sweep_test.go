@@ -520,10 +520,15 @@ func TestSweepPrunesMissingCheckpoints(t *testing.T) {
 // 컴파일러도 기존 테스트도 안 잡는다. 폴백이 "지운다" 인 곳은 여기 하나뿐이라
 // (Advance·SeedAll·Credit 은 읽고-덮기라 자동으로 안전하다) 여기만 지킨다.
 func TestCheckpointEmptyCoversEveryField(t *testing.T) {
-	const known = 8 // Offset · Size · At · SessionCredited · DayCredited · Suppressed · Turns · Seg
+	const known = 8 // Offset · Size · At · Decided · ArcFails · SessionCredited · DayCredited · Suppressed
 	if n := reflect.TypeOf(Checkpoint{}).NumField(); n != known {
 		t.Fatalf("Checkpoint 필드가 %d개다 (알던 것 %d개) — Empty() 가 새 필드를 "+
 			"안 보면 그 정보만 가진 항목이 조용히 지워진다. Empty() 를 고치고 이 수를 갱신하라", n, known)
+	}
+	// **아크 판정 지점만 남은 항목은 지워선 안 된다.** 지우면 그 세션을 처음부터
+	// 다시 결정 판정하게 되고, 이미 쓴 결정 노트와 겹치는 것이 또 나온다.
+	if (Checkpoint{Decided: 4096}).Empty() {
+		t.Error("Decided 만 있는 항목이 Empty 다 — 정리가 아크 표식을 지운다")
 	}
 	// At 만 있는 것은 Empty 다 (실측의 13개가 이 모양이었다).
 	if !(Checkpoint{At: time.Now()}).Empty() {
@@ -533,8 +538,6 @@ func TestCheckpointEmptyCoversEveryField(t *testing.T) {
 	for name, cp := range map[string]Checkpoint{
 		"Offset":          {Offset: 1},
 		"Size":            {Size: 1},
-		"Turns":           {Turns: 1},
-		"Seg":             {Seg: 1},
 		"SessionCredited": {SessionCredited: 1},
 		"DayCredited":     {DayCredited: map[string]int{"2026-08-13": 1}},
 		"Suppressed":      {Suppressed: 1},
@@ -575,7 +578,7 @@ func TestPruneMissingRechecksInsideLock(t *testing.T) {
 	}
 
 	// **낡은 목록을 그대로 넘긴다.** 실제 경합에서 doomed 가 이 모양이다.
-	n, err := pruneDoomed(st, []string{target}, true)
+	n, err := pruneDoomed(st, []string{target})
 	if err != nil {
 		t.Fatal(err)
 	}

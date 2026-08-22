@@ -27,11 +27,11 @@ func TestAllStemsSeesWholeVaultNotJustDeclaredDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"alpha-결정-저장엔진-2026-08-01",         // 선언된 도메인의 결정
-		"common-결정-로케일함정-2026-08-04",       //
-		"00-볼트-네이밍-규약",                    // 결정이 아닌 문서
-		"00-alpha-프로젝트-개요",                 //
-		"gamma-결정-미선언-2026-08-05",          // 미선언 도메인
+		"alpha-결정-저장엔진-2026-08-01",   // 선언된 도메인의 결정
+		"common-결정-로케일함정-2026-08-04", //
+		"00-볼트-네이밍-규약",               // 결정이 아닌 문서
+		"00-alpha-프로젝트-개요",           //
+		"gamma-결정-미선언-2026-08-05",    // 미선언 도메인
 	} {
 		if !stems[want] {
 			t.Errorf("AllStems 에 %q 가 없다", want)
@@ -62,7 +62,7 @@ func TestLinkTargetsSplitsRelatedAndSupersedes(t *testing.T) {
 		Related: []string{
 			"[[beta-결정-딴것-2026-08-03]]",
 			"common-결정-맨stem-2026-08-04", // [[ ]] 없이 저장된 실볼트 사례
-			"",                            // 빈 칸은 링크가 아니다
+			"",                           // 빈 칸은 링크가 아니다
 			"   ",
 		},
 	}

@@ -33,6 +33,57 @@ func TestRecallCmdInject(t *testing.T) {
 	}
 }
 
+// **작업 로그는 사람이 물었을 때만 나온다.** 두 요구를 한 테스트에서 같이 본다:
+// human 포맷에는 나오고, `--format inject` 에는 안 나온다. 한쪽만 검사하면 "아예
+// 안 붙인다" 와 "자동 주입까지 오염시킨다" 가 구별되지 않는다.
+//
+// inject 를 지키는 것이 등급을 나눈 이유의 전부다 — 회수는 Limit 3 · MinScore 1 의
+// 고정 슬롯이라, 문턱 낮은 작업 로그가 그 슬롯을 놓고 결정 노트와 경쟁하면 볼트가
+// 커질수록 결정 노트가 밀려난다.
+func TestRecallCmdShowsWorklogOnlyWhenAsked(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+
+	seed := NewRootCmd()
+	seed.SetOut(&bytes.Buffer{})
+	seed.SetArgs([]string{
+		"note", "--config", cfgPath, "--domain", "alpha",
+		"--summary", "저장 엔진 후보로 rocksdb 도 재 봤다", "--date", "2026-08-09",
+	})
+	if err := seed.Execute(); err != nil {
+		t.Fatalf("작업 로그를 심지 못했다: %v", err)
+	}
+
+	human := NewRootCmd()
+	buf := &bytes.Buffer{}
+	human.SetOut(buf)
+	human.SetArgs([]string{"recall", "--config", cfgPath, "저장", "엔진을", "무엇으로", "골랐지"})
+	if err := human.Execute(); err != nil {
+		t.Fatalf("prior recall 실행 실패: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "[작업 로그 — 확정 전 기록]") {
+		t.Errorf("사람이 물었는데 작업 로그 절이 없다:\n%s", got)
+	}
+	if !strings.Contains(got, "저장 엔진 후보로 rocksdb 도 재 봤다") {
+		t.Errorf("작업 로그 항목이 안 나왔다:\n%s", got)
+	}
+	// 등급이 그대로 읽히는 순서여야 한다 — 결정 노트가 먼저다.
+	if i, j := strings.Index(got, "저장 엔진을 임베디드 DB 로 고른다"), strings.Index(got, "[작업 로그"); i < 0 || j < 0 || i > j {
+		t.Errorf("결정 노트가 작업 로그보다 뒤에 있다:\n%s", got)
+	}
+
+	inj := NewRootCmd()
+	injBuf := &bytes.Buffer{}
+	inj.SetOut(injBuf)
+	inj.SetArgs([]string{"recall", "--config", cfgPath, "--format", "inject", "저장", "엔진을", "무엇으로", "골랐지"})
+	if err := inj.Execute(); err != nil {
+		t.Fatalf("prior recall --format inject 실행 실패: %v", err)
+	}
+	if out := injBuf.String(); strings.Contains(out, "작업 로그") || strings.Contains(out, "rocksdb") {
+		t.Errorf("작업 로그가 자동 주입에 섞였다 — 등급을 나눈 이유가 사라진다:\n%s", out)
+	}
+}
+
 // TestRecallCmdReportsUnreadableVault 는 결정 폴더를 못 읽을 때 `prior recall` 이
 // 조용히 rc=0 으로 끝나지 않고 에러를 내는지 확인한다. 같은 l.List() 를 부르는
 // `prior index` 는 이미 에러로 죽는다 — 두 명령의 에러 정책이 같아야 한다.

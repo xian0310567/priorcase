@@ -32,7 +32,7 @@ func TestPromoteUsesWholeBudget(t *testing.T) {
 	start := time.Now()
 	Promote(context.Background(), PromoteOptions{
 		StateDir: dir, Config: c, Layout: l,
-		Budget:   3 * time.Second,
+		Budget:   30 * time.Second,
 		OnResult: func(p Promotion) { got = append(got, p) },
 	})
 	el := time.Since(start)
@@ -42,8 +42,8 @@ func TestPromoteUsesWholeBudget(t *testing.T) {
 	// 부하에서 자식 프로세스가 훨씬 느려져 **6회 중 1회 깜빡였다**(단독 8건 ·
 	// 전체 실행 1~2건). 깜빡이는 시험은 신호를 잃는다.
 	//
-	// 즉답이면 3초 예산에 여덟 건이 넉넉히 들어간다 — 부하로 열 배 느려져도 그렇다.
-	// 옛 규칙(75초 예약)에서는 예산 3초에 **한 건도 시작하지 못하고 즉시 끝난다.**
+	// 즉답이면 30초 예산에 여덟 건이 넉넉히 들어간다 — 부하로 열 배 느려져도 그렇다.
+	// 옛 규칙(75초 예약)에서는 예산 30초에 **한 건도 시작하지 못하고 즉시 끝난다.**
 	_ = el
 	if len(got) < 4 {
 		t.Errorf("판정 %d건 — 옛 규칙이면 0건, 지금은 여덟 건이 다 들어가야 한다", len(got))
