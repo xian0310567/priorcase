@@ -11,6 +11,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/sync"
 	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
@@ -616,4 +617,103 @@ func TestNoRemoteIsNotWarned(t *testing.T) {
 	if got := find(t, Vault(c, store.NewLayout(c)), "동기화"); got.Level != OK {
 		t.Errorf("동기화를 안 쓰는 볼트에 경고한다: [%v] %s", got.Level, got.Detail)
 	}
+}
+
+// ★ 판 갈림으로 못 읽은 노트는 **손대지 말라고** 해야 한다.
+//
+// 2026-08-21 사고의 인과: 노트가 안 보임 → "읽지 못했다" 만 표시 → 사람이 파일을
+// 열어 봄(YAML 은 멀쩡해 보임) → 옛 모양으로 되돌림 → 다중값 강등. 진단이
+// "무엇을 하라" 를 말했으면 그 손이 안 움직였다.
+func TestNewerShapeNoteTellsUserNotToEdit(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	// 지금 판이 모르는 **모양**을 심는다 (키가 아니라 모양이라 Extra 가 못 흡수한다).
+	bad := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-새판-2026-08-23.md")
+	body := "---\ntype: decision\ndate: 2026-08-23\ndomain: [alpha]\nsummary: \"x\"\n" +
+		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\n" +
+		"tags: [decision]\nsource_session: {machine: work, id: abc}\n---\n\n## 결정\n\nx\n"
+	if err := os.WriteFile(bad, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := find(t, Vault(c, store.NewLayout(c)), "결정 노트")
+	if got.Level == OK {
+		t.Fatalf("못 읽은 노트가 있는데 통과로 본다: %s", got.Detail)
+	}
+	if !strings.Contains(got.Fix, "prior") || !strings.Contains(got.Fix, "고치지 마") {
+		t.Errorf("손대지 말라고 안 한다 — 사람이 옛 모양으로 되돌린다:\n  Fix: %s", got.Fix)
+	}
+}
+
+// 진짜 깨진 노트에는 반대로 **사람이 고치라고** 해야 한다. 둘을 같은 문구로
+// 묶으면 어느 쪽도 옳지 않다.
+func TestGenuinelyBrokenNoteTellsUserToFixIt(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	bad := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-08-23.md")
+	if err := os.WriteFile(bad, []byte("---\ntype: decision\n  summary: \"x\"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := find(t, Vault(c, store.NewLayout(c)), "결정 노트")
+	if strings.Contains(got.Fix, "고치지 마") {
+		t.Errorf("깨진 노트에 손대지 말라고 한다 — 그러면 아무도 안 고친다:\n  Fix: %s", got.Fix)
+	}
+}
+
+// ★ **다른 머신이 더 새 판을 쓰면 깨지기 전에 알려야 한다.**
+//
+// 2026-08-21 사고는 그 사실을 아무도 몰라서 났다. 노트가 안 읽히고 나서야 드러났고,
+// 그때는 이미 사람이 손댈 준비가 된 뒤였다.
+func TestNewerBuildOnAnotherMachineIsWarned(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	v := c.DefaultVaultPath()
+	self := sync.Build{Host: "home", Revision: "aaa",
+		Committed: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)}
+	other := sync.Build{Host: "work", Revision: "bbb",
+		Committed: time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)}
+	for _, b := range []sync.Build{self, other} {
+		if err := sync.RecordBuild(v, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := findBuild(t, c, self)
+	if got.Level != Warn {
+		t.Fatalf("더 새 판이 있는데 조용하다: [%v] %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "work") {
+		t.Errorf("어느 머신인지 안 알려 준다: %s", got.Detail)
+	}
+	if !strings.Contains(got.Fix, "올려") {
+		t.Errorf("무엇을 하라는 말이 없다: %s", got.Fix)
+	}
+}
+
+// 내가 최신이면 조용해야 한다. 늘 뜨는 경고는 무시를 가르친다.
+func TestSameOrOlderBuildsAreQuiet(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	v := c.DefaultVaultPath()
+	self := sync.Build{Host: "home", Revision: "bbb",
+		Committed: time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)}
+	_ = sync.RecordBuild(v, self)
+	_ = sync.RecordBuild(v, sync.Build{Host: "work", Revision: "aaa",
+		Committed: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)})
+
+	if got := findBuild(t, c, self); got.Level != OK {
+		t.Errorf("내가 최신인데 경고한다: [%v] %s", got.Level, got.Detail)
+	}
+}
+
+// 도장이 하나도 없으면(이 기능 이전의 볼트) 아무 말도 안 한다.
+func TestNoStampsIsQuiet(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	self := sync.Build{Host: "home", Revision: "aaa", Committed: time.Now()}
+	if got := findBuild(t, c, self); got.Level != OK {
+		t.Errorf("도장이 없는데 경고한다: [%v] %s", got.Level, got.Detail)
+	}
+}
+
+func findBuild(t *testing.T, c *config.Config, self sync.Build) Check {
+	t.Helper()
+	r := &Report{}
+	checkBuildDrift(r, c, self)
+	return find(t, r, "판")
 }

@@ -208,7 +208,7 @@ func TestAllSweepsEveryVaultAndIsolatesFailure(t *testing.T) {
 	}}
 	write(t, good, "alpha/decisions/alpha-결정-여럿-2026-08-20.md", "x\n")
 
-	got := All(c, Budget{}, false, true, "테스트")
+	got := All(c, Options{}, false, true, "테스트")
 	if len(got) != 2 {
 		t.Fatalf("볼트 %d개, want 2: %+v", len(got), got)
 	}
@@ -243,8 +243,116 @@ func TestAllRespectsBudget(t *testing.T) {
 
 	c := &config.Config{Vaults: []config.Vault{{Name: "v", Path: t.TempDir()}}}
 	start := time.Now()
-	All(c, Budget{Timeout: 200 * time.Millisecond}, true, true, "x")
+	All(c, Options{Timeout: 200 * time.Millisecond}, true, true, "x")
 	if el := time.Since(start); el > 3*time.Second {
 		t.Fatalf("예산을 안 지켰다 — %v 를 기다렸다", el)
+	}
+}
+
+// ★ **판이 갈렸다는 사실을 깨지기 전에 알아야 한다.**
+//
+// 2026-08-21 사고는 "다른 머신이 더 새 판을 쓴다" 를 아무도 몰랐기 때문에 났다.
+// 노트가 안 읽히고 나서야 드러났고, 그때는 이미 사람이 손댈 준비가 된 뒤였다.
+//
+// **아무도 기억할 필요가 없는 신호를 쓴다.** Go 가 vcs.revision·vcs.time 을 자동으로
+// 박으므로, 각 머신이 자기 것을 볼트에 남기면 판 갈림이 저절로 보인다.
+// `schema.Current` 에 기대지 않는 이유: 그건 사람이 올려야 하고, 이번 사고가
+// 정확히 **안 올려서** 났다.
+func TestBuildStampMakesDriftVisible(t *testing.T) {
+	v := t.TempDir()
+	older := Build{Host: "home", Revision: "aaa", Committed: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)}
+	newer := Build{Host: "work", Revision: "bbb", Committed: time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)}
+
+	for _, b := range []Build{older, newer} {
+		if err := RecordBuild(v, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 집(옛 판)에서 보면 회사가 더 새 판이다.
+	got := NewerBuilds(v, older)
+	if len(got) != 1 || got[0].Host != "work" {
+		t.Fatalf("더 새 판을 못 본다: %+v", got)
+	}
+	// 회사(새 판)에서 보면 앞선 것이 없다.
+	if got := NewerBuilds(v, newer); len(got) != 0 {
+		t.Errorf("내가 최신인데 남을 더 새 판이라 한다: %+v", got)
+	}
+}
+
+// **머신마다 자기 파일을 쓴다.** 한 파일을 공유하면 두 머신이 같은 줄을 고쳐
+// 동기화할 때마다 충돌한다 — 색인을 추적하지 않기로 한 것과 같은 이유다.
+func TestBuildStampIsPerMachine(t *testing.T) {
+	v := t.TempDir()
+	for _, h := range []string{"home", "work"} {
+		if err := RecordBuild(v, Build{Host: h, Revision: h, Committed: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := 0
+	_ = filepath.Walk(v, func(p string, fi os.FileInfo, err error) error {
+		if err == nil && !fi.IsDir() {
+			n++
+		}
+		return nil
+	})
+	if n != 2 {
+		t.Errorf("파일 %d개 — 머신마다 하나여야 한다", n)
+	}
+}
+
+// ★ **바뀐 게 없으면 쓰지 않는다.**
+//
+// 매번 쓰면 동기화할 때마다 이 파일 하나 때문에 커밋이 생긴다 — "보낼 것 없음" 이
+// 영영 안 나오고, 볼트 원장이 판 도장으로 도배된다.
+func TestBuildStampDoesNotRewriteWhenUnchanged(t *testing.T) {
+	v := t.TempDir()
+	b := Build{Host: "home", Revision: "aaa", Committed: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)}
+	if err := RecordBuild(v, b); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(v, "_meta", ".priorcase", "home.json")
+	first, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordBuild(v, b); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := os.ReadFile(p)
+	if string(first) != string(again) {
+		t.Errorf("같은 판인데 바이트가 바뀐다:\n%s\n%s", first, again)
+	}
+}
+
+// ★ 도장은 **밀 때 남긴다.** 그래야 같은 커밋에 실려 저쪽이 본다.
+//
+// pull 만 할 때는 안 남긴다 — 남기면 커밋 안 된 파일이 생겨 doctor 가 "안 밀렸다" 를
+// 띄우고, 사람은 아무것도 안 했는데 경고를 본다.
+func TestAllRecordsBuildWhenPushing(t *testing.T) {
+	a, b := pair(t)
+	c := &config.Config{Vaults: []config.Vault{{Name: "v", Path: a}}}
+	self := Build{Host: "테스트머신", Revision: "aaa", Committed: time.Now().UTC()}
+
+	All(c, Options{Stamp: self}, false, true, "테스트")
+
+	if _, err := os.Stat(filepath.Join(a, "_meta", ".priorcase", "테스트머신.json")); err != nil {
+		t.Fatalf("밀었는데 도장이 없다: %v", err)
+	}
+	// 같은 커밋에 실려 저쪽으로 건너가야 한다.
+	if r := Pull(b); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if _, err := os.Stat(filepath.Join(b, "_meta", ".priorcase", "테스트머신.json")); err != nil {
+		t.Errorf("도장이 저쪽에 안 갔다: %v", err)
+	}
+}
+
+func TestAllDoesNotRecordOnPullOnly(t *testing.T) {
+	a, _ := pair(t)
+	c := &config.Config{Vaults: []config.Vault{{Name: "v", Path: a}}}
+	All(c, Options{Stamp: Build{Host: "테스트머신", Revision: "aaa", Committed: time.Now()}}, true, false, "x")
+	if _, err := os.Stat(filepath.Join(a, "_meta", ".priorcase", "테스트머신.json")); err == nil {
+		t.Error("pull 만 했는데 도장을 남겼다 — 커밋 안 된 파일이 생긴다")
 	}
 }

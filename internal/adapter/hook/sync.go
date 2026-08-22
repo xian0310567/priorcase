@@ -46,11 +46,13 @@ func (o Options) syncPull() {
 			}
 		}
 	}
-	o.doSync(sync.Budget{Timeout: pullBudget}, true, catchUp)
+	o.doSync(sync.Options{Timeout: pullBudget, Stamp: sync.ThisBuild()}, true, catchUp)
 }
 
 // syncPush 는 세션 종료에서 볼트를 밀어낸다.
-func (o Options) syncPush() { o.doSync(sync.Budget{Timeout: pushBudget}, false, true) }
+func (o Options) syncPush() {
+	o.doSync(sync.Options{Timeout: pushBudget, Stamp: sync.ThisBuild()}, false, true)
+}
 
 // doSync 는 **실패해도 아무것도 막지 않는다.**
 //
@@ -60,11 +62,11 @@ func (o Options) syncPush() { o.doSync(sync.Budget{Timeout: pushBudget}, false, 
 //
 // **성공은 아무것도 안 낸다.** 매번 "2개 보냄" 이 뜨면 그 줄은 곧 배경이 되고,
 // 그때는 실패 줄도 같이 안 보인다.
-func (o Options) doSync(b sync.Budget, doPull, doPush bool) {
+func (o Options) doSync(so sync.Options, doPull, doPush bool) {
 	if o.Config == nil {
 		return
 	}
-	rs := sync.All(o.Config, b, doPull, doPush, sync.CommitMessage(time.Now()))
+	rs := sync.All(o.Config, so, doPull, doPush, sync.CommitMessage(time.Now()))
 
 	var bad []string
 	for _, v := range rs {

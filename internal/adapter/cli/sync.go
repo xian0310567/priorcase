@@ -35,7 +35,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rs := sync.All(c, sync.Budget{}, !pushOnly, !pullOnly, sync.CommitMessage(time.Now()))
+			rs := sync.All(c, sync.Options{Stamp: sync.ThisBuild()}, !pushOnly, !pullOnly, sync.CommitMessage(time.Now()))
 			renderSync(cmd.OutOrStdout(), rs)
 
 			sd, _ := daemon.DefaultDir() // 못 구해도 동기화는 했다. 도장만 못 남긴다.

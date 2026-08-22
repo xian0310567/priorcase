@@ -452,3 +452,45 @@ func TestSessionStartPushesWorkLeftBehind(t *testing.T) {
 			strings.TrimSpace(string(out)))
 	}
 }
+
+// ★ **세션 시작이 에이전트에게 손대지 말라고 해야 한다.**
+//
+// 이 블록은 stdout 이라 통째로 에이전트 컨텍스트가 된다 — 즉 2026-08-21 에 실제로
+// frontmatter 를 옛 모양으로 되돌린 그 주체가 읽는 자리다. 그때는 "N건을 읽지
+// 못해 회수에서 빠져 있다" 만 있었고, 그걸 본 쪽은 파일을 열어 "고쳤다".
+func TestSessionStartWarnsAgainstEditingNewerNotes(t *testing.T) {
+	c := cfg(t)
+	bad := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-새판-2026-08-23.md")
+	body := "---\ntype: decision\ndate: 2026-08-23\ndomain: [alpha]\nsummary: \"x\"\n" +
+		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\n" +
+		"tags: [decision]\nsource_session: {machine: work, id: abc}\n---\n\n## 결정\n"
+	if err := os.WriteFile(bad, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runHook(t, c, t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	for _, want := range []string{"더 새 판", "고치지 마"} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("세션 시작에 %q 가 없다 — 읽는 쪽이 그대로 고친다:\n%s", want, r.out)
+		}
+	}
+	if !strings.Contains(r.out, "prior") {
+		t.Errorf("무엇을 해야 하는지 안 알려 준다:\n%s", r.out)
+	}
+}
+
+// 진짜 깨진 노트에는 반대로 고치라고 해야 한다.
+func TestSessionStartStillAsksToFixBrokenNotes(t *testing.T) {
+	c := cfg(t)
+	bad := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions", "alpha-결정-깨짐-2026-08-23.md")
+	if err := os.WriteFile(bad, []byte("---\ntype: decision\n  summary: \"x\"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runHook(t, c, t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	if !strings.Contains(r.out, "읽지 못") {
+		t.Errorf("깨진 노트를 안 알린다:\n%s", r.out)
+	}
+	if strings.Contains(r.out, "고치지 마") {
+		t.Errorf("깨진 노트에 손대지 말라고 한다 — 그러면 아무도 안 고친다:\n%s", r.out)
+	}
+}

@@ -91,11 +91,32 @@ func (o Options) sessionStart() error {
 			"\nRelated decisions are injected automatically whenever the topic shifts — to dig further, run `prior recall <topic>`.\n"))
 	}
 
-	if len(skipped) > 0 {
+	// **갈래마다 읽는 쪽이 할 일이 정반대다.** 이 블록은 stdout 이라 통째로 에이전트
+	// 컨텍스트가 된다 — 2026-08-21 에 frontmatter 를 옛 모양으로 되돌린 바로 그 주체가
+	// 읽는 자리다. 그때는 "읽지 못했다" 만 있었고, 그걸 본 쪽은 파일을 열어 "고쳤다".
+	newer, broken := 0, 0
+	for _, s := range skipped {
+		if s.LooksNewer() {
+			newer++
+			continue
+		}
+		broken++
+	}
+	if newer > 0 {
 		fmt.Fprintf(&b, lang.T(
-			"\n⚠️ 결정 노트 %s을 읽지 못해 회수에서 빠져 있다. `prior index` 가 목록을 알려준다.\n",
-			"\n⚠️ %s missing from recall — could not be read. `prior index` lists them.\n"),
-			lang.Count(len(skipped), "건", "decision note", "decision notes"))
+			"\n⚠️ 결정 노트 %s이 **더 새 판**으로 쓰여 있어 못 읽는다 — 회수에서 빠져 있다.\n"+
+				"**그 노트를 고치지 마라.** 다른 머신이 더 새 prior 로 쓴 것이고, 옛 모양으로\n"+
+				"되돌리면 거기 쌓인 것을 지운다. `prior` 를 올려라 (`prior doctor` 가 목록을 준다).\n",
+			"\n⚠️ %s written by a **newer priorcase** and cannot be read — missing from recall.\n"+
+				"**Do not edit those notes.** Another machine wrote them with a newer prior; rewriting\n"+
+				"them in the old shape destroys what it recorded. Upgrade `prior` (`prior doctor` lists them).\n"),
+			lang.Count(newer, "건", "decision note", "decision notes"))
+	}
+	if broken > 0 {
+		fmt.Fprintf(&b, lang.T(
+			"\n⚠️ 결정 노트 %s을 읽지 못해 회수에서 빠져 있다. `prior doctor` 가 이유를 알려준다.\n",
+			"\n⚠️ %s missing from recall — could not be read. `prior doctor` explains why.\n"),
+			lang.Count(broken, "건", "decision note", "decision notes"))
 	}
 	b.WriteString(o.pendingBlock())
 

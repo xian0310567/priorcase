@@ -277,15 +277,24 @@ func (v VaultResult) Files() int {
 //
 // 순회가 core 에 있는 이유: CLI 와 훅이 둘 다 이걸 부르는데 어댑터끼리는 서로를
 // import 할 수 없다(§4.1). 공유할 것이 생기면 core 로 내린다 — 어댑터는 렌더링만 한다.
-// Budget 은 동기화 한 번에 허용하는 시간이다.
-//
-// **훅이 부를 때는 짧아야 한다.** SessionStart 의 pull 은 에이전트가 컨텍스트를
-// 받기 전에 사람이 기다리는 시간이다 — 회사 VPN 이나 캡티브 포털에서 git 이
-// 매달리면 매 세션이 그만큼 느려진다. 못 가져오면 그 세션은 어제 것으로 돌지만,
-// 그 손해가 매 세션 20초보다 작다.
-type Budget struct{ Timeout time.Duration }
+// Options 는 동기화 한 번의 조건이다.
+type Options struct {
+	// Timeout 은 git 한 번의 상한이다.
+	//
+	// **훅이 부를 때는 짧아야 한다.** SessionStart 의 pull 은 에이전트가 컨텍스트를
+	// 받기 전에 사람이 기다리는 시간이다 — 회사 VPN 이나 캡티브 포털에서 git 이
+	// 매달리면 매 세션이 그만큼 느려진다. 못 가져오면 그 세션은 어제 것으로 돌지만,
+	// 그 손해가 매 세션 20초보다 작다.
+	Timeout time.Duration
 
-func All(c *config.Config, b Budget, doPull, doPush bool, message string) []VaultResult {
+	// Stamp 는 볼트에 남길 이 머신의 판이다. 비면 안 남긴다.
+	//
+	// **밀 때만 남긴다** — pull 만 하는 자리에서 남기면 커밋 안 된 파일이 생겨
+	// doctor 가 "안 밀렸다" 를 띄우고, 사람은 아무것도 안 했는데 경고를 본다.
+	Stamp Build
+}
+
+func All(c *config.Config, o Options, doPull, doPush bool, message string) []VaultResult {
 	if c == nil {
 		return nil
 	}
@@ -293,10 +302,15 @@ func All(c *config.Config, b Budget, doPull, doPush bool, message string) []Vaul
 	for _, v := range c.Vaults {
 		vr := VaultResult{Name: v.Name, Path: v.Path}
 		if doPull {
-			vr.Results = append(vr.Results, pull(v.Path, b.Timeout))
+			vr.Results = append(vr.Results, pull(v.Path, o.Timeout))
 		}
 		if doPush {
-			vr.Results = append(vr.Results, push(v.Path, message, b.Timeout))
+			// **밀기 직전에 도장을 남긴다.** 그래야 같은 커밋에 실려 저쪽이 본다.
+			// 실패해도 동기화를 막지 않는다 — 도장은 곁다리다.
+			if o.Stamp.Host != "" {
+				_ = RecordBuild(v.Path, o.Stamp)
+			}
+			vr.Results = append(vr.Results, push(v.Path, message, o.Timeout))
 		}
 		out = append(out, vr)
 	}
@@ -311,8 +325,8 @@ func All(c *config.Config, b Budget, doPull, doPush bool, message string) []Vaul
 // core 가 갖는 이유: CLI 와 훅이 둘 다 커밋을 만들고, 어댑터끼리는 서로를
 // import 할 수 없다(§4.1). 형식이 두 벌이 되면 원장이 갈라진다.
 func CommitMessage(now time.Time) string {
-	h, err := os.Hostname()
-	if err != nil || h == "" {
+	h := hostname()
+	if h == "" {
 		h = "unknown"
 	}
 	return fmt.Sprintf("sync(%s): %s", h, now.Format("2006-01-02 15:04"))

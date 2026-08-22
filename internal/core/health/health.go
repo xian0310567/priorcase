@@ -89,6 +89,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkIndex(r, l, notes)
 	checkIndexInGit(r, l)
 	checkSync(r, c)
+	checkBuildDrift(r, c, sync.ThisBuild())
 	return r
 }
 
@@ -209,6 +210,43 @@ func checkSimilarSlugs(r *Report, notes []store.Note) {
 	sort.Strings(dups)
 	r.add("유사 slug", Warn, strings.Join(dups, " · "),
 		"둘 중 하나를 지우거나 prior review --supersedes 로 엮어라")
+}
+
+// checkBuildDrift 는 **다른 머신이 더 새 코드로 도는지** 본다.
+//
+// 2026-08-21 사고가 여기서 막힌다. 집이 supersedes 를 다중값으로 올렸고 회사는 옛
+// 판이었는데, **아무도 그 사실을 몰랐다.** 노트가 안 읽히고 나서야 드러났고 그때는
+// 이미 사람이 손댈 준비가 된 뒤였다 — 실제로 옛 모양으로 되돌려 데이터를 강등시켰다.
+//
+// **schema.Current 로는 못 잡는다.** 그건 사람이 올려야 하고, 이번 사고가 정확히
+// 안 올려서 났다. 대신 Go 가 자동으로 박는 커밋 시각을 쓴다 — 아무도 기억할 필요가 없다.
+//
+// 조용해야 할 때: 내가 최신일 때, 도장이 없을 때(이 기능 이전 볼트), 빌드 정보가
+// 없을 때(go run). 늘 뜨는 경고는 무시하는 법을 가르친다.
+func checkBuildDrift(r *Report, c *config.Config, self sync.Build) {
+	if c == nil {
+		return
+	}
+	var lines []string
+	for _, v := range c.Vaults {
+		for _, b := range sync.NewerBuilds(v.Path, self) {
+			age := b.Committed.Format("2006-01-02")
+			mark := ""
+			if b.Modified {
+				// 커밋 안 된 변경 위에서 빌드했다 — revision 이 실제 코드를 안 가리킨다.
+				mark = " (커밋 안 된 변경 포함)"
+			}
+			lines = append(lines, fmt.Sprintf("%s 가 더 새 판이다 (%s%s)", b.Host, age, mark))
+		}
+	}
+	if len(lines) == 0 {
+		r.add("판", OK, "이 머신이 최신이거나 비교할 것이 없다", "")
+		return
+	}
+	sort.Strings(lines)
+	r.add("판", Warn, strings.Join(lines, " · "),
+		"prior 를 올려라 — 저쪽이 쓴 노트를 이 판이 못 읽을 수 있고, "+
+			"그때 손으로 고치면 저쪽이 쌓은 것을 지운다")
 }
 
 // checkSync 는 **동기화가 조용히 죽어 있는지** 본다.
@@ -540,13 +578,40 @@ func checkNotes(r *Report, l *store.Layout) []store.Note {
 		return nil
 	}
 	if len(skipped) > 0 {
-		var rel []string
+		// **갈래마다 사람이 할 일이 정반대다.**
+		//
+		// 예전에는 둘을 묶어 "frontmatter 를 정본 10키로 고쳐라" 하나만 냈다.
+		// 그 지시가 사고를 만들었다 — 2026-08-21 에 다른 머신의 더 새 판이 쓴 노트를
+		// 사람이 그 말대로 옛 모양으로 되돌려 다중값 supersedes 를 강등시켰다.
+		// 판 갈림은 **고칠 것이 노트가 아니라 이쪽 바이너리**다.
+		var newer, broken []string
 		for _, s := range skipped {
-			rel = append(rel, l.RelPath(s.Path))
+			if s.LooksNewer() {
+				newer = append(newer, l.RelPath(s.Path))
+				continue
+			}
+			broken = append(broken, l.RelPath(s.Path))
+		}
+		sort.Strings(newer)
+		sort.Strings(broken)
+
+		var detail, fix []string
+		if len(newer) > 0 {
+			detail = append(detail,
+				fmt.Sprintf("더 새 판이 쓴 모양이라 못 읽는다 %v", newer))
+			fix = append(fix,
+				"prior 를 올려라 — 그 노트를 **손으로 고치지 마라.** "+
+					"옛 모양으로 되돌리면 다른 머신이 쌓은 것을 지운다")
+		}
+		if len(broken) > 0 {
+			detail = append(detail,
+				fmt.Sprintf("frontmatter 가 깨져 못 읽는다 %v", broken))
+			fix = append(fix, "frontmatter 를 정본 10키로 고쳐라. prior index 가 이유를 알려준다")
 		}
 		r.add("결정 노트", Fail,
-			fmt.Sprintf("%d건 중 %d건을 읽지 못했다 %v", len(notes)+len(skipped), len(skipped), rel),
-			"frontmatter 를 정본 10키로 고쳐라. prior index 가 이유를 알려준다")
+			fmt.Sprintf("%d건 중 %d건을 읽지 못했다 — %s",
+				len(notes)+len(skipped), len(skipped), strings.Join(detail, " · ")),
+			strings.Join(fix, " / "))
 		return notes
 	}
 	r.add("결정 노트", OK, fmt.Sprintf("%d건 전부 읽힌다", len(notes)), "")

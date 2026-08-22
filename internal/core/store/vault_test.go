@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,5 +319,48 @@ func TestWriteCreatesParentDirs(t *testing.T) {
 	}
 	if again.Meta.Summary != n.Meta.Summary {
 		t.Errorf("왕복 후 summary 가 변했다: got %q, want %q", again.Meta.Summary, n.Meta.Summary)
+	}
+}
+
+// ★ **"못 읽었다" 만으로는 사람이 잘못 고친다.**
+//
+// 2026-08-21 에 실제로 그랬다. 집이 supersedes 를 다중값으로 올리자 회사의 옛 판이
+// 그 노트를 파싱조차 못 해 건너뛰었고, 세션 시작은 "결정 노트 N건을 읽지 못해
+// 회수에서 빠져 있다" 만 말했다. 파일을 열어 보면 YAML 은 멀쩡해 보인다 — 그래서
+// 사람이 **옛 모양으로 되돌려** 다중값을 강등시켰다. 신호는 있었는데 무엇을 하라는
+// 말이 없었던 것이 원인이다.
+//
+// 갈래는 에러가 알려 준다. **아는 키에 모르는 모양**(`cannot unmarshal !!seq into
+// string`)은 구조가 멀쩡하다는 뜻이고, 그건 더 새 판이 쓴 것이다. 진짜 깨진 YAML은
+// 파서가 스트림 단계에서 다르게 운다. (모르는 **키**는 Extra 가 흡수해 아예 에러가
+// 안 난다 — 그래서 남는 것은 이 둘뿐이다.)
+func TestSkippedNoteDistinguishesNewerShapeFromBroken(t *testing.T) {
+	newer := []string{
+		"frontmatter 파싱 실패: yaml: unmarshal errors:\n  line 2: cannot unmarshal !!seq into string",
+		"frontmatter 파싱 실패: yaml: unmarshal errors:\n  line 9: cannot unmarshal !!map into string",
+		"frontmatter 파싱 실패: yaml: unmarshal errors:\n  line 3: cannot unmarshal !!bool into []string",
+	}
+	for _, msg := range newer {
+		if !(SkippedNote{Reason: errors.New(msg)}).LooksNewer() {
+			t.Errorf("더 새 판 모양을 못 알아본다: %s", msg)
+		}
+	}
+
+	broken := []string{
+		"frontmatter 파싱 실패: yaml: line 2: found unexpected end of stream",
+		"frontmatter 파싱 실패: yaml: line 2: mapping values are not allowed in this context",
+		"frontmatter 가 없다 (--- 로 시작하지 않는다)",
+		`결정 노트가 아니다 (type: "log")`,
+		"open /x/y.md: permission denied",
+	}
+	for _, msg := range broken {
+		if (SkippedNote{Reason: errors.New(msg)}).LooksNewer() {
+			t.Errorf("진짜 깨진 것을 판 갈림으로 오진한다: %s", msg)
+		}
+	}
+
+	// Reason 이 비면 판정할 근거가 없다. 없는 것을 있다고 하지 않는다.
+	if (SkippedNote{}).LooksNewer() {
+		t.Error("Reason 이 없는데 판 갈림이라고 한다")
 	}
 }
