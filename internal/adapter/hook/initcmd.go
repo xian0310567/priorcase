@@ -100,8 +100,18 @@ func NewInitCommand() *cobra.Command {
 				}
 				fmt.Fprintf(out, "되돌리려면: prior init %s--revert   (백업: %s)\n", hostArg, p.BackupPath)
 			}
-			fmt.Fprintln(out, "\n데몬은 자동 등록하지 않는다 — 필요하면 `prior watch` 를 직접 띄운다.")
-			fmt.Fprintln(out, "안 띄워도 훅이 턴 경계마다 대신 훑으므로 안전망은 동작한다.")
+			// **Codex 에서는 데몬이 선택이 아니다.** Claude Code 는 SessionEnd 훅이
+			// 세션 끝에 아크를 판정하는데(scan.go), Codex 에는 그 이벤트가 없다.
+			// 그 자리를 데몬의 arcStale(20분 침묵)이 대신해야 한다 — 안 띄우면
+			// 훑기는 되고 **승격이 압축될 때만 돈다.**
+			fmt.Fprintln(out, "\n데몬은 자동 등록하지 않는다 — `prior watch` 를 직접 띄운다.")
+			if h == HostCodex {
+				fmt.Fprintln(out, "⚠️ **Codex 에서는 선택이 아니다.** Codex 에는 SessionEnd 이벤트가 없어서,")
+				fmt.Fprintln(out, "   세션 끝에 자동 기록을 하는 자리를 데몬이 대신해야 한다 (20분 침묵 뒤 판정).")
+				fmt.Fprintln(out, "   안 띄우면 훑기는 되지만 자동 기록은 압축될 때만 돈다.")
+			} else {
+				fmt.Fprintln(out, "안 띄워도 훅이 턴 경계마다 대신 훑으므로 안전망은 동작한다.")
+			}
 			if _, err := exec.LookPath("prior"); err != nil {
 				// 훅은 절대 경로로 돌지만 사람은 못 친다. 배선한 직후가 알려 줄 자리다.
 				fmt.Fprintf(out, "\n⚠️ `prior` 가 PATH 에 없다. 훅은 돌지만 명령을 직접 칠 수 없다:\n"+

@@ -217,6 +217,25 @@ func checkCodexHooks(r *health.Report, o DoctorOptions) {
 	default:
 		add(r, "Codex 훅", health.OK, fmt.Sprintf("%d개 전부 (%s)", len(wired), path), "")
 	}
+
+	// **Codex 에서는 데몬이 선택이 아니다.**
+	//
+	// Claude Code 는 SessionEnd 훅이 세션 끝에 아크를 판정한다(scan.go). Codex 에는
+	// 그 이벤트가 아예 없으므로 그 자리를 데몬의 arcStale(20분 침묵, daemon.go)이
+	// 대신해야 한다 — 안 띄우면 **자동 기록이 압축될 때만 돈다.**
+	//
+	// 일반 "안전망" 줄로는 이게 안 보인다. 거기는 "데몬이 없어도 훅이 대신 훑는다" 고
+	// 말하는데, 그 말이 Claude Code 에서는 맞고 Codex 에서는 틀리다 — 훑기는 대신
+	// 하지만 **승격은 못 한다.** 그래서 별도 줄로 낸다. 이 줄은 Codex 를 배선한
+	// 사람에게만 뜨므로 늘 뜨는 경고가 되지 않는다.
+	if daemon.IsRunning(o.StateDir) {
+		add(r, "Codex 자동기록", health.OK,
+			"데몬이 세션 끝 자리를 대신한다 (20분 침묵 뒤 아크 판정)", "")
+		return
+	}
+	add(r, "Codex 자동기록", health.Warn,
+		"데몬이 없다 — Codex 에는 SessionEnd 가 없어 자동 기록이 압축될 때만 돈다",
+		"prior watch 를 띄워라 (Claude Code 와 달리 Codex 에서는 선택이 아니다)")
 }
 
 // checkBinary 는 훅에 박힌 경로가 지금도 실행 가능한지, 그리고 **지금 이 프로세스와

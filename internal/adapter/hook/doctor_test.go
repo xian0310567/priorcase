@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/daemon"
 	"github.com/xian0310567/priorcase/internal/testutil"
@@ -658,5 +659,70 @@ func TestDoctorCatchesMissingCodexEvent(t *testing.T) {
 	r := wiringReport(t, DoctorOptions{SettingsPath: wiredSettings(t, exe), CodexSettingsPath: p})
 	if c := check(t, r, "Codex 훅"); c.Level == health.OK {
 		t.Errorf("이벤트가 빠졌는데 정상이라고 한다: %s", c.Detail)
+	}
+}
+
+// holdDaemonLock 은 `prior watch` 가 도는 상태를 흉내 낸다 — 같은 flock 을 잡는다.
+func holdDaemonLock(t *testing.T, stateDir string) {
+	t.Helper()
+	lk := flock.New(filepath.Join(stateDir, "watch.lock"))
+	ok, err := lk.TryLock()
+	if err != nil || !ok {
+		t.Fatalf("락을 못 잡았다: %v (ok=%v)", err, ok)
+	}
+	t.Cleanup(func() { _ = lk.Unlock() })
+	if !daemon.IsRunning(stateDir) {
+		t.Fatal("락을 잡았는데 IsRunning 이 false 다 — 흉내가 틀렸다")
+	}
+}
+
+// ★ **Codex 에는 SessionEnd 가 없어서 데몬이 선택이 아니다.**
+//
+// Claude Code 는 SessionEnd 훅이 세션 끝에 아크를 판정한다. Codex 에는 그 이벤트가
+// 없으므로 그 자리를 데몬의 arcStale(20분 침묵)이 대신해야 한다 — 안 띄우면
+// **자동 기록이 압축될 때만 돈다.** 그건 "훅이 대신 훑으니 괜찮다" 와 다른 이야기라
+// 일반 안전망 줄로는 안 보인다.
+func TestDoctorSaysDaemonIsRequiredOnCodex(t *testing.T) {
+	exe, _ := os.Executable()
+	sd := t.TempDir()
+	r := wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: codexWired(t, exe, true),
+		StateDir:          sd,
+	})
+	c := check(t, r, "Codex 자동기록")
+	if c.Level == health.OK {
+		t.Errorf("데몬이 없는데 정상이라고 한다: %s", c.Detail)
+	}
+	if !strings.Contains(c.Fix, "prior watch") {
+		t.Errorf("무엇을 하라는지 안 알려 준다: %q", c.Fix)
+	}
+}
+
+// 데몬이 돌면 그 자리가 메워지므로 조용해야 한다.
+func TestDoctorQuietWhenCodexHasDaemon(t *testing.T) {
+	exe, _ := os.Executable()
+	sd := t.TempDir()
+	holdDaemonLock(t, sd)
+	r := wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: codexWired(t, exe, true),
+		StateDir:          sd,
+	})
+	if c := check(t, r, "Codex 자동기록"); c.Level != health.OK {
+		t.Errorf("데몬이 도는데 경고가 뜬다: %s", c.Detail)
+	}
+}
+
+// Codex 를 안 쓰면 이 줄 자체가 없다.
+func TestDoctorNoCodexAutoRowWithoutCodex(t *testing.T) {
+	exe, _ := os.Executable()
+	r := wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: filepath.Join(t.TempDir(), "없다.json"),
+		StateDir:          t.TempDir(),
+	})
+	if hasCheck(r, "Codex 자동기록") {
+		t.Error("Codex 를 안 쓰는데 줄이 떴다")
 	}
 }

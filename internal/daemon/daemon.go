@@ -467,6 +467,12 @@ func acquireLock(ctx context.Context, lk *flock.Flock) (bool, error) {
 // 잡는 순간이 훅의 스캔과 겹치면 "돌고 있다" 로 잘못 나올 수 있는데, 진단 표시일
 // 뿐이라 Run 처럼 기다리지 않는다 — 기다리면 prior doctor 가 1.5초 멎는다.
 func IsRunning(stateDir string) bool {
+	// **모르면 작업 디렉토리를 더럽히지 않는다.** filepath.Join("", lockFile) 은
+	// 그냥 "watch.lock" 이라 flock 이 **지금 있는 곳에** 파일을 만든다 — 실측으로
+	// 그 파일이 레포에 커밋될 뻔했다. 상태 디렉토리를 모르면 데몬도 모르는 것이다.
+	if stateDir == "" {
+		return false
+	}
 	lk := flock.New(filepath.Join(stateDir, lockFile))
 	got, err := lk.TryLock()
 	if err != nil {

@@ -279,3 +279,28 @@ func TestInitRevertHintNamesTheHost(t *testing.T) {
 			out.String())
 	}
 }
+
+// ★ **배선 직후 안내가 Codex 에서는 틀렸다.**
+//
+// 기본 문구는 "안 띄워도 훅이 턴 경계마다 대신 훑으므로 안전망은 동작한다" 인데,
+// Codex 에는 SessionEnd 가 없어 **훑기는 되고 승격은 안 된다.** 그대로 두면
+// 사람이 데몬을 안 띄우고 자동 기록이 죽은 줄도 모른다.
+func TestInitCodexSaysDaemonIsRequired(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+
+	r, out := root(t, "init", "--host", "codex", "--apply", "--config", cfgPath)
+	if err := r.Execute(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "안 띄워도") {
+		t.Errorf("Codex 인데 데몬이 없어도 된다고 말한다:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "prior watch") {
+		t.Errorf("데몬을 띄우라는 말이 없다:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "SessionEnd") {
+		t.Errorf("왜 필요한지 안 알려 준다:\n%s", out.String())
+	}
+}
