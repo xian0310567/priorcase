@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,13 @@ import (
 // DoctorOptions 는 진단에 필요한 것이다.
 type DoctorOptions struct {
 	SettingsPath string
-	StateDir     string
+	// CodexSettingsPath 는 Codex 훅 파일이다. 비면 ~/.codex/hooks.json.
+	//
+	// **따로 두는 이유**: 두 호스트를 한 머신에서 같이 쓸 수 있고(집은 Codex, 회사는
+	// Claude Code 라도 두 앱이 다 깔려 있다), 그때 한쪽만 보면 다른 쪽이 조용히
+	// 죽어도 진단이 초록불을 낸다.
+	CodexSettingsPath string
+	StateDir          string
 	// Binary 는 훅에 배선돼 있어야 할 prior 경로다. 비면 지금 실행 중인 것.
 	Binary string
 	// Config 는 자동 승격 설정을 보는 데 쓴다. nil 이면 그 검사를 건너뛴다.
@@ -49,6 +56,7 @@ func Wiring(r *health.Report, o DoctorOptions) {
 	}
 	checkPath(r)
 	checkHooks(r, o)
+	checkCodexHooks(r, o)
 	checkJudge(r, o)
 	checkDaemon(r, o)
 }
@@ -133,6 +141,82 @@ func checkHooks(r *health.Report, o DoctorOptions) {
 		fmt.Sprintf("%d개 전부 (남의 훅 %d개는 손대지 않음)", len(wired), others), "")
 
 	checkBinary(r, o, wired)
+}
+
+// checkCodexHooks 는 Codex 쪽 배선을 본다.
+//
+// **배선을 안 했으면 한 줄도 안 낸다.** Codex 를 안 쓰는 사람(대부분)에게 매번
+// "Codex 가 배선 안 됐다" 가 뜨면 그 줄은 곧 배경이 되고, 배경이 되면 진짜 실패도
+// 같이 안 읽힌다. 그래서 **이미 배선한 것만** 검사한다.
+//
+// 잡아야 할 진짜 고장은 `--host codex` 가 빠진 배선이다. 그러면 훅은 멀쩡히 돌고
+// 안전망도 도는데 **컨텍스트 주입만 사라진다** — Codex 는 평문 stdout 을 안 읽기
+// 때문이다. 그리고 훅은 규약상 언제나 exit 0 이라 아무 표시도 안 난다. 옛 바이너리로
+// 배선했거나 손으로 고쳤을 때 이 모양이 된다.
+func checkCodexHooks(r *health.Report, o DoctorOptions) {
+	path := o.CodexSettingsPath
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		path = defaultSettingsPath(home, HostCodex)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return // 파일이 없다 = Codex 를 안 쓴다. 고장이 아니다.
+	}
+	if !bytes.Contains(raw, []byte(hookMarker)) {
+		return // 남의 훅만 있다 = 아직 배선을 안 했다. 그것도 고장이 아니다.
+	}
+
+	var root struct {
+		Hooks map[string][]hookGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		add(r, "Codex 훅", health.Fail, path+" 이 JSON 이 아니다: "+err.Error(), "")
+		return
+	}
+	wired := map[string]string{}
+	for ev, groups := range root.Hooks {
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if strings.Contains(h.Command, hookMarker) {
+					wired[ev] = h.Command
+				}
+			}
+		}
+	}
+
+	want := EventsFor(HostCodex)
+	var missing, noFlag []string
+	for _, ev := range want {
+		name := ev.NameFor(HostCodex)
+		cmd, ok := wired[name]
+		if !ok {
+			missing = append(missing, name)
+			continue
+		}
+		if !strings.Contains(cmd, "--host "+string(HostCodex)) {
+			noFlag = append(noFlag, name)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(noFlag)
+
+	switch {
+	case len(missing) > 0:
+		add(r, "Codex 훅", health.Fail,
+			fmt.Sprintf("%d/%d 개만 배선됐다. 빠진 것: %v", len(wired), len(want), missing),
+			"prior init --host codex --apply")
+	case len(noFlag) > 0:
+		add(r, "Codex 훅", health.Fail,
+			fmt.Sprintf("--host codex 가 빠진 훅이 있다 %v — 훅은 돌지만 회수 주입이 "+
+				"통째로 사라진다 (Codex 는 평문 stdout 을 안 읽는다)", noFlag),
+			"prior init --host codex --apply")
+	default:
+		add(r, "Codex 훅", health.OK, fmt.Sprintf("%d개 전부 (%s)", len(wired), path), "")
+	}
 }
 
 // checkBinary 는 훅에 박힌 경로가 지금도 실행 가능한지, 그리고 **지금 이 프로세스와

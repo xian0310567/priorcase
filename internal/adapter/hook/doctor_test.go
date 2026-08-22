@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -548,5 +549,114 @@ func TestSafetyNetReportsUndeclaredDomainPendings(t *testing.T) {
 		Config: cfg, RecentDecisions: ptr(5)}), "안전망")
 	if strings.Contains(ok.Detail, "설정에 없는 도메인") {
 		t.Errorf("멀쩡한데 고아라고 한다: %s", ok.Detail)
+	}
+}
+
+// hasCheck 는 그 이름의 검사가 보고에 있는지다 (없어야 정상인 경우를 위해).
+func hasCheck(r *health.Report, name string) bool {
+	for _, c := range r.Checks {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// codexWired 는 Codex 훅 파일을 만들고 경로를 준다. wire=false 면 남의 훅만 있다.
+func codexWired(t *testing.T, binary string, wire bool) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "hooks.json")
+	if err := os.WriteFile(p, []byte(realCodexHooks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !wire {
+		return p
+	}
+	plan, err := BuildPlan(InitOptions{SettingsPath: p, Host: HostCodex, Binary: binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Apply(ReadSettings(p)); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// **Codex 를 안 쓰는 사람에게는 한 줄도 안 뜬다.** 늘 뜨는 경고는 무시를 가르친다.
+func TestDoctorSilentWhenCodexNotWired(t *testing.T) {
+	exe, _ := os.Executable()
+	r := wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: filepath.Join(t.TempDir(), "없는파일.json"),
+	})
+	if hasCheck(r, "Codex 훅") {
+		t.Error("Codex 를 안 쓰는데 Codex 검사가 떴다")
+	}
+
+	// 파일은 있지만 우리 훅이 없는 경우도 마찬가지다 — 배선을 안 한 것은 고장이 아니다.
+	r = wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: codexWired(t, exe, false),
+	})
+	if hasCheck(r, "Codex 훅") {
+		t.Error("배선 안 한 Codex 파일에 경고가 떴다")
+	}
+}
+
+// 배선했으면 본다.
+func TestDoctorSeesWiredCodex(t *testing.T) {
+	exe, _ := os.Executable()
+	r := wiringReport(t, DoctorOptions{
+		SettingsPath:      wiredSettings(t, exe),
+		CodexSettingsPath: codexWired(t, exe, true),
+	})
+	if got := check(t, r, "Codex 훅").Level; got != health.OK {
+		t.Errorf("정상 배선인데 %v: %s", got, check(t, r, "Codex 훅").Detail)
+	}
+}
+
+// ★ **--host 가 빠진 배선이 제일 위험하다.** 훅은 돌지만 주입이 통째로 사라지고,
+// 훅은 exit 0 이라 아무 표시도 안 난다. 옛 바이너리로 배선하면 이 모양이 된다.
+func TestDoctorCatchesCodexWiringWithoutHostFlag(t *testing.T) {
+	exe, _ := os.Executable()
+	p := codexWired(t, exe, true)
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 옛 판이 심었을 모양으로 되돌린다.
+	if err := os.WriteFile(p, []byte(strings.ReplaceAll(string(raw), " --host codex", "")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := wiringReport(t, DoctorOptions{SettingsPath: wiredSettings(t, exe), CodexSettingsPath: p})
+	c := check(t, r, "Codex 훅")
+	if c.Level == health.OK {
+		t.Errorf("--host 가 빠졌는데 정상이라고 한다: %s", c.Detail)
+	}
+	if !strings.Contains(c.Detail, "--host") {
+		t.Errorf("무엇이 문제인지 안 알려 준다: %s", c.Detail)
+	}
+}
+
+// 이벤트가 빠진 것도 잡는다.
+func TestDoctorCatchesMissingCodexEvent(t *testing.T) {
+	exe, _ := os.Executable()
+	p := codexWired(t, exe, true)
+	raw, _ := os.ReadFile(p)
+	// UserPromptSubmit 배선만 통째로 들어낸다 — 회수 주입이 죽은 상태.
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	delete(root["hooks"].(map[string]any), "UserPromptSubmit")
+	out, _ := json.Marshal(root)
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := wiringReport(t, DoctorOptions{SettingsPath: wiredSettings(t, exe), CodexSettingsPath: p})
+	if c := check(t, r, "Codex 훅"); c.Level == health.OK {
+		t.Errorf("이벤트가 빠졌는데 정상이라고 한다: %s", c.Detail)
 	}
 }

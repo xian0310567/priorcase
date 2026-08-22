@@ -12,7 +12,7 @@ import (
 // NewCommand 는 `prior hook <event>` 를 만든다. mcp·daemon 과 같은 이유로 cli 가 아니라
 // 여기 있다 — 어댑터끼리 서로를 import 하지 않는다 (§4.1).
 func NewCommand() *cobra.Command {
-	var stateDir string
+	var stateDir, host string
 
 	cmd := &cobra.Command{
 		Use:   "hook <event>",
@@ -35,6 +35,15 @@ func NewCommand() *cobra.Command {
 				}
 			}
 
+			// **모르는 호스트면 아무것도 하지 않는다.** 어느 형식으로 내야 하는지
+			// 모르는 채로 내면 그 주입은 조용히 사라진다 — 훅은 exit 0 이라 아무
+			// 표시도 안 난다. 이 프로젝트가 금지한 고장 모양이다.
+			h, herr := ParseHost(host)
+			if herr != nil {
+				warn(herr)
+				return
+			}
+
 			in, perr := ParseInput(cmd.InOrStdin())
 			warn(perr)
 
@@ -42,6 +51,7 @@ func NewCommand() *cobra.Command {
 				Event:    Event(args[0]),
 				Input:    in,
 				StateDir: stateDir,
+				Host:     h,
 				Out:      cmd.OutOrStdout(),
 				Err:      errW,
 			}
@@ -74,5 +84,6 @@ func NewCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&stateDir, "state-dir", "", "데몬 상태 디렉토리 (기본: $XDG_STATE_HOME/priorcase)")
+	cmd.Flags().StringVar(&host, "host", "", "훅을 부른 에이전트: claude-code (기본) · codex — prior init 이 써 넣는다")
 	return cmd
 }

@@ -16,6 +16,9 @@ type Options struct {
 	Config   *config.Config
 	Layout   *store.Layout
 	StateDir string
+	// Host 는 훅을 부른 에이전트다. 빈 값은 Claude Code 다.
+	// 컨텍스트 주입의 **출력 형식**과 볼트 push 가 걸리는 **자리**가 여기 달렸다.
+	Host Host
 
 	// Out 은 **에이전트 컨텍스트로 주입되는 자리**다. 여기 쓰는 것은 전부 모델이 읽는다.
 	Out io.Writer
@@ -30,6 +33,13 @@ type Options struct {
 // 두는 이유는 테스트가 "조용히 아무것도 안 한 것" 과 "실패한 것" 을 구별해야 하기
 // 때문이다. 구별이 안 되면 훅이 죽어 있어도 정상으로 보인다.
 func Run(ctx context.Context, o Options) error {
+	// **호스트별 분기를 여기 한 곳에 가둔다.** 회수·세션진입 코드는 자기가 어느
+	// 호스트로 나가는지 몰라야 한다 — 알기 시작하면 출력 형식 조건문이 그 안으로 번진다.
+	if o.Host == HostCodex && o.Out != nil {
+		c := &codexOut{ev: o.Event, w: o.Out}
+		o.Out = c
+		defer c.Flush()
+	}
 	switch o.Event {
 	case EventSessionStart:
 		// **가져온 뒤에 컨텍스트를 만든다.** 순서가 반대면 그 세션은 어제 볼트로
@@ -47,6 +57,11 @@ func Run(ctx context.Context, o Options) error {
 		// 먼저 밀면 그것이 빠진다.
 		if o.Event == EventSessionEnd {
 			o.syncPush()
+		}
+		// **Codex 에는 SessionEnd 가 없다.** 그 호스트에서는 위 줄이 영영 안 돌므로
+		// Stop 이 대타를 선다 — 대신 디바운스가 붙는다 (sync.go).
+		if o.Event == EventStop && o.Host == HostCodex {
+			o.syncStop()
 		}
 		return err
 	default:

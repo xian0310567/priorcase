@@ -20,26 +20,31 @@ import (
 // 사라지면, 그 사람은 무엇이 지웠는지도 모른다.
 func NewInitCommand() *cobra.Command {
 	var apply, revert bool
-	var settingsPath, binary, removeMatching, vault string
+	var settingsPath, binary, removeMatching, vault, host string
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Claude Code 훅을 배선한다 (기본은 계획만 보여 준다)",
-		Long: "Claude Code 설정에 priorcase 훅을 심고 옛 셸 훅을 걷어낸다.\n\n" +
+		Short: "에이전트 훅을 배선한다 (기본은 계획만 보여 준다)",
+		Long: "Claude Code 또는 Codex 설정에 priorcase 훅을 심고 옛 셸 훅을 걷어낸다.\n\n" +
 			"**기본은 계획만 보여 준다. 쓰려면 --apply 를 붙인다.** 이 설정 파일은 " +
 			"다른 도구들과 공유하는 자리라, 실수로 한 번 돌려서 남의 훅이 사라지면 안 된다.\n\n" +
-			"--apply 는 수정 전에 백업을 남기고, --revert 가 그 백업으로 되돌린다.",
+			"--apply 는 수정 전에 백업을 남기고, --revert 가 그 백업으로 되돌린다.\n\n" +
+			"두 호스트를 다 쓰면 각각 한 번씩 돌린다 — 설정 파일이 서로 다르다.",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
+			h, err := ParseHost(host)
+			if err != nil {
+				return err
+			}
 			if settingsPath == "" {
 				home, err := os.UserHomeDir()
 				if err != nil {
 					return err
 				}
-				settingsPath = filepath.Join(home, ".claude", "settings.json")
+				settingsPath = defaultSettingsPath(home, h)
 			}
 
 			if revert {
@@ -63,7 +68,7 @@ func NewInitCommand() *cobra.Command {
 
 			p, err := BuildPlan(InitOptions{
 				SettingsPath: settingsPath, ConfigPath: cfgPath,
-				Binary: binary, RemoveMatching: removeMatching,
+				Binary: binary, RemoveMatching: removeMatching, Host: h,
 			})
 			if err != nil {
 				return err
@@ -101,11 +106,24 @@ func NewInitCommand() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&apply, "apply", false, "실제로 설정을 바꾼다 (없으면 계획만 보여 준다)")
 	f.BoolVar(&revert, "revert", false, "가장 최근 백업으로 되돌린다")
-	f.StringVar(&settingsPath, "settings", "", "Claude Code 설정 경로 (기본: ~/.claude/settings.json)")
+	f.StringVar(&host, "host", "", "배선할 에이전트: claude-code (기본) · codex")
+	f.StringVar(&settingsPath, "settings", "", "설정 경로 (기본: ~/.claude/settings.json · codex 는 ~/.codex/hooks.json)")
 	f.StringVar(&binary, "binary", "", "훅이 실행할 prior 경로 (기본: 지금 실행 중인 것)")
 	f.StringVar(&removeMatching, "remove-matching", "", "걷어낼 옛 훅을 알아보는 문자열 (기본: hooks/second-brain/)")
 	f.StringVar(&vault, "vault", "", "새 설정 파일이 가리킬 볼트 경로")
 	return cmd
+}
+
+// defaultSettingsPath 는 그 호스트가 훅을 읽는 파일이다.
+//
+// Codex 는 `~/.codex/config.toml` 의 `[hooks]` 절로도 읽지만 **hooks.json 쪽을 쓴다** —
+// config.toml 은 사람이 손으로 관리하는 설정이 잔뜩 든 파일이고, TOML 을 다시 쓰면
+// 주석이 전부 날아간다. JSON 파일은 우리가 이미 안전하게 수술할 줄 안다(BuildPlan).
+func defaultSettingsPath(home string, h Host) string {
+	if h == HostCodex {
+		return filepath.Join(home, ".codex", "hooks.json")
+	}
+	return filepath.Join(home, ".claude", "settings.json")
 }
 
 // writeStarterConfig 는 설정 파일이 없을 때만 만든다. **있으면 절대 안 건드린다** —

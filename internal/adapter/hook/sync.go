@@ -22,10 +22,35 @@ import (
 //
 // session-end 의 push 는 대화가 이미 끝난 뒤라 조금 더 준다. 여기서 못 밀면
 // 그 결정이 다른 머신에서 **영영 안 보인다** — 이쪽이 잃는 것이 더 크다.
+// Codex 의 Stop 은 셋 중간이다 — 대화는 이어지지만(사람이 기다린다) 자주 오지는
+// 않는다(10분에 한 번). 못 밀어도 다음 진입의 catch-up 이 받으므로 짧게 끊는다.
 const (
-	pullBudget = 5 * time.Second
-	pushBudget = 15 * time.Second
+	pullBudget     = 5 * time.Second
+	pushBudget     = 15 * time.Second
+	stopPushBudget = 10 * time.Second
 )
+
+// stopPushInterval 은 Codex 의 Stop 에서 다시 밀기까지 기다리는 시간이다.
+//
+// **Codex 에는 SessionEnd 가 없다** (host.go 참고). push 를 걸 자리가 Stop 뿐인데
+// 그건 턴마다 오므로, 그대로 밀면 대화 한 번에 네트워크를 수십 번 탄다. 그렇다고
+// 안 밀면 개인 맥의 결정이 회사에서 안 보인다 — 이 기능을 만든 이유가 그 고장이다.
+//
+// 10분인 이유: 이 창을 놓쳐도 **잃지 않는다.** 다음 세션 진입의 catch-up push 가
+// 받는다(syncPull). 그래서 이 값은 "얼마나 자주 밀 것인가" 가 아니라 "머신을 옮기기
+// 전에 밀려 있을 확률" 을 정하는 값이고, 짧게 잡을수록 네트워크만 더 탄다.
+const stopPushInterval = 10 * time.Minute
+
+// dueForStopPush 는 이번 Stop 에서 밀 때가 됐는지다.
+//
+// **실패한 도장도 창을 지킨다.** 회사망에서 막혔을 때 턴마다 재시도하면 그 지연을
+// 사람이 매 턴 겪는데, 정작 막힌 것은 재시도로 안 풀린다.
+func dueForStopPush(st sync.Stamp, have bool, now time.Time) bool {
+	if !have {
+		return true // 이 머신에서 아직 한 번도 안 했다
+	}
+	return now.Sub(st.At) >= stopPushInterval
+}
 
 // syncPull 은 세션 진입에서 리모트를 가져오고, **지난 세션이 남긴 것이 있으면
 // 그것도 민다.**
@@ -37,21 +62,41 @@ const (
 // **평소에는 공짜다.** Status 는 로컬만 보므로(네트워크를 안 탄다) 밀 것이 없으면
 // push 를 아예 안 부른다 — 세션 진입에 네트워크를 한 번 더 태우지 않는다.
 func (o Options) syncPull() {
-	catchUp := false
-	if o.Config != nil {
-		for _, v := range o.Config.Vaults {
-			if st := sync.Status(v.Path); st.HasRemote && (st.Ahead > 0 || st.Dirty > 0) {
-				catchUp = true
-				break
-			}
-		}
-	}
-	o.doSync(sync.Options{Timeout: pullBudget, Stamp: sync.ThisBuild()}, true, catchUp)
+	o.doSync(sync.Options{Timeout: pullBudget, Stamp: sync.ThisBuild()}, true, o.hasUnpushed())
 }
 
 // syncPush 는 세션 종료에서 볼트를 밀어낸다.
 func (o Options) syncPush() {
 	o.doSync(sync.Options{Timeout: pushBudget, Stamp: sync.ThisBuild()}, false, true)
+}
+
+// syncStop 은 **Codex 의** Stop 에서 볼트를 민다. SessionEnd 가 없는 호스트의 대타다.
+//
+// 순서가 중요하다: 밀 것이 있는지를 **먼저** 본다. 그건 로컬만 보므로 공짜고,
+// 없으면 시계도 도장도 안 읽는다 — 평소 Stop 에 아무 비용이 없어야 한다.
+func (o Options) syncStop() {
+	if !o.hasUnpushed() {
+		return
+	}
+	st, have := sync.ReadStamp(o.StateDir)
+	if !dueForStopPush(st, have, time.Now()) {
+		return
+	}
+	o.doSync(sync.Options{Timeout: stopPushBudget, Stamp: sync.ThisBuild()}, false, true)
+}
+
+// hasUnpushed 는 리모트로 안 간 것이 있는지다. **네트워크를 안 탄다** — Status 는
+// 로컬 git 상태만 본다. 그래서 밀 것이 없을 때 세션 진입·Stop 이 공짜로 끝난다.
+func (o Options) hasUnpushed() bool {
+	if o.Config == nil {
+		return false
+	}
+	for _, v := range o.Config.Vaults {
+		if st := sync.Status(v.Path); st.HasRemote && (st.Ahead > 0 || st.Dirty > 0) {
+			return true
+		}
+	}
+	return false
 }
 
 // doSync 는 **실패해도 아무것도 막지 않는다.**

@@ -207,3 +207,47 @@ func TestStarterConfigFollowsLocale(t *testing.T) {
 		})
 	}
 }
+
+// ★ **`prior init --host codex` 는 Codex 의 설정 파일로 간다.**
+// 기본 경로를 안 옮기면 Codex 배선이 Claude Code 파일에 쓰이고, 둘 다 망가진다.
+func TestInitHostCodexTargetsCodexHooksFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+
+	r, out := root(t, "init", "--host", "codex", "--config", cfgPath)
+	if err := r.Execute(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	want := filepath.Join(home, ".codex", "hooks.json")
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("계획이 %s 를 가리키지 않는다:\n%s", want, out.String())
+	}
+	if strings.Contains(out.String(), "SessionEnd") {
+		t.Errorf("Codex 계획에 SessionEnd 가 들어갔다:\n%s", out.String())
+	}
+}
+
+// 기본값은 그대로 Claude Code 다.
+func TestInitDefaultsToClaudeCode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+
+	r, out := root(t, "init", "--config", cfgPath)
+	if err := r.Execute(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), filepath.Join(home, ".claude", "settings.json")) {
+		t.Errorf("기본 경로가 Claude Code 가 아니다:\n%s", out.String())
+	}
+}
+
+// 오타는 조용히 기본값으로 떨어지지 않는다 — 엉뚱한 파일을 수술할 뻔한 자리다.
+func TestInitRejectsUnknownHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	r, _ := root(t, "init", "--host", "cursor", "--config", filepath.Join(t.TempDir(), "config.toml"))
+	if err := r.Execute(); err == nil {
+		t.Error("모르는 호스트인데 에러가 없다")
+	}
+}

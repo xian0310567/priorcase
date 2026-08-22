@@ -59,6 +59,9 @@ type InitOptions struct {
 	// Vault 는 새로 만들 설정 파일이 가리킬 볼트다.
 	Vault string
 	Now   time.Time
+	// Host 는 어느 에이전트의 설정을 배선하는지다. 빈 값은 Claude Code 다.
+	// 이벤트 목록과 훅 명령에 붙는 --host 가 여기 달렸다.
+	Host Host
 }
 
 type hookEntry struct {
@@ -165,9 +168,33 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 	}
 
 	// ② 심기
-	for _, ev := range Events {
-		name := ev.claudeCodeName()
-		cmd := fmt.Sprintf("%s %q hook %s", hookMarker, o.Binary, ev)
+	//
+	// **호스트가 모르는 이벤트는 심지 않는다** (EventsFor). Codex 에는 SessionEnd 가
+	// 없는데 그 이름으로 심어 두면 영영 안 불리면서 설정 파일에는 배선된 것처럼 보인다.
+	//
+	// --host 는 **기본 호스트에는 안 붙인다.** 붙이면 이미 돌고 있는 Claude Code 훅
+	// 명령이 전부 달라지고, 그건 이 변경이 감수할 이유가 없는 위험이다.
+	hostFlag := ""
+	if o.Host != "" && o.Host != HostClaudeCode {
+		hostFlag = " --host " + string(o.Host)
+	}
+	// **표시는 환경변수 접두어인데, 그건 셸이 있어야 뜻이 통한다.**
+	//
+	// Claude Code 는 훅 명령을 셸로 돌리므로 그대로 둔다 — 지금 돌고 있는 배선이고,
+	// 바꿀 이유가 없다. Codex 는 셸을 태우는지 확정할 수 없었다(바이너리 문자열로는
+	// 안 갈렸다). 셸이 없으면 `PRIORCASE_HOOK=1` 이 **argv[0] 로 잡혀 훅이 통째로
+	// 죽는다** — 실측으로 재현했다: `exec: "PRIORCASE_HOOK=1": executable file not found`.
+	//
+	// `/usr/bin/env` 를 앞에 두면 **양쪽에서 다 돈다.** 셸이 있으면 env 가 그냥 한 단계
+	// 더 끼는 것이고, 없으면 env 가 변수를 세우고 exec 한다. 호스트 내부를 알아내는
+	// 대신 알 필요가 없게 만드는 쪽을 골랐다.
+	prefix := hookMarker
+	if o.Host == HostCodex {
+		prefix = "/usr/bin/env " + hookMarker
+	}
+	for _, ev := range EventsFor(o.Host) {
+		name := ev.NameFor(o.Host)
+		cmd := fmt.Sprintf("%s %q hook%s %s", prefix, o.Binary, hostFlag, ev)
 		hooks[name] = append(hooks[name], hookGroup{
 			Hooks: []hookEntry{{Type: "command", Command: cmd, Timeout: hookTimeout(ev)}},
 		})
