@@ -78,6 +78,10 @@ const supersededFloor = 1
 type Hit struct {
 	Note  store.Note
 	Score int
+	// Seen 은 **이 세션에 이미 주입된 노트**라는 뜻이다. 점수와 무관하게 호출자가
+	// 나중에 단다(hook/seen.go). 켜지면 RenderInject 가 요약을 빼고 자리만 남긴다 —
+	// 모델이 이미 갖고 있는 문장을 다시 밀어 넣지 않기 위해서다.
+	Seen bool
 }
 
 type Options struct {
@@ -379,6 +383,27 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		summary := m.Summary
 		if summary == "" {
 			summary = h.Note.Stem
+		}
+		// **이미 이 세션에 주입된 것은 요약을 빼고 자리만 남긴다.**
+		//
+		// 모델이 이미 그 문장을 갖고 있으므로 두 번째부터는 아무것도 더해 주지
+		// 않는다. 그래도 줄 자체는 남긴다 — "지금 이게 관련 있다" 는 신호는 매번
+		// 필요하고, 경로가 있어야 열어 볼 수 있다. 상태는 남긴다: 싸고, 그 사이
+		// regretted 로 바뀌었으면 그게 제일 중요한 정보다.
+		if h.Seen {
+			if h.Note.IsReference() {
+				fmt.Fprintf(&b, "- %s %s → %s\n",
+					l.Lang().T("[참고]", "[reference]"),
+					l.Lang().T("(앞서 주입)", "(already shown)"), l.RelPath(h.Note.Path))
+			} else {
+				fmt.Fprintf(&b, "- %s %s (%s/%s) → %s\n", date,
+					l.Lang().T("(앞서 주입)", "(already shown)"),
+					status, outcome, l.RelPath(h.Note.Path))
+			}
+			if status == "regretted" || outcome == "bad" {
+				warn = true
+			}
+			continue
 		}
 		// **참고는 결정처럼 그리면 안 된다.**
 		//

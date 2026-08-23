@@ -42,6 +42,12 @@ func Run(ctx context.Context, o Options) error {
 	}
 	switch o.Event {
 	case EventSessionStart:
+		// **컨텍스트를 비우고 다시 시작하면 "이미 봤다" 도 지운다** (seen.go).
+		// 안 지우면 회수가 요약 대신 포인터만 내는데 정작 요약은 컨텍스트에 없다 —
+		// 절약이 조용한 품질 저하로 바뀐다. resume 은 컨텍스트가 살아 있으므로 둔다.
+		if o.Input.Source == "clear" {
+			o.resetSeen()
+		}
 		// **가져온 뒤에 컨텍스트를 만든다.** 순서가 반대면 그 세션은 어제 볼트로
 		// 시작하고, 방금 다른 머신에서 내린 결정을 못 본 채 같은 것을 다시 정한다.
 		o.syncPull()
@@ -49,6 +55,11 @@ func Run(ctx context.Context, o Options) error {
 	case EventUserPromptSubmit:
 		return o.userPromptSubmit()
 	case EventStop, EventPreCompact, EventSessionEnd:
+		// 압축은 앞부분을 날린다 — 이미 주입한 요약도 같이 사라진다. 표시를
+		// 안 지우면 그다음부터 포인터만 나가고 근거는 어디에도 없게 된다.
+		if o.Event == EventPreCompact {
+			o.resetSeen()
+		}
 		err := o.safetyNet(ctx)
 		// **세션이 끝날 때만 민다.** stop 은 턴마다 도는데 거기서 밀면 대화 한 번에
 		// 네트워크를 수십 번 탄다. pre-compact 도 세션 중간이라 마찬가지다.

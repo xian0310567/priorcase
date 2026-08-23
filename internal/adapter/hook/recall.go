@@ -51,6 +51,10 @@ func (o Options) userPromptSubmit() error {
 	// 밀어넣는 순수 데이터라 한 줄이라도 섞이면 "[과거 결정 참조]" 블록이 오염된다.
 	warnSkipped(o.Err, o.Layout, skipped)
 
+	// **이미 이 세션에 넣은 것은 표시만 달아 둔다** (seen.go). 실측으로 주입의
+	// 42%가 재주입이었다. 무엇을 어떻게 그릴지는 아래 방출기가 정한다.
+	hits = o.markSeen(hits)
+
 	// 렌더러를 새로 만들지 않는다 — 이 프로젝트가 "방출기 두 벌" 을 죄목으로 든다.
 	if s := search.RenderInject(o.Layout, hits); s != "" {
 		fmt.Fprint(o.Out, s)
@@ -72,6 +76,17 @@ func (o Options) userPromptSubmit() error {
 // 고를 것이 없으면 **아무것도 안 낸다.** 매 프롬프트마다 무언가를 묻는 것이
 // 이 물음을 죽이는 가장 빠른 길이다 (판정은 retro.Ask 가 한다).
 func (o Options) askOutcome(hits []search.Hit) string {
+	// **한 세션에 같은 것을 두 번 묻지 않는다.**
+	//
+	// Ask 는 1위 노트를 고르는데, 같은 주제로 대화가 이어지면 그 노트가 계속 1위다.
+	// 세션 스로틀이 없으면 매 프롬프트마다 **같은 물음이 요약까지 붙어** 반복된다.
+	// 답을 모르면 매번 넘어가게 되고, 그러면 이 물음은 배경이 되어 죽는다 —
+	// 이 함수 주석이 경계하는 "매 프롬프트마다 무언가를 묻는 것" 그대로다.
+	//
+	// Seen 은 그 노트를 이 세션에서 이미 주입했다는 뜻이고, 주입했다면 그때 물었다.
+	if len(hits) > 0 && hits[0].Seen {
+		return ""
+	}
 	notes := make([]store.Note, 0, len(hits))
 	for _, h := range hits {
 		notes = append(notes, h.Note)
