@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/search"
 	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
@@ -100,6 +101,36 @@ func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
 		reason := strings.ReplaceAll(strings.TrimRight(fmt.Sprint(s.Reason), "\n"), "\n", "\n      ")
 		fmt.Fprintf(w, "  - %s\n      %s\n", l.RelPath(s.Path), reason)
 	}
+}
+
+// warnVocabulary 는 방금 쓴 노트의 태그가 **회수에 새 낱말을 하나도 안 더할 때** 알린다.
+//
+// 회수는 `파일명 + summary + tags` 만 본다. 태그의 낱말이 이미 제목이나 요약에
+// 있으면 그 태그를 달든 안 달든 걸리는 질의가 똑같다 — 적는 사람은 회수 어휘를
+// 넓혔다고 믿는데 아무 일도 안 일어난다. **조용하다.**
+//
+// 실볼트 실측(2026-08-23): 태그 달린 결정 노트 278건 중 12건(4%)이 그 상태였고,
+// 태그가 더하는 새 낱말은 중앙값 2개였다. 그 대가는
+// 같은 날 재현됐다 — "웹소설을 AI로 여러 편 찍어내면 경쟁력이 있나" 는 관련 규칙을
+// 찾는데, 같은 질문을 바꿔 말한 "작품을 많이 만들어서 승부하면 되나" 는 0건이었다.
+//
+// **막지 않는다.** 노트는 이미 저장됐고, 무엇이 좋은 태그인지는 사람이 정한다.
+// 여기서 거절하면 기록이 귀찮아지고, 귀찮아지면 안 남긴다.
+//
+// 디스크에서 다시 읽는다 — 요청이 아니라 **실제로 쓰인 것**을 봐야 한다.
+func warnVocabulary(w io.Writer, l *store.Layout, path string) {
+	n, err := l.Read(path)
+	if err != nil {
+		return
+	}
+	fresh, dead := search.TagVocabulary(n)
+	if len(dead) == 0 || len(fresh) > 0 {
+		return
+	}
+	fmt.Fprintf(w, "경고: 태그 %v 는 제목·summary 에 이미 있는 낱말뿐이라 "+
+		"**회수에 아무것도 더하지 않는다**.\n"+
+		"  이 결정을 다시 찾을 상황을 서너 개 떠올리고 그때 쓸 **동의어·상위어**를 넣어라.\n"+
+		"  고치려면 파일의 tags 를 손보고 prior index.\n", dead)
 }
 
 // Run 은 조립이 끝난 루트를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.

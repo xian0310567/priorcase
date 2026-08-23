@@ -122,9 +122,9 @@ func TestReviewNoOpNormalizesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 원본 픽스처는 "tags: [decision,alpha,저장엔진]" (콤마 뒤 공백 없음).
+	// 원본 픽스처는 "tags: [decision,alpha,저장엔진,영속성]" (콤마 뒤 공백 없음).
 	// 정본 방출기(EmitFrontmatter)는 ", " 로 join 한다.
-	if !strings.Contains(string(raw), "tags: [decision, alpha, 저장엔진]") {
+	if !strings.Contains(string(raw), "tags: [decision, alpha, 저장엔진, 영속성]") {
 		t.Errorf("정본 형식으로 정규화되지 않았다:\n%s", raw)
 	}
 }

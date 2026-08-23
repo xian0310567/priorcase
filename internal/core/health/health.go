@@ -86,6 +86,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSimilarSlugs(r, notes)
 	checkLinks(r, l, notes)
 	checkSupersedeSymmetry(r, notes)
+	checkVocabulary(r, notes)
 	checkIndex(r, l, notes)
 	checkIndexInGit(r, l)
 	checkSync(r, c)
