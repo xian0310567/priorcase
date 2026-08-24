@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/core/sync"
 	"github.com/xian0310567/priorcase/internal/testutil"
@@ -39,9 +38,6 @@ func names(r *Report) []string {
 func TestHealthyVault(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	l := store.NewLayout(c)
-	if _, err := index.Write(l); err != nil {
-		t.Fatal(err)
-	}
 	r := Vault(c, l)
 	for _, ck := range r.Checks {
 		if ck.Level != OK {
@@ -91,31 +87,6 @@ func TestEmptyUndeclaredFolderIsNotReported(t *testing.T) {
 	}
 	if got := find(t, Vault(c, store.NewLayout(c)), "미선언 도메인"); got.Level != OK {
 		t.Errorf("빈 폴더를 알렸다: %s", got.Detail)
-	}
-}
-
-// 색인이 낡았으면 알아야 한다. **색인이 결정적이라서 가능한 검사다.**
-func TestStaleIndexIsDetected(t *testing.T) {
-	c := testutil.VaultConfig(t)
-	l := store.NewLayout(c)
-	if _, err := index.Write(l); err != nil {
-		t.Fatal(err)
-	}
-	// 노트를 하나 더 넣는다 — 색인은 그대로다.
-	dir := filepath.Join(c.DefaultVaultPath(), "alpha", "decisions")
-	note := "---\ntype: decision\ndate: 2026-08-08\ndomain: [alpha]\nsummary: \"새 결정\"\n" +
-		"status: active\noutcome: pending\nsupersedes: \"\"\nrelated: []\ntags: []\n" +
-		"source_session: \"\"\n---\n\n## 결정\n\nx\n"
-	if err := os.WriteFile(filepath.Join(dir, "alpha-결정-새것-2026-08-08.md"), []byte(note), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got := find(t, Vault(c, l), "색인")
-	if got.Level != Warn {
-		t.Errorf("Level = %v, Warn 이어야 한다 (%s)", got.Level, got.Detail)
-	}
-	if got.Fix != "prior index" {
-		t.Errorf("Fix = %q, \"prior index\" 여야 한다", got.Fix)
 	}
 }
 
@@ -279,88 +250,6 @@ func TestTeamPortabilityWarnsOnlyWhenVaultIsShared(t *testing.T) {
 	checkTeamPortability(r, withRepos, store.NewLayout(withRepos))
 	if c := find(r); c == nil || c.Level != OK {
 		t.Errorf("repos 를 채웠는데 해소되지 않았다: %+v", c)
-	}
-}
-
-// ★★ **파생물이 git 에 들어 있으면 팀이 매번 충돌한다.**
-//
-// 색인은 결정 노트에서 다시 만들 수 있는데 `prior capture` 가 매번 통째로 다시 쓴다.
-// 두 사람이 각자 하나씩 기록하면 각자 옳은 표를 만들 뿐인데 git 은 충돌로 본다.
-// 실측으로 재현했다 — 결정 노트는 깨끗이 병합되고 색인만 충돌한다.
-//
-// 그 충돌을 손으로 잘못 풀면 **남의 결정이 색인에서 사라지고, 회수가 그걸 못 본다.**
-//
-// 반대로 git 이 아닌 볼트에서 이 경고가 뜨면 그건 소음이다 — 혼자 쓰는 사람에게
-// 색인이 디스크에 있는 것은 아무 문제가 아니다.
-func TestIndexInGitWarnsOnlyWhenTrackedAndShared(t *testing.T) {
-	find := func(r *Report) *Check {
-		for i := range r.Checks {
-			if r.Checks[i].Name == "색인/git" {
-				return &r.Checks[i]
-			}
-		}
-		return nil
-	}
-	setup := func(t *testing.T, git bool, ignore string) (*config.Config, *store.Layout) {
-		t.Helper()
-		c := testutil.VaultConfig(t)
-		if git {
-			if err := os.MkdirAll(filepath.Join(c.DefaultVaultPath(), ".git"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if ignore != "" {
-			if err := os.WriteFile(filepath.Join(c.DefaultVaultPath(), ".gitignore"), []byte(ignore), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return c, store.NewLayout(c)
-	}
-
-	// git 이 아니면 조용해야 한다.
-	c, l := setup(t, false, "")
-	r := &Report{}
-	checkIndexInGit(r, l)
-	if ck := find(r); ck != nil {
-		t.Errorf("git 이 아닌 볼트에 경고를 냈다 (소음): %s", ck.Detail)
-	}
-
-	// git 인데 무시 목록에 없으면 경고 + 고치는 법.
-	c, l = setup(t, true, "")
-	r = &Report{}
-	checkIndexInGit(r, l)
-	ck := find(r)
-	if ck == nil || ck.Level != Warn {
-		t.Fatalf("공유되는 볼트에서 색인이 추적 중인데 경고가 없다: %+v", ck)
-	}
-	rel := l.RelPath(l.IndexPath())
-	if !strings.Contains(ck.Fix, ".gitignore") || !strings.Contains(ck.Fix, rel) {
-		t.Errorf("고치는 법에 실제 경로가 없다: %q", ck.Fix)
-	}
-
-	// 무시 목록에 있으면 해소된다. 앞의 `/` 도 같은 뜻으로 봐야 한다.
-	for _, line := range []string{rel, "/" + rel, "# 주석\n" + rel + "\n"} {
-		c, l = setup(t, true, line)
-		r = &Report{}
-		checkIndexInGit(r, l)
-		if ck := find(r); ck == nil || ck.Level != OK {
-			t.Errorf("무시 목록 %q 인데 해소되지 않았다: %+v", line, ck)
-		}
-	}
-
-	// .git/info/exclude 도 무시 목록이다.
-	c, l = setup(t, true, "")
-	if err := os.MkdirAll(filepath.Join(c.DefaultVaultPath(), ".git", "info"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(c.DefaultVaultPath(), ".git", "info", "exclude"),
-		[]byte(rel+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r = &Report{}
-	checkIndexInGit(r, l)
-	if ck := find(r); ck == nil || ck.Level != OK {
-		t.Errorf(".git/info/exclude 를 안 본다: %+v", ck)
 	}
 }
 

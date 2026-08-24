@@ -1,58 +1,12 @@
 package capture
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/xian0310567/priorcase/internal/core/store"
 )
-
-// 지시 1: Do() 가 노트를 쓴 뒤 색인 갱신에 실패하면 노트만 남고 색인이
-// 낡는다. 색인 디렉토리를 읽기전용으로 만들어 실패를 유도하고, 에러
-// 메시지가 "노트는 이미 저장됐다" 는 사실을 사용자에게 알려주는지,
-// 그리고 노트 파일이 실제로 디스크에 남아 있는지를 확인한다.
-func TestDoIndexWriteFailureLeavesNoteButReportsIt(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root 는 디렉토리 퍼미션을 무시하므로 이 테스트가 성립하지 않는다")
-	}
-	l, c := fixtureLayoutConfig(t)
-
-	// 색인이 놓일 디렉토리를 미리 만들고 쓰기 권한을 뺏는다.
-	// MkdirAll 은 디렉토리가 이미 있으면 성공하므로, index.Write 안의
-	// os.MkdirAll 은 통과하고 그 다음 WriteFileAtomic 의 os.CreateTemp 가
-	// 권한 부족으로 실패한다.
-	metaDir := filepath.Dir(l.IndexPath())
-	if err := os.MkdirAll(metaDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(metaDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(metaDir, 0o755) })
-
-	req := Request{
-		Domain: "alpha", Slug: "색인 실패 유도", Summary: "색인 쓰기가 실패해도 노트는 남아야 한다",
-		Date: "2026-08-07", Body: []byte("## 결정\n"),
-	}
-	_, err := Do(l, c, req)
-	if err == nil {
-		t.Fatal("색인 디렉토리를 읽기전용으로 만들었는데 Do() 가 성공했다")
-	}
-	if !strings.Contains(err.Error(), "노트는 썼으나") {
-		t.Errorf("에러 메시지가 노트는 이미 저장됐다는 사실을 알려주지 않는다: %v", err)
-	}
-
-	path, perr := l.DecisionPath(req.Domain, req.Slug, req.Date)
-	if perr != nil {
-		t.Fatal(perr)
-	}
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Errorf("노트 파일이 실제로는 남아 있어야 하는데 없다 (%s): %v", path, statErr)
-	}
-}
 
 // 감사 결함 4 / 스펙 §11 "유사 slug 중복 생성 시도 → 거부": 중복 검사가
 // os.Stat 하나뿐이던 시절에는 --slug 세번째 와 --slug 세-번째 가 둘 다

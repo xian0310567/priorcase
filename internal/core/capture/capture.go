@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/schema"
 	"github.com/xian0310567/priorcase/internal/core/search"
 	"github.com/xian0310567/priorcase/internal/core/store"
@@ -52,16 +51,13 @@ type Result struct {
 	// 넘어가지도 않는다: 호출부가 이 값을 사용자에게 알려야 "관련 결정이 없다"
 	// 와 "찾아보지 못했다" 가 구별된다.
 	RelatedErr error
-	// Skipped 는 색인 갱신에서 읽지 못해 빠진 결정 노트다. 비어 있지 않으면
-	// 방금 쓴 노트는 색인에 들어갔지만 색인 자체는 불완전하다 — 호출부가
-	// 알려야 한다.
+	// Skipped 는 볼트에서 **읽지 못한** 결정 노트다. 비어 있지 않으면 편승 검색이
+	// 볼트 전체를 보지 못했다는 뜻이므로 호출부가 알려야 한다 — "관련 결정이 없다"
+	// 와 "그 노트를 못 읽었다" 는 다르다.
 	Skipped []store.SkippedNote
-	// IndexPreserved 는 색인 자리에 있던 남의 파일을 대피시킨 경로다.
-	// 비어 있지 않으면 호출자가 **반드시** 사용자에게 알려야 한다.
-	IndexPreserved string
 }
 
-// Do 는 결정 노트를 만들고 색인을 갱신한 뒤, 관련 과거 결정을 함께 준다.
+// Do 는 결정 노트를 만들고 관련 과거 결정을 함께 준다.
 // 관련 결정을 돌려주는 것이 "편승" 이다 — 기록하는 순간이 곧 결정하는 순간이므로
 // 그때 과거 결정이 따라 나오는 것이 가장 정확한 타이밍이다.
 func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
@@ -133,10 +129,10 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	// 편승: 쓰기 **전에** 검색한다 — 자기 자신이 결과에 끼지 않게.
 	// 여기서 실패해도 기록은 계속한다. 대신 원인을 Result 에 실어 보낸다.
 	//
-	// 여기서 나온 건너뜀 목록은 버린다(`_`). 바로 아래 index.Write 가 같은
-	// l.List() 를 같은 볼트에 다시 돌려 같은 목록을 더 최신 상태로 주기
-	// 때문이다 — 둘 다 실으면 사용자에게 같은 경고가 두 번 나간다.
-	related, _, relatedErr := search.Recall(l, c, r.Summary+" "+r.Slug,
+	// **건너뜀 목록은 여기서 받는다.** 예전에는 버리고(`_`) 색인 갱신이 주는 것을
+	// 썼는데, 색인을 없앤 뒤로 이 호출이 볼트를 훑는 유일한 자리다. 버리면
+	// "읽지 못한 노트가 있다" 를 아무도 말하지 않게 된다.
+	related, skipped, relatedErr := search.Recall(l, c, r.Summary+" "+r.Slug,
 		search.Options{CrossProject: true, Limit: 3, MinScore: 1})
 
 	body := r.Body
@@ -153,12 +149,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if err := l.Write(store.Note{Path: path, Stem: stem, Meta: m, Body: body}); err != nil {
 		return Result{}, err
 	}
-	idx, err := index.Write(l)
-	if err != nil {
-		return Result{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
-	}
-	return Result{Path: path, Related: related, RelatedErr: relatedErr,
-		Skipped: idx.Skipped, IndexPreserved: idx.Preserved}, nil
+	return Result{Path: path, Related: related, RelatedErr: relatedErr, Skipped: skipped}, nil
 }
 
 // slugKey 는 유사 slug 비교용 정규화 키다. 하이픈·공백·밑줄을 접고 대소문자를

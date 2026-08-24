@@ -51,7 +51,6 @@ func newCaptureCmd() *cobra.Command {
 			}
 			// 방금 쓴 노트는 색인에 들어갔지만 색인 자체가 불완전할 수 있다.
 			warnSkipped(cmd.ErrOrStderr(), l, res.Skipped)
-			warnPreserved(cmd.ErrOrStderr(), l, res.IndexPreserved)
 			// 태그가 회수 어휘를 안 넓히면 그 자리에서 알린다 (막지는 않는다).
 			warnVocabulary(cmd.ErrOrStderr(), l, res.Path)
 			if len(res.Related) > 0 {

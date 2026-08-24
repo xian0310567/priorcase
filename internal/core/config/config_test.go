@@ -260,12 +260,6 @@ decision_file = "{domain}-d-{slug}-{date}.md"
 decisions_dir = "{project}/decisions"
 index = "i.md"
 `, "worklog"},
-		{"index 가 없다", `
-[naming]
-decision_file = "{domain}-d-{slug}-{date}.md"
-decisions_dir = "{project}/decisions"
-worklog = "w-{project}.md"
-`, "index"},
 		{"decision_file 에 {date} 가 없다", `
 [naming]
 decision_file = "{domain}-d-{slug}.md"
@@ -388,5 +382,42 @@ func TestLoadNoTildeSucceedsWithoutHome(t *testing.T) {
 	}
 	if c.DefaultVaultPath() != "/tmp/vault" {
 		t.Errorf("Vault = %q", c.DefaultVaultPath())
+	}
+}
+
+// 색인을 없앤 뒤에도 **옛 `index` 키가 남은 설정은 그대로 로드돼야 한다.**
+//
+// Load 는 DisallowUnknownFields 를 쓰므로 필드를 지우면 그 키가 적힌 설정이 통째로
+// 로드 실패한다 — 그러면 그 머신에서 prior 가 전부 죽는다. 그리고 설정은 머신
+// 사이를 건너오지 않아서(2026-08-24 실측: 도메인 미선언으로 결정 23건이 안 보였다)
+// 어느 머신에 옛 키가 남아 있는 것이 정상이다.
+//
+// 반대 방향도 함께 못박는다: 키를 **지운** 설정도 통과해야 한다. 없앤 기능의 키를
+// 필수로 두면 청소한 사람이 벌을 받는다.
+func TestStaleIndexKeyLoadsBothWays(t *testing.T) {
+	const naming = `
+[naming]
+decision_file = "{domain}-결정-{slug}-{date}.md"
+decisions_dir = "{project}/decisions"
+worklog = "99-{project}-작업-로그.md"
+`
+	for _, tc := range []struct {
+		name, extra string
+	}{
+		{"옛 index 키가 남아 있다", "index = \"_meta/00-결정-색인.md\"\n"},
+		{"index 키를 지웠다", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "vault = \"" + dir + "\"\ndefault_domain = \"alpha\"\n" + naming + tc.extra +
+				"\n[[domain]]\nprefix = \"alpha\"\nfolder = \"alpha\"\n"
+			p := filepath.Join(dir, "config.toml")
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(p); err != nil {
+				t.Fatalf("로드 실패: %v\n---\n%s", err, body)
+			}
+		})
 	}
 }

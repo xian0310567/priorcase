@@ -19,14 +19,10 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rr, err := capture.Review(l, r)
-			if err != nil {
+			if _, err := capture.Review(l, r); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "갱신됨: %s\n", r.Stem)
-			// 갱신은 됐지만 색인은 불완전할 수 있다 — capture 와 같은 안내를 낸다.
-			warnSkipped(cmd.ErrOrStderr(), l, rr.Skipped)
-			warnPreserved(cmd.ErrOrStderr(), l, rr.IndexPreserved)
 			return nil
 		},
 	}

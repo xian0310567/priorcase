@@ -74,11 +74,6 @@ func TestPromoteWritesThroughCapture(t *testing.T) {
 	if !strings.Contains(s, "decision") || !strings.Contains(s, "저장") {
 		t.Errorf("태그가 안 붙었다:\n%s", s)
 	}
-	// 색인도 갱신됐어야 한다.
-	idx, _ := os.ReadFile(filepath.Join(c.DefaultVaultPath(), "_meta", "00-결정-색인.md"))
-	if !strings.Contains(string(idx), "SQLite 로 간다") {
-		t.Error("색인이 갱신되지 않았다")
-	}
 }
 
 // record=false 는 **성공이다.** 기록할 결정이 아니라는 판정이 나온 것이고,

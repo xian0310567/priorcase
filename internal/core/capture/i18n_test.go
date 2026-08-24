@@ -1,12 +1,10 @@
 package capture
 
 import (
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/search"
 	"github.com/xian0310567/priorcase/internal/core/store"
 )
@@ -21,14 +19,13 @@ func englishLayout(t *testing.T) (*store.Layout, *config.Config) {
 			DecisionFile: "{domain}-decision-{slug}-{date}.md",
 			DecisionsDir: "{project}/decisions",
 			Worklog:      "99-{project}-worklog.md",
-			Index:        "_meta/00-decision-index.md",
 		},
 		Domain: []config.Domain{{Prefix: "alpha", Folder: "alpha"}},
 	}
 	return store.NewLayout(c), c
 }
 
-// TestEnglishTemplateRoundTrip 은 영어 템플릿 설정에서 capture → index →
+// TestEnglishTemplateRoundTrip 은 영어 템플릿 설정에서 capture → 목록 →
 // recall → review 왕복이 되는지 본다.
 //
 // 표식이 세 곳(store 의 상수·파일 필터, schema 의 별도 리터럴)에 하드코딩돼
@@ -53,16 +50,24 @@ func TestEnglishTemplateRoundTrip(t *testing.T) {
 		t.Errorf("파일명이 영어 템플릿을 안 따른다: %s", first.Path)
 	}
 
-	// 2) index — 새 노트가 표식 필터를 통과해 색인에 들어가야 한다
-	if _, err := index.Write(l); err != nil {
-		t.Fatalf("index 실패: %v", err)
-	}
-	idx, err := os.ReadFile(l.IndexPath())
+	// 2) 목록 — 새 노트가 **표식 필터를 통과**해야 한다
+	//
+	// 예전에는 이 자리에서 색인을 만들고 그 안에 요약이 있는지 봤다. 색인을 없앤 뒤
+	// 같은 것을 더 가까이서 본다: 걸리는 지점은 색인이 아니라 `l.List()` 의 표식
+	// 필터였고(영어 파일명은 `-결정-` 이 아니라 `-decision-` 이다), 회수도 index 도
+	// 그 목록을 쓴다. 목록에 없으면 아무 데도 안 나온다.
+	notes, _, err := l.List()
 	if err != nil {
-		t.Fatalf("색인이 없다: %v", err)
+		t.Fatalf("목록 실패: %v", err)
 	}
-	if !strings.Contains(string(idx), "pick an embedded database") {
-		t.Errorf("색인에 새 결정이 없다 — List() 의 표식 필터가 영어 파일명을 걸렀다:\n%s", idx)
+	found := false
+	for _, n := range notes {
+		if n.Meta.Summary == "pick an embedded database" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("목록에 새 결정이 없다 — List() 의 표식 필터가 영어 파일명을 걸렀다 (%d건 읽음)", len(notes))
 	}
 
 	// 3) recall

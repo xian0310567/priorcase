@@ -10,7 +10,6 @@
 package health
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/schema"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/core/sync"
@@ -79,6 +77,7 @@ func (r *Report) Worst() Level {
 func Vault(c *config.Config, l *store.Layout) *Report {
 	r := &Report{}
 	checkVaultDir(r, c)
+	checkStaleKeys(r, c)
 	checkDomainFolders(r, c, l)
 	checkUndeclared(r, l)
 	checkUnscanned(r, c, l)
@@ -89,8 +88,6 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkSupersedeSymmetry(r, notes)
 	checkVocabulary(r, notes)
 	checkSynonyms(r, l)
-	checkIndex(r, l, notes)
-	checkIndexInGit(r, l)
 	checkSync(r, c)
 	checkBuildDrift(r, c, sync.ThisBuild())
 	return r
@@ -621,33 +618,6 @@ func checkNotes(r *Report, l *store.Layout) []store.Note {
 	return notes
 }
 
-// checkIndex 는 디스크의 색인이 지금 볼트와 맞는지 본다.
-//
-// **색인이 결정적이라서 가능한 검사다** — 같은 볼트면 같은 바이트가 나오므로,
-// 다시 만들어 보고 비교하면 낡았는지 알 수 있다. 생성 시각을 안 넣기로 한 결정이
-// 여기서 값을 한다.
-func checkIndex(r *Report, l *store.Layout, notes []store.Note) {
-	want, _, err := index.Build(l)
-	if err != nil {
-		r.add("색인", Fail, "생성할 수 없다: "+err.Error(), "")
-		return
-	}
-	got, err := os.ReadFile(l.IndexPath())
-	if os.IsNotExist(err) {
-		r.add("색인", Fail, l.RelPath(l.IndexPath())+" 가 없다", "prior index")
-		return
-	}
-	if err != nil {
-		r.add("색인", Fail, "읽을 수 없다: "+err.Error(), "")
-		return
-	}
-	if !bytes.Equal(want, got) {
-		r.add("색인", Warn, "볼트와 어긋난다 — 노트를 손으로 고쳤거나 색인을 안 돌렸다", "prior index")
-		return
-	}
-	r.add("색인", OK, fmt.Sprintf("%d건과 일치한다", len(notes)), "")
-}
-
 func hasPrefix(c *config.Config, prefix string) bool {
 	for _, d := range c.Domain {
 		if d.Prefix == prefix {
@@ -760,34 +730,6 @@ func isGitDir(dir string) bool {
 	return err == nil
 }
 
-// checkIndexInGit 은 **파생물이 버전 관리에 들어가 있는지** 본다.
-//
-// 색인은 결정 노트에서 언제든 다시 만들 수 있다. 그런데 `prior capture` 가 매번
-// 통째로 다시 쓰므로, 볼트를 git 으로 공유하면 **두 사람이 각자 하나씩 기록할
-// 때마다 충돌한다.** 실측으로 재현했다 — 결정 노트는 파일이 달라 깨끗이 병합되고
-// 색인만 충돌한다.
-//
-// 그 충돌은 고약하다. 내용이 겹치는 것이 아니라 각자 옳은 표를 만든 것뿐인데,
-// 사람은 그걸 손으로 풀어야 하고 잘못 풀면 남의 결정이 색인에서 사라진다 —
-// 그러면 회수가 그 결정을 못 본다.
-//
-// **볼트가 git 이고 색인이 무시 목록에 없을 때만 말한다.** 혼자 쓰거나 git 이
-// 아니면 아무 문제가 아니다.
-func checkIndexInGit(r *Report, l *store.Layout) {
-	if !isGitDir(l.Vault()) {
-		return
-	}
-	rel := l.RelPath(l.IndexPath())
-	if gitIgnores(l.Vault(), rel) {
-		r.add("색인/git", OK, rel+" 은 무시 목록에 있다 — 병합 충돌이 없다", "")
-		return
-	}
-	r.add("색인/git", Warn,
-		rel+" 이 git 에 들어 있다 — 두 사람이 각자 기록할 때마다 충돌한다",
-		"색인은 노트에서 다시 만들 수 있는 파생물이다. 볼트에서:\n"+
-			"       echo '"+rel+"' >> .gitignore && git rm --cached '"+rel+"'")
-}
-
 // gitIgnores 는 볼트의 무시 목록에 rel 이 있는지 본다.
 //
 // `.gitignore` 와 `.git/info/exclude` 만 본다. 전역 무시 파일(core.excludesFile)이나
@@ -813,4 +755,22 @@ func gitIgnores(vault, rel string) bool {
 		}
 	}
 	return false
+}
+
+// checkStaleKeys 는 **더 쓰이지 않는 설정 키**가 남아 있는지 본다.
+//
+// 지금은 `[naming] index` 하나다. 색인을 없애면서(2026-08-24) 그 키는 무시되는데,
+// 필드를 지울 수는 없다 — `config.Load` 가 `DisallowUnknownFields` 를 쓰므로 지우면
+// 그 키가 적힌 설정이 통째로 로드 실패하고, 설정은 머신 사이를 건너오지 않아서
+// 어느 머신에는 옛 키가 남아 있는 것이 정상이다 (Naming.Index 주석).
+//
+// **그래서 조용히 무시하면 잉여물이 영원히 남는다.** 설정을 읽는 사람은 그 줄을 보고
+// 색인이 유지되는 줄로 안다. 한 줄로 말해 주고, 지우면 이 줄도 사라진다.
+func checkStaleKeys(r *Report, c *config.Config) {
+	if c == nil || strings.TrimSpace(c.Naming.Index) == "" {
+		return // 할 말이 없으면 줄을 만들지 않는다
+	}
+	r.add("낡은 설정 키", OK,
+		"[naming] index 는 더 쓰이지 않는다 — 결정 색인을 없앴다 (2026-08-24)",
+		"그 한 줄을 지워라. 남겨 둬도 무해하지만 색인이 유지되는 것처럼 읽힌다")
 }

@@ -171,23 +171,6 @@ func TestDoValidatesBothNotesBeforeWritingEither(t *testing.T) {
 	}
 }
 
-func TestDoUpdatesIndex(t *testing.T) {
-	l, c := fixtureLayoutConfig(t)
-	if _, err := Do(l, c, Request{
-		Domain: "alpha", Slug: "색인 확인", Summary: "색인이 갱신되는지 본다",
-		Date: "2026-08-07", Body: []byte("## 결정\n"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(l.IndexPath())
-	if err != nil {
-		t.Fatalf("색인이 없다: %v", err)
-	}
-	if !strings.Contains(string(data), "색인이 갱신되는지 본다") {
-		t.Error("새 결정이 색인에 없다")
-	}
-}
-
 // --related 로 들어온 맨 stem 은 `[[ ]]` 로 감싸 저장한다.
 //
 // MCP 설명문이 "위키링크 **또는** stem" 이라 두 형식을 다 권한 탓에 실볼트에

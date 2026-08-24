@@ -128,11 +128,6 @@ func (l *Layout) ResolveStem(stem string) (string, error) {
 	return p, nil
 }
 
-// IndexPath 는 색인 파일의 절대 경로다.
-func (l *Layout) IndexPath() string {
-	return filepath.Join(l.vault, l.c.Naming.Index)
-}
-
 // DecisionDirs 는 **설정에 선언된** 결정 폴더의 경로를 전부 준다.
 //
 // 존재 여부는 보지 않는다 — 폴더는 그 도메인의 첫 결정을 쓸 때 만들어지므로,

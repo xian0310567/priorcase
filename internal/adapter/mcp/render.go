@@ -26,13 +26,3 @@ func renderSkipped(l *store.Layout, skipped []store.SkippedNote) string {
 	b.WriteString("정본 10키로 옮겨야 회수 대상으로 돌아온다.\n")
 	return b.String()
 }
-
-// renderPreserved 는 색인 자리의 남의 파일을 대피시킨 사실을 도구 응답에 싣는다.
-// 에이전트가 사용자에게 전할 수 있어야 한다 — 조용히 넘어가면 사용자는 모른다.
-func renderPreserved(l *store.Layout, backup string) string {
-	if backup == "" {
-		return ""
-	}
-	return fmt.Sprintf("\n경고: 색인 자리에 priorcase 가 만들지 않은 파일이 있어 옮겨 두었다: %s\n"+
-		"설정의 [naming] index 를 확인하라.\n", l.RelPath(backup))
-}

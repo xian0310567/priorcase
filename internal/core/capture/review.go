@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/i18n"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/schema"
 	"github.com/xian0310567/priorcase/internal/core/store"
 )
@@ -156,22 +155,19 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	if err := l.Write(n); err != nil {
 		return ReviewResult{}, err
 	}
-	// Do 와 같은 안내를 낸다 — 여기도 노트를 이미 쓴 뒤라, 색인만 낡았다는
-	// 사실을 알려주지 않으면 사용자는 갱신 자체가 안 된 줄 알고 다시 시도한다.
-	idx, err := index.Write(l)
-	if err != nil {
-		return ReviewResult{}, fmt.Errorf("노트는 썼으나 색인 갱신에 실패했다: %w", err)
-	}
-	return ReviewResult{Skipped: idx.Skipped, IndexPreserved: idx.Preserved}, nil
+	return ReviewResult{}, nil
 }
 
-// ReviewResult 는 갱신의 부수 결과다. 색인 갱신이 이 함수 안에서 일어나므로,
-// 거기서 나온 경고를 호출자가 볼 유일한 통로다.
-type ReviewResult struct {
-	Skipped []store.SkippedNote
-	// IndexPreserved 는 색인 자리에 있던 남의 파일을 대피시킨 경로다.
-	IndexPreserved string
-}
+// ReviewResult 는 갱신의 부수 결과다.
+//
+// **지금은 비어 있다.** 예전에는 색인 갱신에서 나온 건너뜀·대피 경고를 실었는데,
+// 색인을 없애면서 그 출처가 사라졌다. 이 함수는 노트 하나를 stem 으로 찾아 고칠
+// 뿐 볼트를 훑지 않으므로 여기서 말할 수 있는 것이 없다 — 읽지 못한 노트는
+// `prior doctor` 의 `결정 노트` 검사가 전수로 말한다.
+//
+// 구조체를 남겨 두는 이유는 반환 형태를 바꾸면 어댑터 셋(cli·mcp·hook)이 같이
+// 흔들리기 때문이다. 실을 것이 생기면 여기가 그 자리다.
+type ReviewResult struct{}
 
 func appendUnique(ss []string, v string) []string {
 	for _, s := range ss {

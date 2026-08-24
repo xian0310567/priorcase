@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
-	"github.com/xian0310567/priorcase/internal/core/index"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/testutil"
 )
@@ -34,9 +33,6 @@ func TestDoctorSeesTagsThatAddNothing(t *testing.T) {
 	l := store.NewLayout(c)
 	// 태그가 전부 제목·요약 안에 있다 → 회수 어휘가 하나도 안 넓어졌다.
 	writeTagged(t, c, "alpha-결정-캐시전략-2026-08-20", "캐시 전략을 정한다", "캐시, 전략")
-	if _, err := index.Write(l); err != nil {
-		t.Fatal(err)
-	}
 
 	got := find(t, Vault(c, l), "회수 어휘")
 	if got.Level == OK {
@@ -53,9 +49,6 @@ func TestDoctorQuietWhenTagsWiden(t *testing.T) {
 	l := store.NewLayout(c)
 	writeTagged(t, c, "alpha-결정-캐시전략-2026-08-20", "캐시 전략을 정한다",
 		"무효화, 성능, 메모리, 만료")
-	if _, err := index.Write(l); err != nil {
-		t.Fatal(err)
-	}
 
 	if got := find(t, Vault(c, l), "회수 어휘"); got.Level != OK {
 		t.Errorf("태그가 어휘를 넓혔는데 경고가 뜬다: %s", got.Detail)
@@ -68,9 +61,6 @@ func TestDoctorIgnoresNotesWithoutTags(t *testing.T) {
 	c := testutil.VaultConfig(t)
 	l := store.NewLayout(c)
 	writeTagged(t, c, "alpha-결정-태그없음-2026-08-20", "태그가 없는 결정", "")
-	if _, err := index.Write(l); err != nil {
-		t.Fatal(err)
-	}
 
 	if got := find(t, Vault(c, l), "회수 어휘"); got.Level != OK {
 		t.Errorf("태그 없는 노트를 걸었다: %s", got.Detail)

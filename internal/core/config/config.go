@@ -18,7 +18,17 @@ type Naming struct {
 	DecisionFile string `toml:"decision_file"`
 	DecisionsDir string `toml:"decisions_dir"`
 	Worklog      string `toml:"worklog"`
-	Index        string `toml:"index"`
+
+	// Index 는 **더 쓰이지 않는다.** 결정 색인을 없앴다 (2026-08-24).
+	//
+	// 필드를 지우지 않는 이유는 하나다 — `Load` 가 `DisallowUnknownFields` 를 쓰므로
+	// 지우면 `index = ...` 가 적힌 **기존 설정이 통째로 로드 실패한다.** 설정은
+	// 머신 사이를 건너오지 않아서(오늘 실측: novels·tutela 23건이 안 보였다) 어느
+	// 머신에는 옛 키가 남아 있는 것이 정상이고, 그 머신에서 prior 전체가 죽는다.
+	//
+	// 그래서 받아 두고 무시한다. `prior doctor` 가 "이 키는 지워도 된다" 를 한 줄로
+	// 말해 주므로 조용한 잉여물로 남지 않는다.
+	Index string `toml:"index"`
 	// Rollup 은 주간 요약 파일 이름이다 (예: `98-{project}-작업-로그-요약.md`).
 	//
 	// **선택 키다.** 없으면 `prior rollup` 이 무엇을 적으라고 알려 주고 멈춘다.
@@ -380,17 +390,19 @@ func (c *Config) validate() error {
 // validateNaming 은 [naming] 절을 검사한다.
 //
 // 이 절이 통째로 빠져도 예전에는 Load 가 통과했다. 그러면 decisions_dir 이 빈
-// 문자열이라 결정 폴더가 볼트 루트 자체가 되고, index 도 빈 문자열이라 색인이
-// 볼트 디렉터리를 덮어쓰려 든다 — 설정 오류가 config 층이 아니라 store·schema
-// 층에서 "stem 이 규약에 맞지 않는다: \"vault\"" 같은 엉뚱한 메시지로 터진다.
-// 설정의 함정은 설정을 읽는 자리에서 잡는다.
+// 문자열이라 결정 폴더가 볼트 루트 자체가 된다 — 설정 오류가 config 층이 아니라
+// store·schema 층에서 "stem 이 규약에 맞지 않는다: \"vault\"" 같은 엉뚱한 메시지로
+// 터진다. 설정의 함정은 설정을 읽는 자리에서 잡는다.
+//
+// **`index` 는 더 요구하지 않는다** (2026-08-24, 색인 제거). 요구하면 그 키를 지운
+// 설정이 로드 실패한다 — 없앤 기능의 키를 필수로 두는 것은 앞뒤가 안 맞는다.
+// 반대로 키가 남아 있는 설정도 통과해야 한다 (Naming.Index 주석 참고).
 func (c *Config) validateNaming() error {
 	n := c.Naming
 	for _, f := range []struct{ key, val string }{
 		{"decision_file", n.DecisionFile},
 		{"decisions_dir", n.DecisionsDir},
 		{"worklog", n.Worklog},
-		{"index", n.Index},
 	} {
 		if strings.TrimSpace(f.val) == "" {
 			return fmt.Errorf("[naming] 의 %s 항목이 비어 있다 — 설정에 [naming] 절이 통째로 빠졌는지 확인하라", f.key)

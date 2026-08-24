@@ -139,26 +139,3 @@ func TestReviewCmdRejectsMissingStem(t *testing.T) {
 		t.Fatal("없는 stem 인데도 prior review 가 성공했다")
 	}
 }
-
-// TestReviewCmdRevealsSkippedNotes 는 `prior review` 도 색인이 불완전해졌다는 사실을
-// 알리는지 본다 — review 역시 갱신 뒤 내부적으로 색인을 다시 쓴다.
-func TestReviewCmdRevealsSkippedNotes(t *testing.T) {
-	cfgPath, c := testutil.VaultConfigFile(t)
-	rel := plantLegacyNote(t, c.DefaultVaultPath()) // index_test.go 의 헬퍼
-
-	root := NewRootCmd()
-	buf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
-	root.SetOut(buf)
-	root.SetErr(errBuf)
-	root.SetArgs([]string{"review", "--config", cfgPath, fixtureStem, "--outcome", "good"})
-
-	if err := root.Execute(); err != nil {
-		t.Fatalf("깨진 노트 한 건 때문에 prior review 가 죽으면 안 된다: %v", err)
-	}
-	if !strings.Contains(buf.String(), "갱신됨:") {
-		t.Errorf("갱신이 안 됐다:\n%s", buf.String())
-	}
-	if warn := errBuf.String(); !strings.Contains(warn, rel) {
-		t.Errorf("색인이 불완전해진 사실이 안 나왔다:\n%s", warn)
-	}
-}
