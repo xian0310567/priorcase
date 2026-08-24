@@ -81,6 +81,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkVaultDir(r, c)
 	checkDomainFolders(r, c, l)
 	checkUndeclared(r, l)
+	checkUnscanned(r, c, l)
 	notes := checkNotes(r, l)
 	checkSchema(r, l, notes)
 	checkSimilarSlugs(r, notes)
