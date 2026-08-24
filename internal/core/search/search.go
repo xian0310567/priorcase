@@ -21,10 +21,38 @@ const (
 	//
 	// 0 으로 두지 않는 이유: 같은 점수면 지금 하는 일 쪽이 맞다. 동점을 가르는
 	// 정도로만 남긴다. TestKeywordHitOutweighsCwdDomain 이 이 관계를 못 박는다.
-	weightCwdDomain   = 2 // cwd 도메인이 노트 domain 에 있다
-	weightMention     = 6 // 프롬프트가 도메인 접두어를 직접 언급했다 (도메인마다 누적)
-	weightHead        = 3 // stem+summary+tags 에서 키워드 히트
-	weightBody        = 1 // 본문에서 키워드 히트
+	weightCwdDomain = 2 // cwd 도메인이 노트 domain 에 있다
+	weightMention   = 6 // 프롬프트가 도메인 접두어를 직접 언급했다 (도메인마다 누적)
+	weightHead      = 3 // stem+summary+tags 에서 키워드 히트
+	weightBody      = 1 // 본문에서 키워드 히트
+
+	// weightSynonym 은 질의어 대신 **형제 낱말**이 head 에 걸렸을 때다 (synonym.go).
+	//
+	// **weightHead 보다 반드시 작아야 한다.** 같아지면 "그 낱말로 물었다" 와
+	// "비슷한 말로 물었다" 가 구별되지 않아, 패러프레이즈로 걸린 노트가 정확히
+	// 맞은 노트를 밀어낸다. 회수 슬롯이 3개뿐이라 재정렬이 곧 탈락이다.
+	// TestExactHitOutranksSynonymHit 이 이 관계를 못 박는다.
+	//
+	// # 실측 (2026-08-24, 실볼트 306노트 · 정답을 아는 질의 10개)
+	//
+	// 정답의 순위를 셋으로 비교했다. 0 은 후보에 아예 없는 것이다.
+	//
+	//	                        표없음   w=1   w=2
+	//	정답 못 찾음(0)            4      1     1
+	//	찾은 것의 평균 순위       2.3    2.9   2.7
+	//
+	// **표를 켜서 밀려난 정답은 0건이다** — 표 없이 찾던 여섯 질의의 순위가
+	// 5·1·1·1·4·2 로 전부 그대로였고, 0건이던 세 질의가 정답을 찾았다.
+	// (평균 순위가 오른 것은 악화가 아니라 새로 찾은 3건이 2~7위로 들어온
+	// 산술 효과다. 이 표에서 봐야 하는 숫자는 못 찾음 4→1 이다.)
+	//
+	// 2 를 고른 이유: 1 에서는 "작품을 많이 만들어서 승부하면 되나" 의 정답이
+	// 4위였다. 동의어 히트 둘(2점)이 **우연한 정확 히트 하나**(3점)보다 낮았기
+	// 때문인데, 큐레이션된 패러프레이즈 두 개가 우연히 스친 낱말 하나보다 약한
+	// 증거라고 볼 근거가 없다. 2 로 올리면 그 질의가 2위가 되고 나머지 아홉은
+	// 한 칸도 안 움직였다. 3(=weightHead)은 위 계약을 깨므로 상한이 2다.
+	weightSynonym = 2
+
 	penaltySuperseded = 5 // 뒤집힌 결정
 )
 
@@ -149,7 +177,12 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	}
 	mentioned := mentionedDomains(c, keywords)
 
-	hits := scoreAll(notes, keywords, cwdDomain, mentioned)
+	// **도메인 언급 판정에는 동의어를 쓰지 않는다.** 도메인 접두어는 뜻이 있는
+	// 낱말이 아니라 이름이고, 이름에 동의어를 붙이면 +6 이 엉뚱한 도메인 전체에
+	// 걸린다 — weightMention 이 가장 센 가중치라 피해가 가장 크다.
+	syn := LoadSynonyms(l)
+
+	hits := scoreAll(notes, keywords, cwdDomain, mentioned, syn)
 
 	if !o.CrossProject && cwdDomain != "" {
 		scoped := filterByDomain(hits, cwdDomain)
@@ -165,7 +198,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(refs) > 0 {
 		ro := o
 		ro.Limit = o.ReferenceLimit
-		rhits := trim(scoreAll(refs, keywords, cwdDomain, mentioned), ro)
+		rhits := trim(scoreAll(refs, keywords, cwdDomain, mentioned, syn), ro)
 		hits = append(hits, rhits...)
 	}
 	return hits, skipped, nil
@@ -197,7 +230,7 @@ func minHeadHits(nKeywords int) int {
 // 질의는 2~3개였다. 4를 경계로 두면 둘이 갈린다.
 const conversationalKeywords = 4
 
-func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool) []Hit {
+func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool, syn Synonyms) []Hit {
 	var hits []Hit
 	for _, n := range notes {
 		// **철회된 노트는 아예 안 본다.**
@@ -231,10 +264,15 @@ func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned
 		}, " "))
 		body := strings.ToLower(string(n.Body))
 
-		headHits, bodyHits := 0, 0
+		headHits, bodyHits, synHits := 0, 0, 0
 		for _, k := range keywords {
-			if matches(head, k) {
+			// **정확히 맞은 것이 우선이고, 한 질의어는 한 번만 센다.**
+			// 형제까지 따로 세면 표를 크게 쓴 낱말이 점수를 독식한다 (synonym.go).
+			switch {
+			case matches(head, k):
 				headHits++
+			case syn.hits(head, k):
+				synHits++
 			}
 			if matches(body, k) {
 				bodyHits++
@@ -265,11 +303,16 @@ func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned
 		// 골라 넣은 두 낱말에 둘을 요구하면 정작 정확한 질의가 아무것도 못 찾는다.
 		// 대화체 프롬프트는 어미가 살아남아 거의 언제나 4개를 넘으므로, 그 경계가
 		// "자동 주입" 과 "사람이 물은 것" 을 자연스럽게 가른다.
-		if headHits < minHeadHits(len(keywords)) {
+		// **동의어 히트는 이 게이트를 통과시킨다.** 게이트가 막으려는 것은 CJK
+		// 부분문자열이 만드는 *우연한* 히트인데, 형제 낱말은 사람이 표에 직접
+		// 적었을 때만 걸리므로 우연이 아니다 — 큐레이션이 필터다 (synonym.go).
+		// 통과시키지 않으면 이 기능이 아무것도 못 한다: 패러프레이즈 질의는
+		// 정의상 정확한 히트가 0 이고, 대화체라 게이트가 2를 요구한다.
+		if headHits+synHits < minHeadHits(len(keywords)) {
 			continue
 		}
 
-		score := weightHead*headHits + weightBody*bodyHits
+		score := weightHead*headHits + weightSynonym*synHits + weightBody*bodyHits
 		if cwdDomain != "" && contains(n.Meta.Domain, cwdDomain) {
 			score += weightCwdDomain
 		}

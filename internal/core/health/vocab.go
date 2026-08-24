@@ -71,3 +71,34 @@ func checkVocabulary(r *Report, notes []store.Note) {
 		"그 노트의 tags 에 **동의어와 상위어**를 넣어라 (다시 찾을 때 쓸 낱말이다). "+
 			"파일을 고치고 prior index — prior review 로는 태그를 못 고친다")
 }
+
+// checkSynonyms 는 **동의어 표**의 상태를 말한다 (search/synonym.go).
+//
+// 이 검사가 있는 이유는 두 가지다.
+//
+// **① 발견 표면.** 표는 파일 하나를 만드는 것으로 켜진다. 그런데 없는 기능은
+// 아무도 못 찾는다 — 설정 키도 없고 명령도 없으니 doctor 가 유일한 입구다.
+// 경고가 아니라 사실로 적는다: 표가 없는 것은 고장이 아니다.
+//
+// **② 거절을 보이게 한다.** 이 설계의 실패 모드는 표에 흔한 낱말이 들어가는
+// 것이다("있다", "작업"). 그러면 그 낱말을 스친 질의가 볼트 절반을 끌어온다.
+// 그래서 파서가 불용어와 한 글자를 거절하는데, **조용히 거절하면 최악이다** —
+// 사람은 표를 고쳤다고 믿고 회수는 한 건도 안 달라진다.
+func checkSynonyms(r *Report, l *store.Layout) {
+	s := search.LoadSynonyms(l)
+	if len(s.Rejected) > 0 {
+		r.add("회수 동의어", Warn,
+			fmt.Sprintf("%d묶음을 읽었지만 낱말 %d개를 받지 않았다 — %s",
+				s.Groups(), len(s.Rejected), strings.Join(clip(s.Rejected), " · ")),
+			"불용어이거나 한 글자다. 흔한 낱말을 동의어로 두면 그 낱말을 스친 질의가 "+
+				"볼트 절반을 끌어온다 — 다른 낱말로 바꿔라")
+		return
+	}
+	if s.Empty() {
+		r.add("회수 동의어", OK,
+			fmt.Sprintf("표가 없다 — 같은 뜻을 다른 낱말로 물으면 못 찾는다 (%s)", search.SynonymPath(l)),
+			"")
+		return
+	}
+	r.add("회수 동의어", OK, fmt.Sprintf("%d묶음 — 바꿔 말한 질의도 걸린다", s.Groups()), "")
+}
