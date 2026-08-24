@@ -161,11 +161,14 @@ type Request struct {
 	Worklog []string
 }
 
-// CLI 는 호스트의 `claude` 명령으로 판정한다.
+// CLI 는 **호스트 CLI 하나**로 판정한다. 종류는 Flavor 가 가른다 (flavor.go).
 type CLI struct {
-	Path    string // claude 실행 파일. 비면 PATH 에서 찾는다
+	Path    string // 실행 파일. 종류별 인자는 Flavor.args 가 만든다
 	Model   string
 	Timeout time.Duration
+	// Flavor 는 어느 호스트의 CLI 인가다. 비면 FlavorClaude — 옛 호출부가
+	// 전부 claude 였으므로 제로값이 그때 동작과 같아야 한다.
+	Flavor Flavor
 }
 
 // Find 는 쓸 수 있는 판별기를 찾는다. 없으면 nil 을 준다 — 에러가 아니다.
@@ -207,7 +210,7 @@ func newCLI(path, model string) *CLI {
 	if model == "" {
 		model = DefaultModel
 	}
-	return &CLI{Path: path, Model: model, Timeout: DefaultTimeout}
+	return &CLI{Path: path, Model: model, Timeout: DefaultTimeout, Flavor: FlavorOf(path)}
 }
 
 // usable 은 실행 가능한 파일인지 본다.
@@ -232,13 +235,12 @@ func Configured(explicitPath string) (set bool, ok bool) {
 func (c *CLI) Decide(ctx context.Context, req Request) (Verdict, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = DefaultTimeout
+		timeout = c.Flavor.defaultTimeout()
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.Path,
-		"--print", "--model", c.Model, "--strict-mcp-config", "--max-turns", "1")
+	cmd := exec.CommandContext(ctx, c.Path, c.Flavor.args(c.Model)...)
 	cmd.Stdin = strings.NewReader(prompt(req))
 	// **재귀 차단.** 판별기가 띄우는 세션에도 훅이 붙으면 그 세션이 또 판별기를
 	// 부른다. 옛 셸 구현이 SECOND_BRAIN_SCRIBE 로 막던 것과 같은 자리다.
@@ -629,7 +631,9 @@ func head(s string, n int) string {
 func (c *CLI) Check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, c.Path, "--print", "--model", c.Model, "--max-turns", "1")
+	// 종류별 인자를 쓴다 — claude 전용 플래그를 codex 에 주면 생존 확인이
+	// 실패하고, doctor 가 "판별기가 없다" 로 잘못 말한다.
+	cmd := exec.CommandContext(ctx, c.Path, c.Flavor.args(c.Model)...)
 	cmd.Stdin = strings.NewReader(`{"ok":true} 를 그대로 출력하라. 다른 말은 하지 마라.`)
 	cmd.Env = append(os.Environ(), "PRIORCASE_JUDGE=1")
 	var o, e bytes.Buffer

@@ -32,7 +32,10 @@ func (o Options) safetyNet(ctx context.Context) error {
 
 	// 판별기가 있으면 시그널 필터를 건너뛴다 — 판정은 판별기가 한다. 언어에 묶인
 	// 키워드가 판별기 앞을 막는 일을 없앤다.
-	judgeAvailable := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) != nil
+	// **자기 호스트의 CLI 를 먼저 본다.** 예전에는 `claude` 만 찾았다 — Codex 만
+	// 깔린 머신에서는 판별기가 있는데도 "없다" 가 되어 시그널 필터가 다시 켜지고,
+	// 언어에 묶인 키워드가 판별기 앞을 막는 상태로 돌아갔다.
+	judgeAvailable := judge.FindFor(o.judgeFlavor(), o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) != nil
 	r, owned, serr := daemon.ScanOnce(o.StateDir, o.Config, o.Layout, o.Input.TranscriptPath, judgeAvailable)
 
 	// **세션이 끝나거나 압축될 때가 마지막 기회다.** 그때까지 에이전트가 기록하지
@@ -214,4 +217,16 @@ func (o Options) sweepOthers(judgeAvailable bool) {
 		msg += fmt.Sprintf(" · ⚠️ 시간이 모자라 %d개를 못 봤다 (다음 세션에 다시 본다)", r.Skipped)
 	}
 	fmt.Fprintf(o.Err, "prior hook %s: %s\n", o.Event, msg)
+}
+
+// judgeFlavor 는 이 훅을 부른 호스트에 맞는 판별기 종류다.
+//
+// **훅은 자기 호스트를 이미 안다** — 경로를 보고 짐작할 이유가 없다(hosts.ClaudeCode
+// 주석과 같은 논리다). 데몬은 여러 호스트의 구간을 한 판에 돌리므로 경로로 갈라야
+// 하지만(daemon/judgepick.go), 훅은 자기 대화 하나만 다룬다.
+func (o Options) judgeFlavor() judge.Flavor {
+	if o.Host == HostCodex {
+		return judge.FlavorCodex
+	}
+	return judge.FlavorClaude
 }

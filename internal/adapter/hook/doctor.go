@@ -314,6 +314,11 @@ func sameFile(a, b string) bool {
 // **사용자가 가장 알고 싶어 할 한 줄이다** — 켜져 있으면 에이전트가 안 불러도 결정이
 // 기록되고, 꺼져 있으면 에이전트가 부를 때만 남는다. 두 상태의 차이가 크므로
 // 어느 쪽인지 분명히 말해야 한다.
+//
+// **어느 CLI 가 어느 대화를 판정하는지도 말한다.** 2026-08-24 에 사용자가 "Codex 를
+// 쓰는데 왜 claude CLI 를 부르나" 를 물었고, 그때 이 줄은 `claude` 경로만 내고 있어서
+// 답이 되지 않았다. 판별기가 호스트별로 갈린 뒤에는 그 배치가 보여야 한다 —
+// 안 보이면 사용자는 같은 질문을 다시 한다.
 func checkJudge(r *health.Report, o DoctorOptions) {
 	if o.Config == nil {
 		return
@@ -326,30 +331,86 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 			"경로를 고치거나 judge_path 를 비워 자동 탐색에 맡겨라")
 		return
 	}
-	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
-	if j == nil {
+	// **명시 경로는 그것 하나만 쓴다** (judge.FindFor 와 같은 규칙).
+	if set {
+		one := judge.FindFlavorAt(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
+		reportJudges(r, []*judge.CLI{one}, true, len(o.Config.Capture.Signals) == 0)
+		return
+	}
+
+	// 종류별로 따로 찾는다. 하나만 있으면 그것이 두 호스트의 대화를 다 판정한다
+	// (사슬의 폴백). 둘 다 있으면 대화를 만든 호스트의 것이 앞에 선다.
+	var found []*judge.CLI
+	for _, f := range []judge.Flavor{judge.FlavorClaude, judge.FlavorCodex} {
+		m := ""
+		if f == judge.FlavorClaude {
+			m = o.Config.Capture.JudgeModel
+		}
+		if c := judge.FindFlavor(f, m); c != nil {
+			found = append(found, c)
+		}
+	}
+	reportJudges(r, found, false, len(o.Config.Capture.Signals) == 0)
+}
+
+// reportJudges 는 찾은 판별기들을 한 줄로 낸다.
+func reportJudges(r *health.Report, found []*judge.CLI, explicit, noSignals bool) {
+	var live []*judge.CLI
+	var dead []string
+	for _, c := range found {
+		if c == nil {
+			continue
+		}
+		if err := c.Check(context.Background()); err != nil {
+			dead = append(dead, fmt.Sprintf("%s: %v", c.Path, err))
+			continue
+		}
+		live = append(live, c)
+	}
+
+	if len(live) == 0 {
+		if len(dead) > 0 {
+			add(r, "자동 기록", health.Fail,
+				"판별기를 찾았지만 답하지 않는다 — "+strings.Join(dead, " · "),
+				"로그인했는지 확인하라 (claude 라면 `claude` 를 띄워 /login, codex 라면 `codex login`)")
+			return
+		}
 		detail := "판별기를 찾지 못했다 — 에이전트가 prior capture 를 부를 때만 기록된다"
-		if len(o.Config.Capture.Signals) == 0 {
-			// 판별기도 없고 시그널도 없으면 안전망이 통째로 죽는다.
+		// **판별기도 없고 시그널도 없으면 안전망이 통째로 죽는다.** 그때는 경고가
+		// 아니라 실패다 — 표시조차 안 되므로 사람이 알 방법이 없다.
+		if noSignals {
 			add(r, "자동 기록", health.Fail,
 				detail+" · [capture] signals 도 비어 있어 표시조차 되지 않는다",
-				"claude CLI 를 PATH 에 두거나 signals 를 채워라")
+				"claude 나 codex CLI 를 PATH 에 두거나 signals 를 채워라")
 			return
 		}
 		add(r, "자동 기록", health.Warn, detail+
 			" · 안전망은 [capture] signals 로만 돈다 (대화 언어와 맞아야 한다)",
-			"claude CLI 를 PATH 에 두거나 [capture] judge_path 를 적어라")
+			"claude 나 codex CLI 를 PATH 에 두거나 [capture] judge_path 를 적어라")
 		return
 	}
-	if err := j.Check(context.Background()); err != nil {
-		add(r, "자동 기록", health.Fail,
-			fmt.Sprintf("%s 를 찾았지만 답하지 않는다: %v", j.Path, err),
-			"판별기에 로그인했는지 확인하라 (claude 라면 `claude` 를 한 번 띄워 /login)")
-		return
+
+	var parts []string
+	for _, c := range live {
+		parts = append(parts, fmt.Sprintf("%s(%s)", c.Flavor, c.Model))
+	}
+	detail := strings.Join(parts, " · ")
+	switch {
+	case explicit:
+		detail += " — judge_path 로 지정한 것만 쓴다"
+	case len(live) == 1:
+		// **한쪽만 있으면 그것이 두 호스트의 대화를 다 판정한다.** 이 사실을 말해야
+		// "Codex 로 일하는데 왜 claude 가 도나" 를 사용자가 여기서 알 수 있다.
+		detail += fmt.Sprintf(" — 두 호스트의 대화를 모두 %s 로 판정한다", live[0].Flavor)
+	default:
+		detail += " — 대화를 만든 호스트의 CLI 가 먼저 서고, 실패하면 다른 쪽이 받는다"
+	}
+	if len(dead) > 0 {
+		detail += " · 응답 없음: " + strings.Join(dead, " · ")
 	}
 	add(r, "자동 기록", health.OK,
-		fmt.Sprintf("%s (%s) — 에이전트가 안 불러도 세션 끝에 판별기가 기록한다 · "+
-			"판별기가 있으므로 [capture] signals 는 쓰이지 않는다", j.Path, j.Model), "")
+		detail+" · 에이전트가 안 불러도 세션 끝에 판별기가 기록한다 · "+
+			"판별기가 있으므로 [capture] signals 는 쓰이지 않는다", "")
 }
 
 // pendingStale 은 이보다 오래된 미확인 구간을 "쌓이고 있다" 로 본다.

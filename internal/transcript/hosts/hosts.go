@@ -21,6 +21,14 @@ import (
 
 // Host 는 대화 기록을 가진 도구 하나다.
 type Host struct {
+	// ID 는 **기계가 쓰는 안정된 이름**이다. `hook.Host` 값과 같은 문자열을 쓴다
+	// ("claude-code" · "codex") — 훅이 자기 호스트를 그 이름으로 알고 있고, 판별기
+	// 종류를 고를 때도 그 이름으로 갈라야 두 자리가 어긋나지 않는다.
+	//
+	// Name 으로 갈라도 되지만 그건 사람에게 보이는 문자열이라 언젠가 바뀐다.
+	// 바뀌면 판별기 선택이 조용히 기본값으로 떨어진다 — 그 종류의 고장을 이
+	// 프로젝트가 계속 경계해 왔다.
+	ID string
 	// Name 은 사람에게 보이는 이름이다. 진단과 로그에 쓴다.
 	Name string
 	// DefaultRoot 는 이 호스트가 기록을 쌓는 자리다.
@@ -45,6 +53,7 @@ type Host struct {
 func All() []Host {
 	return []Host{
 		{
+			ID:          "claude-code",
 			Name:        "Claude Code",
 			DefaultRoot: claudecode.DefaultRoot,
 			List:        claudecode.List,
@@ -52,6 +61,7 @@ func All() []Host {
 			Required:    true,
 		},
 		{
+			ID:          "codex",
 			Name:        "Codex CLI",
 			DefaultRoot: codex.DefaultRoot,
 			List:        codex.List,

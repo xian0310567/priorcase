@@ -132,7 +132,10 @@ func PromoteArc(ctx context.Context, o ArcOptions) ArcResult {
 	if o.Path == "" || o.StateDir == "" {
 		return ArcResult{Skipped: "transcript 나 상태 디렉토리를 모른다"}
 	}
-	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
+	// **이 대화를 만든 호스트의 CLI 로 판정한다** (judgepick.go).
+	// o.Hosts 를 그대로 넘긴다 — 파서를 고르는 것과 같은 근거로 골라야 둘이
+	// 어긋나지 않는다("codex 파서로 읽고 claude 로 판정한다" 가 없어진다).
+	j := judgeFor(o.Config, o.Path, o.Hosts)
 	if j == nil {
 		return ArcResult{Skipped: "판별기가 없다"}
 	}

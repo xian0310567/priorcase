@@ -99,10 +99,18 @@ func Promote(ctx context.Context, o PromoteOptions) {
 	if os.Getenv("PRIORCASE_JUDGE") == "1" {
 		return
 	}
-	j := judge.Find(o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel)
-	if j == nil {
+	// **판을 통째로 한 판별기로 정하지 않는다.** 밀린 구간은 여러 호스트에서
+	// 오므로 판별기는 구간마다 고른다 (아래 루프의 judgeFor). 여기서는 "쓸 수
+	// 있는 판별기가 하나라도 있는가" 만 본다 — 없으면 표시만 남는 것이 원래 동작이다.
+	if judge.FindFor(judge.FlavorClaude, o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) == nil {
 		return
 	}
+	// 호스트 루트는 한 번만 찾는다. **ResolveHosts 를 쓴다** — hosts.Resolve 를
+	// 직접 부르면 설정의 호스트 켜기/끄기를 건너뛰어, 꺼 둔 호스트의 대화까지
+	// 그 호스트 CLI 로 판정하게 된다 (arch 테스트가 이 문을 지킨다).
+	// 실패해도 넘어간다 — 그때 judgeFor 가 claude 를 앞에 두고, 사슬이라 codex 도
+	// 뒤에 붙으므로 잃는 것이 없다.
+	hostRoots, _ := ResolveHosts(o.Config, "")
 	items, err := ReadPending(o.StateDir)
 	if err != nil || len(items) == 0 {
 		return
@@ -246,6 +254,11 @@ func Promote(ctx context.Context, o PromoteOptions) {
 			seg.Worklog = worklog.SessionTitles(o.Layout, p.Domain, p.SessionID, 20)
 		}
 		callCtx, cancelCall := context.WithDeadline(ctx, deadline)
+		// 이 구간을 만든 호스트의 CLI 를 앞에 둔다 (judgepick.go).
+		j := judgeFor(o.Config, p.Path, hostRoots)
+		if j == nil {
+			continue // 이 호스트로도 폴백으로도 판정할 수 없다
+		}
 		r := promote.One(callCtx, j, o.Layout, o.Config, seg)
 		cancelCall()
 
