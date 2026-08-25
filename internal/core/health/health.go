@@ -77,7 +77,7 @@ func (r *Report) Worst() Level {
 func Vault(c *config.Config, l *store.Layout) *Report {
 	r := &Report{}
 	checkVaultDir(r, c)
-	checkStaleKeys(r, c)
+	checkStaleKeys(r, c, l)
 	checkDomainFolders(r, c, l)
 	checkUndeclared(r, l)
 	checkUnscanned(r, c, l)
@@ -757,20 +757,63 @@ func gitIgnores(vault, rel string) bool {
 	return false
 }
 
-// checkStaleKeys 는 **더 쓰이지 않는 설정 키**가 남아 있는지 본다.
+// checkStaleKeys 는 **없앤 색인이 남긴 잔재**를 본다 — 설정 키와 파일 둘 다.
 //
-// 지금은 `[naming] index` 하나다. 색인을 없애면서(2026-08-24) 그 키는 무시되는데,
-// 필드를 지울 수는 없다 — `config.Load` 가 `DisallowUnknownFields` 를 쓰므로 지우면
-// 그 키가 적힌 설정이 통째로 로드 실패하고, 설정은 머신 사이를 건너오지 않아서
-// 어느 머신에는 옛 키가 남아 있는 것이 정상이다 (Naming.Index 주석).
+// # 설정 키
 //
-// **그래서 조용히 무시하면 잉여물이 영원히 남는다.** 설정을 읽는 사람은 그 줄을 보고
-// 색인이 유지되는 줄로 안다. 한 줄로 말해 주고, 지우면 이 줄도 사라진다.
-func checkStaleKeys(r *Report, c *config.Config) {
-	if c == nil || strings.TrimSpace(c.Naming.Index) == "" {
+// `[naming] index` 는 무시되지만 필드를 지울 수는 없다 — `config.Load` 가
+// `DisallowUnknownFields` 를 쓰므로 지우면 그 키가 적힌 설정이 통째로 로드 실패하고,
+// 설정은 머신 사이를 건너오지 않아서 어느 머신에는 옛 키가 남아 있는 것이 정상이다
+// (Naming.Index 주석). 조용히 무시하면 설정을 읽는 사람이 색인이 유지되는 줄로 안다.
+//
+// # 남아 있는 파일
+//
+// **이쪽이 더 아프다.** 2026-08-25 에 실제로 겪었다: 집 머신이 아직 제거 이전 판이라
+// `prior capture` 마다 색인을 다시 만들었고, 없애는 커밋에서 `.gitignore` 항목까지
+// 같이 뺀 탓에 그것이 git 을 타고 다른 머신으로 건너왔다. 사용자가 "없앴는데 다시
+// 생겼다" 로 발견했다 — 도구는 아무 말도 하지 않았다.
+//
+// 볼트를 지우지는 않는다(이 프로젝트의 규칙이다). 있다는 사실과 왜 남았는지만 말한다.
+func checkStaleKeys(r *Report, c *config.Config, l *store.Layout) {
+	var lines []string
+	fix := ""
+	if c != nil && strings.TrimSpace(c.Naming.Index) != "" {
+		lines = append(lines, "설정의 [naming] index")
+		fix = "설정에서 그 한 줄을 지워라"
+	}
+	if p := staleIndexFile(c, l); p != "" {
+		lines = append(lines, l.RelPath(p))
+		if fix != "" {
+			fix += " · "
+		}
+		fix += "파일은 지워도 된다 — 다시 생기면 **다른 머신이 아직 옛 판이다** " +
+			"(prior doctor 의 `판` 검사가 어느 머신인지 말한다)"
+	}
+	if len(lines) == 0 {
 		return // 할 말이 없으면 줄을 만들지 않는다
 	}
-	r.add("낡은 설정 키", OK,
-		"[naming] index 는 더 쓰이지 않는다 — 결정 색인을 없앴다 (2026-08-24)",
-		"그 한 줄을 지워라. 남겨 둬도 무해하지만 색인이 유지되는 것처럼 읽힌다")
+	r.add("낡은 색인", OK,
+		strings.Join(lines, " · ")+" — 결정 색인은 2026-08-24 에 없앴다", fix)
+}
+
+// staleIndexFile 은 없앤 색인이 볼트에 남아 있으면 그 경로를 준다.
+//
+// 설정에 옛 키가 있으면 그 경로를 먼저 보고, 없으면 알려진 이름 둘을 본다 —
+// 키를 이미 지운 머신에도 파일은 남아 있을 수 있다(그게 2026-08-25 의 상황이다).
+func staleIndexFile(c *config.Config, l *store.Layout) string {
+	if l == nil {
+		return ""
+	}
+	var cands []string
+	if c != nil && strings.TrimSpace(c.Naming.Index) != "" {
+		cands = append(cands, c.Naming.Index)
+	}
+	cands = append(cands, "_meta/00-결정-색인.md", "_meta/00-decision-index.md")
+	for _, rel := range cands {
+		p := filepath.Join(l.Vault(), filepath.FromSlash(rel))
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
