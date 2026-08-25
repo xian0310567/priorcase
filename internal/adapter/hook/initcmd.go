@@ -256,7 +256,7 @@ lang  = "en"
 
 # Decisions are never **recorded** under these paths.
 #
-# ⚠️ Recall also misses most documents there — prior only reads notes whose
+# ⚠️ Recall also misses most documents there — priorcase only reads notes whose
 # frontmatter says type: decision. Documents produced by other tools lack
 # that marker.
 exclude = []

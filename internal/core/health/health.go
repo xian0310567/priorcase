@@ -568,7 +568,7 @@ func checkUndeclared(r *Report, l *store.Layout) {
 	}
 	r.add("미선언 도메인", Fail,
 		fmt.Sprintf("%v — 이 폴더의 결정은 색인·회수에서 통째로 빠진다", rel),
-		"설정에 [[domain]] 블록을 추가하고 prior index 를 다시 돌려라")
+		"설정에 [[domain]] 블록을 추가해라")
 }
 
 func checkNotes(r *Report, l *store.Layout) []store.Note {
@@ -606,7 +606,7 @@ func checkNotes(r *Report, l *store.Layout) []store.Note {
 		if len(broken) > 0 {
 			detail = append(detail,
 				fmt.Sprintf("frontmatter 가 깨져 못 읽는다 %v", broken))
-			fix = append(fix, "frontmatter 를 정본 10키로 고쳐라. prior index 가 이유를 알려준다")
+			fix = append(fix, "frontmatter 를 정본 10키로 고쳐라. prior doctor 가 이유를 알려준다")
 		}
 		r.add("결정 노트", Fail,
 			fmt.Sprintf("%d건 중 %d건을 읽지 못했다 — %s",

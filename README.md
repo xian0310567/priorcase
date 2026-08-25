@@ -99,8 +99,9 @@ Apple Developer 계정은 이 셋 중 하나가 될 때 든다 — 브라우저 
 `XDG_CONFIG_HOME` 을 빈 디렉토리로 지정했다):
 
 ```
-$ XDG_CONFIG_HOME=/tmp/nonexistent-xdg prior index
-prior: 설정 파일을 열 수 없다 (/tmp/nonexistent-xdg/priorcase/config.toml): open /tmp/nonexistent-xdg/priorcase/config.toml: no such file or directory
+$ XDG_CONFIG_HOME=/tmp/nonexistent-xdg prior doctor
+✗ 설정  설정 파일을 열 수 없다 (/tmp/nonexistent-xdg/priorcase/config.toml): open /tmp/nonexistent-xdg/priorcase/config.toml: no such file or directory
+   → prior init --apply 가 기본 설정을 만든다
 ```
 
 `PRIORCASE_VAULT` 는 별개다 — 설정 파일의 `vault` 값만 덮어쓴다 (테스트 볼트 격리용).
@@ -344,13 +345,6 @@ EOF
 기록됨: priorcase-demo/decisions/priorcase-demo-결정-회수-키워드매칭-2026-08-07.md
 ```
 
-### `prior index` — 색인을 재생성한다
-
-```
-$ prior --config demo-config.toml index
-색인 2행 생성
-```
-
 `decisions/INDEX.md` (설정의 `naming.index`) 에 날짜 · domain · summary · status ·
 outcome · 링크 표가 생긴다.
 
@@ -377,9 +371,8 @@ $ prior --config demo-config.toml index
 ```
 
 종료 코드는 그래도 0 이다. 원인은 `prior` 가 고칠 수 있는 것이 아니라 볼트 데이터를
-사람이 정본 10키로 옮겨야 하는 것이고, 훅·크론에서 도는 `prior index` 가 그때까지
-매번 실패하면 무시하는 법만 학습시키기 때문이다. `prior capture` · `prior review` 도
-내부적으로 색인을 다시 쓰므로 같은 경고를 낸다.
+사람이 정본 10키로 옮겨야 하는 것이고, 매 실행마다 실패하면 무시하는 법만
+학습시키기 때문이다. `prior capture` · `prior review` 도 같은 경고를 낸다.
 
 ### `prior recall` — 관련 과거 결정을 찾는다
 
@@ -401,7 +394,7 @@ $ prior --config demo-config.toml recall 회수 키워드
 `status: regretted` 이거나 `outcome: bad` 인 결정이 결과에 끼면 `--format inject` 출력
 끝에 회고를 먼저 읽으라는 경고 줄이 붙는다.
 
-회수 대상에서 읽기 실패로 빠진 노트가 있으면 `prior index` 와 같은 경고를 낸다.
+회수 대상에서 읽기 실패로 빠진 노트가 있으면 `prior capture` 와 같은 경고를 낸다.
 포맷과 무관하게 **항상 stderr** 다 — `--format inject` 의 stdout 은 훅이 그대로
 컨텍스트에 넣는 순수 데이터라 한 줄도 섞이면 안 된다.
 
@@ -467,15 +460,15 @@ $ prior --config demo-config.toml review priorcase-demo-결정-저장포맷-마�
 ### `PRIORCASE_CONFIG` — 플래그를 못 쓰는 자리용
 
 ```
-$ PRIORCASE_CONFIG=$PWD/demo-config.toml prior index
-색인 3행 생성
+$ PRIORCASE_CONFIG=$PWD/demo-config.toml prior doctor | head -1
+✓ 설정  <cwd>/demo-config.toml
 ```
 
 플래그가 환경변수를 이긴다.
 
 ```
-$ PRIORCASE_CONFIG=/없는/경로.toml prior --config demo-config.toml index
-색인 3행 생성
+$ PRIORCASE_CONFIG=/없는/경로.toml prior --config demo-config.toml doctor | head -1
+✓ 설정  <cwd>/demo-config.toml
 ```
 
 ## MCP 서버로 쓰기

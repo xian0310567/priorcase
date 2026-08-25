@@ -38,7 +38,7 @@ import (
 // # 무엇이 아닌가
 //
 // 참고는 **쓰기·검증·색인·회고의 대상이 아니다.** capture 는 결정만 쓰고,
-// doctor 의 스키마 검사와 `prior index` 는 결정만 본다. 참고에 그 규칙을 걸면
+// doctor 의 스키마 검사도 결정만 본다. 참고에 그 규칙을 걸면
 // 98건이 전부 위반으로 잡히고, 그건 사람이 쓰는 문서에 우리 규약을 강요하는 것이다.
 func (l *Layout) ListReferences() ([]Note, []SkippedNote, error) {
 	var notes []Note

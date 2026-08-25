@@ -95,7 +95,7 @@ type Resolved struct {
 
 // Resolve 는 각 호스트의 루트를 찾는다.
 //
-// **override 가 있으면 그것 하나만 본다.** `prior daemon --transcript-root <경로>`
+// **override 가 있으면 그것 하나만 본다.** `prior watch --transcript-root <경로>`
 // 는 "여기를 봐라" 이지 "여기도 봐라" 가 아니다. 나머지 호스트가 기본 자리를 계속
 // 보면, 격리된 자리를 지정한 사람이 자기도 모르게 홈 디렉토리 전체를 훑게 된다 —
 // 테스트가 실제 ~/.codex 의 세션 1,729개를 훑다가 멈추면서 드러났다. 사용자에게는

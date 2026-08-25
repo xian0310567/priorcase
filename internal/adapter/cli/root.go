@@ -129,7 +129,7 @@ func warnVocabulary(w io.Writer, l *store.Layout, path string) {
 	fmt.Fprintf(w, "경고: 태그 %v 는 제목·summary 에 이미 있는 낱말뿐이라 "+
 		"**회수에 아무것도 더하지 않는다**.\n"+
 		"  이 결정을 다시 찾을 상황을 서너 개 떠올리고 그때 쓸 **동의어·상위어**를 넣어라.\n"+
-		"  고치려면 파일의 tags 를 손보고 prior index.\n", dead)
+		"  고치려면 파일의 tags 를 손보면 된다 — 회수는 노트를 직접 읽는다.\n", dead)
 }
 
 // Run 은 조립이 끝난 루트를 실행한다. 에러는 호출자가 종료 코드로 옮긴다.
