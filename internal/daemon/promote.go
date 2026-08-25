@@ -253,12 +253,16 @@ func Promote(ctx context.Context, o PromoteOptions) {
 		if scope == judge.ScopeEnd {
 			seg.Worklog = worklog.SessionTitles(o.Layout, p.Domain, p.SessionID, 20)
 		}
-		callCtx, cancelCall := context.WithDeadline(ctx, deadline)
 		// 이 구간을 만든 호스트의 CLI 를 앞에 둔다 (judgepick.go).
+		//
+		// **컨텍스트보다 먼저 고른다.** 반대 순서면 판별기가 없을 때 `continue` 가
+		// cancelCall 을 건너뛰어 컨텍스트가 부모에 매달린 채 남는다 — 데몬은 오래
+		// 도는 프로세스라 그게 쌓인다. go vet 의 lostcancel 이 잡아 준 자리다.
 		j := judgeFor(o.Config, p.Path, hostRoots)
 		if j == nil {
 			continue // 이 호스트로도 폴백으로도 판정할 수 없다
 		}
+		callCtx, cancelCall := context.WithDeadline(ctx, deadline)
 		r := promote.One(callCtx, j, o.Layout, o.Config, seg)
 		cancelCall()
 
