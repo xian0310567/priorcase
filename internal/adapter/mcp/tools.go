@@ -241,6 +241,7 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 		fmt.Fprintf(&b, "\n(관련 결정을 찾아보지 못했다: %v)\n", res.RelatedErr)
 	}
 	b.WriteString(renderSkipped(s.l, res.Skipped))
+	b.WriteString(renderDroppedRelated(res.DroppedRelated))
 	return textResult(b.String()), nil, nil
 }
 
@@ -289,6 +290,9 @@ type reviewArgs struct {
 	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. review 는 supersedes 없이도
 	// 번복 이유를 남길 수 있는 유일한 경로다.
 	SupersedeReason string `json:"supersede_reason,omitempty"`
+	// Related 는 **덧붙일** 관련 문서다. capture 가 대상 없는 related 를 빼고 알려 줄 때
+	// 에이전트가 고칠 수 있는 유일한 문이다 (capture/relatedcheck.go).
+	Related []string `json:"related,omitempty"`
 }
 
 func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewArgs) (*sdk.CallToolResult, noOutput, error) {
@@ -298,6 +302,7 @@ func (s *server) review(ctx context.Context, req *sdk.CallToolRequest, a reviewA
 		Status:          a.Status,
 		Summary:         a.Summary,
 		Retrospective:   a.Retrospective,
+		Related:         a.Related,
 		Supersedes:      a.Supersedes,
 		SupersedeReason: a.SupersedeReason,
 	})

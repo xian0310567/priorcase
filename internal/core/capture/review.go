@@ -27,6 +27,16 @@ type ReviewRequest struct {
 	Retrospective string
 	Supersedes    []string // 뒤집는 대상의 stem (여럿 가능)
 
+	// Related 는 **덧붙일** 관련 문서다. 기존 값을 지우지 않고 합친다.
+	//
+	// 이 인자가 없어서 반쪽이었다: capture 가 대상 없는 related 를 빼고 알려 줘도
+	// 다시 걸 방법이 없었다. 알림이 행동으로 이어지려면 고치는 문이 있어야 한다.
+	//
+	// **덮어쓰지 않고 합치는 이유**는 호출부가 지금 걸린 것을 모르기 때문이다 —
+	// 에이전트는 "이것도 관련있다" 를 말하지 "관련있는 것은 이것뿐이다" 를 말하지
+	// 않는다. 지우려면 파일을 고치면 된다(그게 더 드물고 더 신중한 일이다).
+	Related []string
+
 	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. 없으면 변경 없음.
 	//
 	// 이 자리가 없어서 잃던 것: supersede() 는 옛 노트에 status="superseded" 와
@@ -107,6 +117,19 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 		n.Meta.Summary = r.Summary
 	}
 
+	// related 를 덧붙인다. 대상이 없는 것은 빼고 호출부에 알린다 (relatedcheck.go).
+	var dropped []DroppedLink
+	if len(r.Related) > 0 {
+		add, drop, rerr := resolveRelated(l, r.Related)
+		if rerr != nil {
+			return ReviewResult{}, rerr
+		}
+		dropped = drop
+		for _, link := range add {
+			n.Meta.Related = appendUnique(n.Meta.Related, link)
+		}
+	}
+
 	links, olds, err := supersedeAll(l, r.Supersedes, n.Stem, r.SupersedeReason, reviewDate())
 	if err != nil {
 		return ReviewResult{}, err
@@ -155,19 +178,19 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 	if err := l.Write(n); err != nil {
 		return ReviewResult{}, err
 	}
-	return ReviewResult{}, nil
+	return ReviewResult{DroppedRelated: dropped}, nil
 }
 
 // ReviewResult 는 갱신의 부수 결과다.
 //
-// **지금은 비어 있다.** 예전에는 색인 갱신에서 나온 건너뜀·대피 경고를 실었는데,
-// 색인을 없애면서 그 출처가 사라졌다. 이 함수는 노트 하나를 stem 으로 찾아 고칠
-// 뿐 볼트를 훑지 않으므로 여기서 말할 수 있는 것이 없다 — 읽지 못한 노트는
-// `prior doctor` 의 `결정 노트` 검사가 전수로 말한다.
-//
-// 구조체를 남겨 두는 이유는 반환 형태를 바꾸면 어댑터 셋(cli·mcp·hook)이 같이
-// 흔들리기 때문이다. 실을 것이 생기면 여기가 그 자리다.
-type ReviewResult struct{}
+// 색인을 없앨 때(2026-08-24) 한 번 비었다가 2026-08-27 에 다시 실을 것이 생겼다 —
+// 대상이 없어 빼 버린 related 다. 그때 "실을 것이 생기면 여기가 그 자리다" 라고
+// 적어 뒀는데 사흘 만에 그 자리가 필요해졌다.
+type ReviewResult struct {
+	// DroppedRelated 는 대상이 없어서 빼 버린 related 값이다.
+	// 비어 있지 않으면 호출부가 **반드시** 알려야 한다.
+	DroppedRelated []DroppedLink
+}
 
 func appendUnique(ss []string, v string) []string {
 	for _, s := range ss {

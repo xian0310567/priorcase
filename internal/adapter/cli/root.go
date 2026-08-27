@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/xian0310567/priorcase/internal/core/capture"
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/search"
 	"github.com/xian0310567/priorcase/internal/core/store"
@@ -100,6 +101,28 @@ func warnSkipped(w io.Writer, l *store.Layout, skipped []store.SkippedNote) {
 		reason := strings.ReplaceAll(strings.TrimRight(fmt.Sprint(s.Reason), "\n"), "\n", "\n      ")
 		fmt.Fprintf(w, "  - %s\n      %s\n", l.RelPath(s.Path), reason)
 	}
+}
+
+// warnDroppedRelated 는 **대상이 없어서 빼 버린 related** 를 알린다.
+//
+// 조용히 빼면 최악이다 — 에이전트는 링크를 걸었다고 믿고, 사람은 옵시디언에서
+// 백링크가 없는 이유를 영영 모른다. 그래서 빼는 것 자체보다 알리는 것이 이
+// 기능의 핵심이다 (capture/relatedcheck.go).
+//
+// 제안이 있으면 같이 낸다. **제안은 교정이 아니다** — 맞는지는 사람이 판단한다.
+func warnDroppedRelated(w io.Writer, dropped []capture.DroppedLink) {
+	if len(dropped) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "경고: related %d건은 볼트에 그런 문서가 없어 빼놨다:\n", len(dropped))
+	for _, d := range dropped {
+		if d.Suggest != "" {
+			fmt.Fprintf(w, "  - %s\n      혹시 이것인가: %s\n", d.Value, d.Suggest)
+		} else {
+			fmt.Fprintf(w, "  - %s\n", d.Value)
+		}
+	}
+	fmt.Fprintln(w, "  맞는 이름을 찾았으면 prior review <stem> --related \"[[이름]]\" 으로 걸어라")
 }
 
 // warnVocabulary 는 방금 쓴 노트의 태그가 **회수에 새 낱말을 하나도 안 더할 때** 알린다.

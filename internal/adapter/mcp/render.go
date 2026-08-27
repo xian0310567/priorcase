@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"github.com/xian0310567/priorcase/internal/core/capture"
 	"strings"
 
 	"github.com/xian0310567/priorcase/internal/core/store"
@@ -24,5 +25,29 @@ func renderSkipped(l *store.Layout, skipped []store.SkippedNote) string {
 		fmt.Fprintf(&b, "  - %s\n      %s\n", l.RelPath(s.Path), reason)
 	}
 	b.WriteString("정본 10키로 옮겨야 회수 대상으로 돌아온다.\n")
+	return b.String()
+}
+
+// renderDroppedRelated 는 **대상이 없어서 빼 버린 related** 를 도구 응답에 싣는다.
+//
+// **이 문자열은 에이전트가 읽고 행동을 바꾸는 지시문이다.** 조용히 빼면 에이전트는
+// 링크를 걸었다고 믿고 다음 기록에서 같은 이름을 또 쓴다 — 실볼트에서 같은 오타가
+// 여러 노트에 반복된 사례가 실제로 있었다(`봌라우잠` 2건, `추족으로` 2건).
+// 그래서 고치는 방법까지 같이 준다.
+func renderDroppedRelated(dropped []capture.DroppedLink) string {
+	if len(dropped) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n⚠️ related %d건은 볼트에 그런 문서가 없어 **빼놨다**:\n", len(dropped))
+	for _, d := range dropped {
+		if d.Suggest != "" {
+			fmt.Fprintf(&b, "  - %s\n    혹시 이것인가: %s\n", d.Value, d.Suggest)
+		} else {
+			fmt.Fprintf(&b, "  - %s (가까운 이름도 없다)\n", d.Value)
+		}
+	}
+	b.WriteString("  이름은 **기억으로 쓰지 말고** priorcase_recall 이 준 stem 을 그대로 옮겨라.\n")
+	b.WriteString("  맞는 이름을 찾았으면 priorcase_review 의 related 로 다시 걸어라.\n")
 	return b.String()
 }

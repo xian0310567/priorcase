@@ -19,10 +19,12 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := capture.Review(l, r); err != nil {
+			rr, err := capture.Review(l, r)
+			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "갱신됨: %s\n", r.Stem)
+			warnDroppedRelated(cmd.ErrOrStderr(), rr.DroppedRelated)
 			return nil
 		},
 	}
@@ -32,6 +34,9 @@ func newReviewCmd() *cobra.Command {
 	f.StringVar(&r.Summary, "summary", "", "한 줄 요약을 고친다 (회수에 주입되는 유일한 줄)")
 	f.StringVar(&r.Retrospective, "retro", "", "## 회고 에 붙일 내용")
 	f.StringSliceVar(&r.Supersedes, "supersedes", nil, "이 결정이 뒤집는 결정의 stem (반복 가능)")
+	// **덧붙인다. 덮어쓰지 않는다.** capture 가 대상 없는 related 를 빼고 알려 줄 때
+	// 다시 걸 문이 여기다 (capture/relatedcheck.go).
+	f.StringSliceVar(&r.Related, "related", nil, "관련 문서를 덧붙인다 — [[stem]] 또는 stem (반복 가능)")
 	// **review 는 --supersedes 없이 번복 이유를 남길 수 있는 유일한 경로다.**
 	// 대체할 새 결정이 있으면 사유는 뒤집히는 옛 노트에 붙지만, 측정으로 가정이 깨져
 	// 그냥 그만두는 번복이 실제로 더 흔하다 — 그때 사유가 붙을 곳은 이 노트 자신뿐이고,

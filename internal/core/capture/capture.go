@@ -51,6 +51,10 @@ type Result struct {
 	// 넘어가지도 않는다: 호출부가 이 값을 사용자에게 알려야 "관련 결정이 없다"
 	// 와 "찾아보지 못했다" 가 구별된다.
 	RelatedErr error
+	// DroppedRelated 는 대상이 없어서 빼 버린 related 값이다 (relatedcheck.go).
+	// **비어 있지 않으면 호출부가 반드시 알려야 한다** — 조용히 빼면 에이전트는
+	// 링크를 걸었다고 믿고, 사람은 백링크가 없는 이유를 영영 모른다.
+	DroppedRelated []DroppedLink
 	// Skipped 는 볼트에서 **읽지 못한** 결정 노트다. 비어 있지 않으면 편승 검색이
 	// 볼트 전체를 보지 못했다는 뜻이므로 호출부가 알려야 한다 — "관련 결정이 없다"
 	// 와 "그 노트를 못 읽었다" 는 다르다.
@@ -81,7 +85,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	// 넣었다 — supersedes 가 겪은 것과 같은 사고다(supersede.go 주석의 실측 셋).
 	// 맨 stem 은 옵시디언이 링크로 안 읽고, 경로 조각은 ResolveStem 이 막아 둔
 	// 경로 순회를 그대로 우회한다.
-	relatedLinks, err := normalizeLinks(r.Related)
+	relatedLinks, droppedRelated, err := resolveRelated(l, r.Related)
 	if err != nil {
 		return Result{}, err
 	}
@@ -149,7 +153,8 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 	if err := l.Write(store.Note{Path: path, Stem: stem, Meta: m, Body: body}); err != nil {
 		return Result{}, err
 	}
-	return Result{Path: path, Related: related, RelatedErr: relatedErr, Skipped: skipped}, nil
+	return Result{Path: path, Related: related, RelatedErr: relatedErr, Skipped: skipped,
+		DroppedRelated: droppedRelated}, nil
 }
 
 // slugKey 는 유사 slug 비교용 정규화 키다. 하이픈·공백·밑줄을 접고 대소문자를
