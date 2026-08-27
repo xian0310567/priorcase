@@ -78,65 +78,7 @@ func resolveRelated(l *store.Layout, raw []string) ([]string, []DroppedLink, err
 			out = append(out, link)
 			continue
 		}
-		dropped = append(dropped, DroppedLink{Value: stem, Suggest: nearestStem(stem, stems)})
+		dropped = append(dropped, DroppedLink{Value: stem, Suggest: store.NearestStem(stem, stems)})
 	}
 	return out, dropped, nil
-}
-
-// nearestSimilarity 는 제안을 낼 최소 닮음이다.
-//
-// 0.6 은 실볼트 19건을 전부 맞히면서 애매한 후보를 하나도 안 낸 값이다
-// (2026-08-27, 같은 문턱으로 돌린 교정 스크립트가 "애매해서 건너뜀 0건").
-// 낮추면 무관한 이름을 들이밀고, 그건 없는 것보다 나쁘다 — 사람이 그걸 믿는다.
-const nearestSimilarity = 0.6
-
-// nearestStem 은 볼트에서 가장 가까운 이름이다. 충분히 가깝지 않으면 빈 문자열이다.
-func nearestStem(target string, stems map[string]bool) string {
-	t := []rune(strings.ToLower(store.NFC(target)))
-	best, bestScore := "", nearestSimilarity
-	for s := range stems {
-		c := []rune(strings.ToLower(s))
-		// 길이가 크게 다르면 볼 것도 없다. 403개 × 60자라 비용이 문제는 아니지만,
-		// 이 가지치기가 "짧은 이름이 아무 데나 가깝게 보이는" 것도 같이 막는다.
-		if d := len(c) - len(t); d > len(t)/2 || -d > len(t)/2 {
-			continue
-		}
-		dist := editDistance(t, c)
-		n := len(t)
-		if len(c) > n {
-			n = len(c)
-		}
-		if n == 0 {
-			continue
-		}
-		if score := 1 - float64(dist)/float64(n); score > bestScore {
-			best, bestScore = s, score
-		}
-	}
-	return best
-}
-
-// editDistance 는 **글자** 단위 레벤슈타인이다.
-//
-// 바이트로 재면 한글 한 글자가 3바이트라 거리가 세 배로 부풀고, 한 글자 오타가
-// 전혀 다른 이름처럼 보인다 — 실볼트 오타가 거의 다 한글 한 글자짜리라 그러면
-// 이 기능이 아무 제안도 못 낸다.
-func editDistance(a, b []rune) int {
-	prev := make([]int, len(b)+1)
-	cur := make([]int, len(b)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(a); i++ {
-		cur[0] = i
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-			cur[j] = min(min(cur[j-1]+1, prev[j]+1), prev[j-1]+cost)
-		}
-		prev, cur = cur, prev
-	}
-	return prev[len(b)]
 }
