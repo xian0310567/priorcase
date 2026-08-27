@@ -202,6 +202,27 @@ type Options struct {
 	// 가 밀린 판이 있었다. 이 시스템이 존재하는 이유가 그런 결정을 그 순간에
 	// 들이미는 것이다.
 	ReferenceLimit int
+
+	// RuleLimit 은 **규칙 노트에 따로 주는 자리 수**다. 0 이면 규칙을 안 준다
+	// (store.Layout.ListRules 의 § 참고).
+	//
+	// **별도 플래그를 두지 않는다.** IncludeReferences 처럼 켜는 불리언을 하나 더
+	// 두면 0 과 false 가 같은 뜻이 되어 두 자리에서 같은 것을 말한다.
+	//
+	// # 왜 자리를 따로 주나
+	//
+	// 결정과 섞어 자르면 **규칙이 언제나 진다.** 규칙의 요약은 한 줄이고 결정의
+	// 요약은 중앙 184자·최대 1,848자라, 같은 목록에서 head 히트 수로 겨루면
+	// 긴 쪽이 이긴다 — 그게 length_test.go 가 고친 바로 그 편향이다. 길이 정규화가
+	// 그 편향을 5배로 줄였지만 없앤 것은 아니고, 애초에 규칙과 결정은 **경쟁하는
+	// 관계가 아니다.** 규칙은 "무엇을 하라" 이고 결정은 "지난번에 무엇을 했다" 다.
+	//
+	// # 주입 예산
+	//
+	// 훅 주입은 결정 3줄 + 참고 2줄이었고 실측 중앙값이 2,552자다(2026-08-27,
+	// 실제 주입 블록 879개). 규칙 2줄을 더하면 줄은 2개 늘지만 규칙 요약은 한 줄
+	// 규약이라 늘어나는 글자가 200자 안쪽이다. 그 값으로 교차 프로젝트 전이를 산다.
+	RuleLimit int
 }
 
 // Recall 은 프롬프트에 관련된 결정을 점수순으로 주고, 회수 대상에서 아예 빠진
@@ -233,6 +254,15 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 		refs = r
 		skipped = append(skipped, rskipped...)
 	}
+	var rules []store.Note
+	if o.RuleLimit > 0 {
+		ru, ruskipped, ruerr := l.ListRules()
+		if ruerr != nil {
+			return nil, nil, ruerr
+		}
+		rules = ru
+		skipped = append(skipped, ruskipped...)
+	}
 
 	cwdDomain := ""
 	if o.Cwd != "" {
@@ -256,8 +286,20 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 
 	hits = trim(hits, o)
 
+	// **규칙을 맨 앞에 둔다.** 사람도 에이전트도 위에서부터 읽고, 주입 블록은
+	// 잘릴 수 있다. 규칙은 여러 결정에서 증류한 것이라 한 줄당 값이 가장 크고,
+	// "지난번에 무엇을 했다" 보다 "무엇을 하라" 가 먼저 읽혀야 한다.
+	//
+	// 규칙에는 cwd·언급 가점이 붙지 않는다 — 도메인이 없기 때문이다(ListRules 의 §).
+	// 그래서 순수하게 낱말이 겹치는 정도로만 뽑힌다.
+	if len(rules) > 0 {
+		ro := o
+		ro.Limit = o.RuleLimit
+		hits = append(trim(scoreAll(rules, keywords, cwdDomain, mentioned, syn), ro), hits...)
+	}
+
 	// **참고는 자기 자리에서 자른다.** 결정과 섞어 자르면 밀어낸다 (§ ReferenceLimit).
-	// 결정을 앞에 둔다 — 사람도 에이전트도 위에서부터 읽는다.
+	// 결정을 참고보다 앞에 둔다 — 확정된 것이 먼저다.
 	if len(refs) > 0 {
 		ro := o
 		ro.Limit = o.ReferenceLimit
@@ -595,6 +637,15 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		// 필요하고, 경로가 있어야 열어 볼 수 있다. 상태는 남긴다: 싸고, 그 사이
 		// regretted 로 바뀌었으면 그게 제일 중요한 정보다.
 		if h.Seen {
+			if h.Note.IsRule() {
+				fmt.Fprintf(&b, "- %s %s → %s\n",
+					l.Lang().T("[규칙]", "[rule]"),
+					l.Lang().T("(앞서 주입)", "(already shown)"), l.RelPath(h.Note.Path))
+				if status == "regretted" || outcome == "bad" {
+					warn = true
+				}
+				continue
+			}
 			if h.Note.IsReference() {
 				fmt.Fprintf(&b, "- %s %s → %s\n",
 					l.Lang().T("[참고]", "[reference]"),
@@ -614,6 +665,25 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		// 참고에는 status·outcome 이 없다. 위에서 빈 값을 active/pending 으로
 		// 채우므로 그대로 내면 **기획 초안이 확정된 결정으로 보인다** — 에이전트는
 		// 그걸 근거로 삼는다. 상태를 떼고 참고임을 앞에 붙인다.
+		// **규칙은 날짜가 아니라 표식으로 그린다.** 규칙에는 "언제 이 일이 있었나" 가
+		// 없고 "지금 유효한가" 만 있다. 그래서 active 면 상태를 아예 안 찍고,
+		// 뒤집혔을 때만 찍는다 — 규칙도 뒤집힌다(status: superseded).
+		if h.Note.IsRule() {
+			if status == "active" && outcome == "pending" {
+				fmt.Fprintf(&b, "- %s %s → %s\n",
+					l.Lang().T("[규칙]", "[rule]"), summary, l.RelPath(h.Note.Path))
+			} else {
+				fmt.Fprintf(&b, "- %s %s (%s) → %s\n",
+					l.Lang().T("[규칙]", "[rule]"), summary, status, l.RelPath(h.Note.Path))
+			}
+			if r := overturnLine(l, m, summary); r != "" {
+				b.WriteString(r)
+			}
+			if status == "regretted" || outcome == "bad" {
+				warn = true
+			}
+			continue
+		}
 		if h.Note.IsReference() {
 			fmt.Fprintf(&b, "- %s %s → %s\n",
 				l.Lang().T("[참고]", "[reference]"), summary, l.RelPath(h.Note.Path))

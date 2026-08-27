@@ -72,6 +72,28 @@ func (o Options) sessionStart() error {
 				"everything deferred that way has been lost so far. **Record the rationale and the rejected options, not just the conclusion.**\n"))
 	}
 
+	// **`[규칙]` 줄은 배경이 아니다.**
+	//
+	// 실측(2026-08-27): 주입된 노트를 어시스턴트가 이후에 언급한 것이 4.4%였다.
+	// 즉 읽는 쪽의 기본값은 "참고용 배경" 이다. 규칙은 그 기본값으로 읽히면
+	// 안 되므로 여기서 한 번 말해 둔다 — 규칙은 여러 결정에서 증류한 것이고
+	// 도메인이 없어 이 프로젝트에도 그대로 걸린다.
+	//
+	// 규칙이 없는 볼트에는 안 싣는다. 이 블록은 세션당 한 번 실리고 갱신되지
+	// 않으므로 쓸 것이 없는 안내는 그 자체가 소음이다 — 발견 표면은 doctor 다.
+	if !excluded {
+		if rules, _, rerr := o.Layout.ListRules(); rerr == nil && len(rules) > 0 {
+			fmt.Fprintf(&b, lang.T(
+				"\n**회수가 `[규칙]` 로 주는 %d건은 프로젝트 밖의 판단 기준이다.** 도메인이 없어\n"+
+					"어디서 물어도 같은 자격으로 걸린다 — 그 줄은 참고가 아니라 **지켜야 하는 제약**이다.\n"+
+					"규칙을 새로 세웠으면 `%s/` 에 한 줄 요약과 출처 결정을 걸어 남겨라.\n",
+				"\n**The %d `[rule]` lines recall gives you are judgment criteria from outside this project.**\n"+
+					"They carry no domain, so they match from anywhere — treat them as **constraints, not background**.\n"+
+					"When you settle a new rule, leave it in `%s/` with a one-line summary and the decisions it came from.\n"),
+				len(rules), o.Layout.RulesDirRel())
+		}
+	}
+
 	if len(notes) > 0 {
 		fmt.Fprintf(&b, lang.T(
 			"\n### 최근 결정 (전체 %d건)\n\n",

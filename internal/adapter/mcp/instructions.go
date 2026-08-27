@@ -90,6 +90,20 @@ func buildInstructions(l *store.Layout, pend pendingView) (string, []store.Skipp
 			"A conclusion-only record makes someone propose the same rejected thing again.\n"+
 			"But **do not invent rationale that is not in the conversation** — if there is none, say so.\n\n"))
 
+	// **`[규칙]` 줄은 배경이 아니다** (hook/start.go 와 같은 계약을 말해야 한다).
+	if rules, _, rerr := l.ListRules(); rerr == nil && len(rules) > 0 {
+		fmt.Fprintf(&b, lang.T(
+			"**회수가 `[규칙]` 로 주는 %d건은 프로젝트 밖의 판단 기준이다.** 도메인이 없어 어디서 "+
+				"물어도 같은 자격으로 걸린다 — 그 줄은 참고가 아니라 **지켜야 하는 제약**이다.\n"+
+				"규칙을 새로 세웠으면 `%s/` 에 한 줄 요약과 출처 결정을 걸어 남겨라 "+
+				"(`priorcase_capture` 는 결정용이라 규칙을 만들지 않는다).\n\n",
+			"**The %d `[rule]` lines recall gives you are judgment criteria from outside this project.** "+
+				"They carry no domain, so they match from anywhere — treat them as **constraints, not background**.\n"+
+				"When you settle a new rule, leave it in `%s/` with a one-line summary and the decisions it came from "+
+				"(`priorcase_capture` writes decisions, not rules).\n\n"),
+			len(rules), l.RulesDirRel())
+	}
+
 	b.WriteString(lang.T(
 		"**결과가 판명됐거나 결정을 뒤집었으면 `priorcase_review` 로 갱신한다.**\n"+
 			"뒤집힌 결정이 그대로 남아 있으면 회수가 오염된다.\n"+

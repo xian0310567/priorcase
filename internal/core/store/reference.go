@@ -142,4 +142,11 @@ func sameDir(a, b string) bool {
 //
 // 회수 결과에서 **결정과 참고를 반드시 구분해 보여 줘야 한다.** 안 그러면
 // 에이전트가 기획 초안을 확정된 결정으로 읽는다.
-func (n Note) IsReference() bool { return n.Meta.Type != "decision" }
+//
+// **규칙도 빼야 한다.** 예전에는 `type != "decision"` 하나였는데, 그러면 규칙
+// 노트가 참고로 분류되어 회수 블록에 `[참고]` 로 그려진다. 참고는 "확정되지 않은
+// 것" 이라는 뜻이라(그래서 status 를 안 찍는다) 규칙에 그 딱지를 붙이면 정반대다 —
+// 규칙은 여러 결정에서 증류한 **가장 확정된 것**이다.
+func (n Note) IsReference() bool {
+	return n.Meta.Type != "decision" && n.Meta.Type != TypeRule
+}

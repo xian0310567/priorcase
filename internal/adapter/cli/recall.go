@@ -35,6 +35,10 @@ func newRecallCmd() *cobra.Command {
 				// "훅은 주는데 recall 은 안 준다" 가 안 생긴다.
 				IncludeReferences: true,
 				ReferenceLimit:    limit,
+				// 규칙도 같은 이유로 본다. 자리를 limit 과 같이 주는 것은
+				// 참고와 같은 규칙이다 — 사람이 찾을 때는 예산이 아니라
+				// 보여 주는 것이 목적이다.
+				RuleLimit: limit,
 			})
 			if err != nil {
 				return err

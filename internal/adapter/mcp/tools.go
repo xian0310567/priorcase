@@ -142,6 +142,7 @@ func (s *server) recall(ctx context.Context, req *sdk.CallToolRequest, a recallA
 		// "훅은 주는데 recall 은 안 준다" 가 안 생긴다.
 		IncludeReferences: true,
 		ReferenceLimit:    limit,
+		RuleLimit:         limit,
 	})
 	if err != nil {
 		return nil, nil, err
