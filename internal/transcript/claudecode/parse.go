@@ -19,13 +19,16 @@ import (
 // record 는 JSONL 한 줄 중 우리가 쓰는 부분만 담는다. 스키마 전체를 옮기지 않는 이유:
 // 호스트가 필드를 늘려도 우리가 깨지지 않아야 한다. 모르는 필드는 그냥 무시된다.
 type record struct {
-	Type      string `json:"type"`
-	IsMeta    bool   `json:"isMeta"`
-	Sidechain bool   `json:"isSidechain"`
-	Cwd       string `json:"cwd"`
-	SessionID string `json:"sessionId"`
-	Timestamp string `json:"timestamp"`
-	Message   struct {
+	Type   string `json:"type"`
+	IsMeta bool   `json:"isMeta"`
+	// PromptSource 는 그 프롬프트가 **어디서 왔는가** 다. `typed` 는 사람이 친 것이고
+	// `sdk` 는 프로그램이 넣은 것이다 (아래 turns 의 § 참고).
+	PromptSource string `json:"promptSource"`
+	Sidechain    bool   `json:"isSidechain"`
+	Cwd          string `json:"cwd"`
+	SessionID    string `json:"sessionId"`
+	Timestamp    string `json:"timestamp"`
+	Message      struct {
 		// content 는 문자열이거나 블록 배열이다. 둘 다 받아야 해서 늦게 푼다.
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -129,6 +132,22 @@ func (rec *record) turns(tools map[string]string) []transcript.Turn {
 	if rec.Type != "user" && rec.Type != "assistant" {
 		return nil
 	}
+	// ★★ **`sdk` 는 우리 자신이 넣은 프롬프트다.** 위 isMeta 와 같은 고리다.
+	//
+	// 판별기는 호스트 CLI 를 띄워 돌리는데, 그 세션도 자기 transcript 를 남긴다.
+	// 그러면 데몬이 **판별기의 프롬프트를 사람의 발화로 읽고** 다시 판정한다.
+	//
+	// 실측(2026-08-31): user 레코드 6,772개 중 948개(14%)가 `promptSource: sdk`
+	// 였고 전부 priorcase 자신의 것이었다 — 판별기 지시문 25,372자짜리 624회,
+	// 헬스체크(`{"ok":true} 를 그대로 출력하라`) 272회, 아크 판별기 40회.
+	// 586건이 홈 디렉토리 한 폴더에 쌓여 있었다.
+	//
+	// **`typed` 만 남기지 않고 `sdk` 만 뺀다.** promptSource 가 없는 레코드가
+	// 정상 발화의 다수이고(호스트 판이 올라가며 붙은 필드다), 화이트리스트로 좁히면
+	// 옛 transcript 가 통째로 사라진다.
+	if rec.PromptSource == "sdk" {
+		return nil
+	}
 	if len(rec.Message.Content) == 0 {
 		return nil
 	}
@@ -144,6 +163,10 @@ func (rec *record) turns(tools map[string]string) []transcript.Turn {
 		if strings.TrimSpace(s) == "" {
 			return nil
 		}
+		// 슬래시 명령 에코는 발화가 아니다 (transcript/harness.go).
+		if transcript.IsHarnessText(s) {
+			return nil
+		}
 		return []transcript.Turn{mk(transcript.KindUser, s)}
 	}
 
@@ -157,6 +180,11 @@ func (rec *record) turns(tools map[string]string) []transcript.Turn {
 		switch b.Type {
 		case "text":
 			if strings.TrimSpace(b.Text) == "" {
+				continue
+			}
+			// **API 차단 알림은 어시스턴트 발화로 저장된다.** 종류로는 못 가르므로
+			// 여기서 텍스트로 판단한다 (transcript/harness.go 의 § 참고).
+			if transcript.IsHarnessText(b.Text) {
 				continue
 			}
 			k := transcript.KindAssistant

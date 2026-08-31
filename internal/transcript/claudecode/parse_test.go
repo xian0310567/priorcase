@@ -653,3 +653,60 @@ func TestBashActivitySkipsPrelude(t *testing.T) {
 		}
 	}
 }
+
+// ★★★ **`sdk` 는 우리 자신이 넣은 프롬프트다.**
+//
+// 판별기는 호스트 CLI 를 띄워 돌리는데 그 세션도 자기 transcript 를 남긴다.
+// 거르지 않으면 데몬이 **판별기의 프롬프트를 사람의 발화로 읽고** 다시 판정한다 —
+// isMeta 가드가 막는 것과 같은 종류의 고리다.
+//
+// 실측(2026-08-31): user 레코드 6,772개 중 948개(14%)가 `promptSource: sdk` 였고
+// 전부 priorcase 자신의 것이었다(판별기 지시문 25,372자짜리 624회 · 헬스체크 272회).
+func TestSDKPromptsAreNotTurns(t *testing.T) {
+	body := `{"type":"user","promptSource":"sdk","timestamp":"2026-08-07T01:00:00Z","message":{"content":"너는 개발 대화를 읽고 무엇을 남길지 정하는 판별기다. JSON 하나만 출력하라."}}
+{"type":"user","promptSource":"typed","timestamp":"2026-08-07T01:00:01Z","message":{"content":"저장 엔진을 정하자"}}
+{"type":"user","timestamp":"2026-08-07T01:00:02Z","message":{"content":"promptSource 가 없는 옛 레코드도 살아야 한다"}}
+`
+	turns, _, _, bad := parse(t, body)
+	if bad != 0 {
+		t.Fatalf("bad=%d", bad)
+	}
+	for _, tn := range turns {
+		if strings.Contains(tn.Text, "판별기다") {
+			t.Fatalf("판별기 프롬프트가 발화로 들어왔다: %.50q", tn.Text)
+		}
+	}
+	if len(turns) != 2 {
+		t.Fatalf("발화 %d개 — typed 와 무표시 둘이어야 한다: %v", len(turns), turns)
+	}
+}
+
+// **`typed` 만 남기지 않는다.** promptSource 가 없는 레코드가 정상 발화의 다수라
+// (호스트 판이 올라가며 붙은 필드다) 화이트리스트로 좁히면 옛 transcript 가
+// 통째로 사라진다. 위 테스트의 셋째 줄이 그 계약이다.
+func TestMissingPromptSourceStillCounts(t *testing.T) {
+	turns, _, _, _ := parse(t, "{\"type\":\"user\",\"timestamp\":\"2026-08-07T01:00:00Z\",\"message\":{\"content\":\"옛 레코드\"}}\n")
+	if len(turns) != 1 {
+		t.Fatalf("promptSource 없는 레코드가 사라졌다: %v", turns)
+	}
+}
+
+// ★★ **API 차단 알림은 어시스턴트 발화로 저장된다** — 종류로는 못 가른다.
+// 그리고 그 글을 **인용한** 발화는 살아야 한다 (transcript/harness.go 의 앵커링).
+func TestHarnessTextIsNotATurn(t *testing.T) {
+	body := `{"type":"assistant","timestamp":"2026-08-07T01:00:00Z","message":{"content":[{"type":"text","text":"API Error: Opus 5's safeguards flagged this message (https://www.anthropic.com/legal/aup)."}]}}
+{"type":"assistant","timestamp":"2026-08-07T01:00:01Z","message":{"content":[{"type":"text","text":"차단 원인을 보면 API Error: 로 시작하는 줄이 발화로 저장되고 있었다"}]}}
+{"type":"user","timestamp":"2026-08-07T01:00:02Z","message":{"content":"<command-name>/effort</command-name>"}}
+{"type":"user","timestamp":"2026-08-07T01:00:03Z","message":{"content":"이어서 진행해줘"}}
+`
+	turns, _, _, _ := parse(t, body)
+	if len(turns) != 2 {
+		t.Fatalf("발화 %d개 — 인용과 실제 프롬프트 둘만 남아야 한다: %v", len(turns), kinds(turns))
+	}
+	if !strings.Contains(turns[0].Text, "차단 원인을 보면") {
+		t.Errorf("인용이 사라졌다: %q", turns[0].Text)
+	}
+	if turns[1].Text != "이어서 진행해줘" {
+		t.Errorf("실제 프롬프트가 사라졌다: %q", turns[1].Text)
+	}
+}

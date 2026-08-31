@@ -285,3 +285,63 @@ func TestParseTakesNothingFromEventMsgAlone(t *testing.T) {
 			len(turns), turns)
 	}
 }
+
+// ★★★ **`developer` 는 대화가 아니다.**
+//
+// 예전에는 `role == "user"` 가 아니면 전부 어시스턴트로 셌다. 그래서 Codex 가
+// 지시문을 싣는 developer 채널이 통째로 "에이전트가 한 말" 이 됐다.
+//
+// 실측(2026-08-31): codex 세션 339개에서 하네스 지시문(`## Memory / You have access
+// to a memory folder…`)이 `role=developer` 로 200건 있었고, 판별기 발췌에 섞여 나간
+// 것이 148건 — 관측된 발췌 오염의 최다 원인이다.
+func TestDeveloperChannelIsNotATurn(t *testing.T) {
+	in := line("response_item", `{"type":"message","role":"developer","content":[{"type":"input_text","text":"## Memory\n\nYou have access to a memory folder with guidance from prior runs."}]}`) +
+		line("response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"저장 엔진을 정하자"}]}`) +
+		line("response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"SQLite 로 가자"}]}`)
+
+	turns, _, _, bad, err := Parse(strings.NewReader(in))
+	if err != nil || bad != 0 {
+		t.Fatalf("err=%v bad=%d", err, bad)
+	}
+	for _, tn := range turns {
+		if strings.Contains(tn.Text, "memory folder") {
+			t.Fatalf("developer 채널이 발화로 들어왔다 (kind=%s): %.60q", tn.Kind, tn.Text)
+		}
+	}
+	if got := kinds(turns); len(got) != 2 {
+		t.Fatalf("발화 %d개 — user·assistant 둘이어야 한다: %v", len(got), got)
+	}
+}
+
+// **모르는 역할은 버린다** (화이트리스트). Codex 가 채널을 늘려도 조용히
+// 어시스턴트로 새면 안 된다 — 이 고장이 정확히 "기본값이 어시스턴트" 라서 났다.
+func TestUnknownRoleIsDropped(t *testing.T) {
+	in := line("response_item", `{"type":"message","role":"system","content":[{"type":"input_text","text":"시스템 지시"}]}`) +
+		line("response_item", `{"type":"message","role":"tool","content":[{"type":"input_text","text":"도구 결과"}]}`) +
+		line("response_item", `{"type":"message","role":"미래채널","content":[{"type":"input_text","text":"새 채널"}]}`)
+
+	turns, _, _, _, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Errorf("모르는 역할이 발화로 들어왔다: %v", kinds(turns))
+	}
+}
+
+// Codex 쪽에서도 하네스 글은 빠진다 (transcript/harness.go 와 같은 규칙).
+func TestCodexDropsHarnessText(t *testing.T) {
+	in := line("response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"API Error: safeguards flagged this message"}]}`) +
+		line("response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"그 API Error: 를 분석하면 원인이 보인다"}]}`)
+
+	turns, _, _, _, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("발화 %d개 — 인용 1개만 남아야 한다: %v", len(turns), turns)
+	}
+	if !strings.Contains(turns[0].Text, "분석하면") {
+		t.Errorf("남은 것이 인용이 아니다: %q", turns[0].Text)
+	}
+}

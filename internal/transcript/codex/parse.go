@@ -194,9 +194,26 @@ func (it *item) turns(ts time.Time) []transcript.Turn {
 
 	switch it.Type {
 	case "message":
-		k := transcript.KindAssistant
-		if it.Role == "user" {
+		// ★★ **`developer` 는 대화가 아니다.**
+		//
+		// 예전에는 `role == "user"` 가 아니면 전부 어시스턴트로 셌다. 그러면 Codex 가
+		// 지시문을 싣는 **developer 채널**이 통째로 "에이전트가 한 말" 이 된다.
+		//
+		// 실측(2026-08-31): codex 세션 339개에서 하네스 지시문(`## Memory / You have
+		// access to a memory folder…`)이 `payload.role=developer` 로 200건 있었고,
+		// 그것이 판별기 발췌에 섞여 나간 것이 148건 — 이 시스템에서 관측된 발췌 오염의
+		// **최다 원인**이다. 판별기가 그걸 대화로 읽고 "무엇을 정했나" 를 판정한다.
+		//
+		// **모르는 역할은 버린다** (화이트리스트). Codex 가 채널을 늘려도 조용히
+		// 어시스턴트로 새지 않는다 — 이 고장이 정확히 "기본값이 어시스턴트" 라서 났다.
+		var k transcript.Kind
+		switch it.Role {
+		case "user":
 			k = transcript.KindUser
+		case "assistant":
+			k = transcript.KindAssistant
+		default:
+			return nil
 		}
 		var out []transcript.Turn
 		for _, b := range it.Content {
@@ -206,6 +223,10 @@ func (it *item) turns(ts time.Time) []transcript.Turn {
 				continue
 			}
 			if strings.TrimSpace(b.Text) == "" {
+				continue
+			}
+			// 하네스가 만든 글은 발화가 아니다 (transcript/harness.go).
+			if transcript.IsHarnessText(b.Text) {
 				continue
 			}
 			out = append(out, mk(k, b.Text))
