@@ -175,7 +175,18 @@ func normalizeSynonym(w string) string {
 // **형제는 정확히 하나만 센다** — 몇 개가 맞았는지는 안 본다. 표를 크게 쓴 낱말이
 // 점수를 독식하지 않게 하는 유일한 장치다.
 func (s Synonyms) hits(text, k string) bool {
-	for _, sib := range s.siblings(k) {
+	return hitsSiblings(text, s.siblings(k))
+}
+
+// hitsSiblings 는 이미 풀어 둔 형제 목록으로 본다.
+//
+// **형제 풀이를 노트 루프 밖으로 빼기 위해 갈랐다.** `siblings` 는 정확히 맞는
+// 낱말이 없으면 표 전체를 훑는데(접두 일치), 그 결과는 질의어에만 달렸지 노트와는
+// 무관하다. 그런데 예전에는 노트마다 다시 풀었다 — 볼트 558건이면 같은 계산을
+// 558번 한다. `retro.Due` 처럼 노트마다 Recall 을 부르는 자리에서는 그것이 다시
+// 558배가 된다.
+func hitsSiblings(text string, sibs []string) bool {
+	for _, sib := range sibs {
 		if matches(text, sib) {
 			return true
 		}

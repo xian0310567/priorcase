@@ -130,10 +130,20 @@ func AllDue(c *config.Config) ([]Item, []store.SkippedNote, []error) {
 }
 
 func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error) {
-	notes, skipped, err := l.List()
+	// **볼트를 한 번만 읽는다.**
+	//
+	// 아래 루프가 노트마다 Recall 을 부르는데, Recall 은 기본적으로 부를 때마다
+	// 볼트 전체를 디스크에서 다시 읽는다. 그러면 비용이 노트 수의 제곱이 된다 —
+	// 실측으로 결정 156건에서 2.6초이던 `prior queue` 가 558건에서 32초가 됐고,
+	// 앱의 읽기 상한이 10초라 화면이 통째로 오류로 찼다 (search.Corpus 의 §).
+	//
+	// **기능이 늘어서가 아니라 볼트가 자라서** 죽는 종류라, 아무것도 안 고쳐도
+	// 어느 날 갑자기 그렇게 된다.
+	corpus, err := search.LoadCorpus(l)
 	if err != nil {
-		return nil, skipped, err
+		return nil, nil, err
 	}
+	notes, skipped := corpus.Notes, corpus.Skipped
 
 	// 날짜순으로 세운다. "나중 결정이 이전 결정을 꺼냈나" 를 보려면 순서가 필요하다.
 	sort.Slice(notes, func(i, j int) bool {
@@ -163,6 +173,7 @@ func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error)
 		found, _, err := search.Recall(l, c, n.Meta.Summary+" "+slugOf(l, n.Stem),
 			search.Options{
 				Limit: recallLimit, MinScore: recallMinScore, CrossProject: true,
+				Corpus: corpus,
 			})
 		if err != nil {
 			// 한 건이 실패해도 큐 전체를 버리지 않는다. 회고는 놓쳐도 대화를 막지 않는

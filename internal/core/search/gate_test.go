@@ -44,7 +44,7 @@ const conversational = 7
 func TestRareWordAlonePassesGate(t *testing.T) {
 	// 드문낱말은 10건 중 1건에만 있다 → 변별어. 그 하나로 게이트를 넘어야 한다.
 	notes := synthNotes(1, 5)
-	hits := scoreAll(notes, []string{"드문낱말"}, conversational, "", nil, Synonyms{}, "")
+	hits := scoreAll(prepare(notes, ""), []string{"드문낱말"}, conversational, "", nil, Synonyms{})
 	if len(hits) != 1 {
 		t.Fatalf("변별어 하나로 후보가 %d건 — 1건이어야 한다. "+
 			"이것이 막히면 '지라' 하나로 물었을 때 지라 노트가 안 나온다", len(hits))
@@ -57,7 +57,7 @@ func TestCommonWordAloneFailsGate(t *testing.T) {
 	// **이 계약을 풀면 내용어 없는 대화체 질의가 볼트 절반을 끌어온다.** 실볼트
 	// 실측으로 `작업`(df 4.1%)이 변별어가 되는 설정에서 후보 22건이 돌아왔다.
 	notes := synthNotes(1, 5)
-	if hits := scoreAll(notes, []string{"흔한낱말"}, conversational, "", nil, Synonyms{}, ""); len(hits) != 0 {
+	if hits := scoreAll(prepare(notes, ""), []string{"흔한낱말"}, conversational, "", nil, Synonyms{}); len(hits) != 0 {
 		t.Errorf("흔한 낱말 하나로 후보가 %d건 — 0건이어야 한다", len(hits))
 	}
 }
@@ -65,7 +65,7 @@ func TestCommonWordAloneFailsGate(t *testing.T) {
 func TestTwoCommonWordsStillPassGate(t *testing.T) {
 	// **옛 계약은 그대로 남는다.** 흔한 낱말 둘로 통과하던 질의는 지금도 통과한다.
 	notes := synthNotes(1, 5)
-	hits := scoreAll(notes, []string{"흔한낱말", "내용"}, conversational, "", nil, Synonyms{}, "")
+	hits := scoreAll(prepare(notes, ""), []string{"흔한낱말", "내용"}, conversational, "", nil, Synonyms{})
 	if len(hits) == 0 {
 		t.Error("흔한 낱말 둘인데 후보가 0건 — 옛 게이트가 통과시키던 것을 막았다")
 	}
@@ -74,7 +74,7 @@ func TestTwoCommonWordsStillPassGate(t *testing.T) {
 func TestShortQueryStillNeedsOneHit(t *testing.T) {
 	// `prior recall "저장 엔진"` 처럼 사람이 골라 넣은 질의는 하나로 만족한다.
 	notes := synthNotes(1, 5)
-	hits := scoreAll(notes, []string{"흔한낱말"}, 2, "", nil, Synonyms{}, "")
+	hits := scoreAll(prepare(notes, ""), []string{"흔한낱말"}, 2, "", nil, Synonyms{})
 	if len(hits) != 5 {
 		t.Errorf("짧은 질의에서 후보가 %d건 — 5건이어야 한다", len(hits))
 	}

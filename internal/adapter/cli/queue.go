@@ -125,6 +125,12 @@ type QueueCheck struct {
 //
 // 못 찾는 경우(설정에 없는 볼트를 가리키는 도메인)는 빈 문자열이다. 기본 볼트로
 // 뭉개지 않는다 — 그건 설정 오류이고 doctor 가 말할 일이다.
+// reviewLimit 은 승격 원장에서 낼 최근 건수다.
+//
+// 원장은 append-only 라 영원히 자란다. 상한이 없으면 이 명령의 출력이 볼트 나이에
+// 비례해 커지는데, 그 비용은 **아무도 안 읽는 칸**에 든다 (Review 를 채우는 § 참고).
+const reviewLimit = 50
+
 func vaultName(c *config.Config, domain string) string {
 	v, err := c.VaultFor(domain)
 	if err != nil {
@@ -227,11 +233,22 @@ func newQueueCmd() *cobra.Command {
 				}
 				// **판별기가 스스로 만든 것만 검토 대상이다.** 기록 안 함·실패는
 				// 사람이 할 일이 없다 — 그건 doctor 가 볼 진단이다.
+				//
+				// **최근 것만 낸다.** 원장은 지우지 않고 계속 쌓이는데(2026-09-01
+				// 기준 1,517건), 전건을 내면 그것만 3MB 다 — `prior queue --json`
+				// 출력 4.5MB 의 대부분이었다. 그리고 앱은 이 칸을 **안 읽는다**
+				// (types.ts 에 unknown[] 로 선언만 돼 있다). 확인 큐를 들어내고
+				// 설정 콘솔이 되면서(2026-08-14) 소비자가 사라졌는데 산출만 남았다.
+				//
+				// 그래도 0 으로 두지 않는 이유: 이건 `--json` 계약이라 앱 말고
+				// 다른 것이 읽을 수 있고, "판별기가 뭘 기록했나" 는 사람이 가끔
+				// 본다. 최근 것이면 그 물음에 답이 된다.
 				recs, rerr := daemon.ReadPromotions(sd, time.Time{})
 				if rerr != nil {
 					q.Warnings = append(q.Warnings, "승격 원장을 읽지 못했다: "+rerr.Error())
 				}
-				for _, r := range recs {
+				for i := len(recs) - 1; i >= 0 && len(q.Review) < reviewLimit; i-- {
+					r := recs[i]
 					if r.Recorded {
 						q.Review = append(q.Review, QueueReview{
 							ID: r.ID, Domain: r.Domain, Vault: vaultName(c, r.Domain),

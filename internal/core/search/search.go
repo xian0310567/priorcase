@@ -224,6 +224,99 @@ type Options struct {
 	// 실제 주입 블록 879개). 규칙 2줄을 더하면 줄은 2개 늘지만 규칙 요약은 한 줄
 	// 규약이라 늘어나는 글자가 200자 안쪽이다. 그 값으로 교차 프로젝트 전이를 산다.
 	RuleLimit int
+
+	// MaxKeywords 는 쓸 질의어 수의 상한이다. 0 이면 무제한.
+	//
+	// **프롬프트에는 필요 없고 발췌에는 필요하다.** 사람이 치는 프롬프트는 길어야
+	// 낱말 수십 개인데, `Similar` 가 받는 것은 대화 구간 전체다 — 실측(2026-08-31)
+	// 으로 발췌 14,154자에서 키워드 **785개**가 나왔고, scoreAll 이 노트 558건 ×
+	// 785 낱말로 돌아 `prior queue` 하나가 **32초**를 먹었다(앱 상한은 10초라
+	// 화면이 통째로 오류로 찼다).
+	//
+	// 자를 때는 **긴 낱말부터 남긴다.** 긴 토큰이 더 구체적이라는 것은 이 코드가
+	// 이미 쓰는 어림이다(realvault_test 의 tailQuery 가 "긴 낱말 3개"를 뽑는다).
+	// 짧은 것부터 버려도 되는 이유는 그쪽이 대화체 잔재이기 때문이다.
+	MaxKeywords int
+
+	// Corpus 는 미리 읽어 둔 볼트다. 주면 볼트를 다시 안 읽는다 (LoadCorpus 의 §).
+	Corpus *Corpus
+}
+
+// ── 같은 볼트로 여러 번 부를 때 ────────────────────────────────────────
+//
+// **Recall 은 부를 때마다 볼트 전체를 디스크에서 다시 읽는다.** 훅에서는 그게
+// 맞다 — 프롬프트 하나에 한 번이고, 매번 최신을 봐야 한다.
+//
+// 그런데 **노트마다 Recall 을 부르는 자리**가 있다. `retro.Due` 가 "이 결정이
+// 기록되던 순간의 편승 회수" 를 재현하려고 전건을 돈다. 그러면 비용이 노트 수의
+// 제곱이 된다:
+//
+//	결정 156건 → prior queue 2.6초   (2026-08-14 실측)
+//	결정 558건 → prior queue  32초   (2026-08-31 실측)
+//
+// (558/156)² × 2.6 = 33초. 정확히 제곱이다. 앱의 읽기 상한이 10초라 그 순간
+// 화면이 통째로 "prior 가 너무 오래 걸린다" 로 찼다 — **기능이 늘어서가 아니라
+// 볼트가 자라서** 죽었고, 그래서 아무 변경 없이 어느 날 갑자기 그렇게 된다.
+//
+// 미리 읽어 두고 넘기면 제곱이 선형이 된다. 신선도를 잃는 대가는 **부르는 쪽이
+// 진다** — 한 번의 큐 계산 안에서 볼트가 바뀌는 것은 어차피 일관되게 못 다룬다.
+
+// prepared 는 점수 계산이 쓰는 모양으로 미리 접어 둔 노트다.
+//
+// **head 와 body 의 소문자 변환이 비싸다.** scoreAll 은 부를 때마다
+// `strings.ToLower(string(n.Body))` 를 노트마다 새로 만드는데, 본문이 평균 몇 KB 라
+// 한 번의 Recall 이 볼트 크기만큼 할당한다. `retro.Due` 처럼 노트마다 Recall 을
+// 부르는 자리에서는 그것이 **노트 수의 제곱**만큼 반복된다 (Corpus 의 §).
+type prepared struct {
+	note    store.Note
+	head    string
+	body    string
+	headLen int
+}
+
+func prepare(notes []store.Note, marker string) []prepared {
+	out := make([]prepared, 0, len(notes))
+	for _, n := range notes {
+		h := headText(n, marker)
+		out = append(out, prepared{
+			note: n, head: h, body: strings.ToLower(string(n.Body)),
+			headLen: len([]rune(h)),
+		})
+	}
+	return out
+}
+
+// Corpus 는 한 번 읽어 여러 Recall 이 나눠 쓰는 볼트다.
+type Corpus struct {
+	Notes   []store.Note
+	Refs    []store.Note
+	Rules   []store.Note
+	Syn     Synonyms
+	Skipped []store.SkippedNote
+
+	// 접어 둔 판. Recall 이 이걸 쓰면 소문자 변환이 볼트당 한 번이 된다.
+	pNotes, pRefs, pRules []prepared
+	marker                string
+}
+
+// LoadCorpus 는 볼트를 한 번 읽는다. 참고·규칙까지 읽으므로 그것을 쓰는 호출에도
+// 그대로 넘길 수 있다.
+func LoadCorpus(l *store.Layout) (*Corpus, error) {
+	notes, skipped, err := l.List()
+	if err != nil {
+		return nil, err
+	}
+	cp := &Corpus{Notes: notes, Skipped: skipped, Syn: LoadSynonyms(l), marker: l.DecisionMarker()}
+	if refs, rs, rerr := l.ListReferences(); rerr == nil {
+		cp.Refs, cp.Skipped = refs, append(cp.Skipped, rs...)
+	}
+	if rules, rs, rerr := l.ListRules(); rerr == nil {
+		cp.Rules, cp.Skipped = rules, append(cp.Skipped, rs...)
+	}
+	cp.pNotes = prepare(cp.Notes, cp.marker)
+	cp.pRefs = prepare(cp.Refs, cp.marker)
+	cp.pRules = prepare(cp.Rules, cp.marker)
+	return cp, nil
 }
 
 // Recall 은 프롬프트에 관련된 결정을 점수순으로 주고, 회수 대상에서 아예 빠진
@@ -243,28 +336,55 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 		return nil, nil, nil
 	}
 	// **대화체 판정은 원문 토큰으로 한다** (PromptTokens 의 §).
+	// 상한을 걸기 **전**에 센다 — 자른 뒤에 세면 긴 발췌가 "골라 넣은 질의" 로
+	// 오판되고, 그 오판이 게이트를 풀어 버린다 (PromptTokens 의 §).
 	nTokens := PromptTokens(prompt)
-	notes, skipped, err := l.List()
-	if err != nil {
-		return nil, nil, err
+	if o.MaxKeywords > 0 && len(keywords) > o.MaxKeywords {
+		keywords = longestKeywords(keywords, o.MaxKeywords)
 	}
-	var refs []store.Note
-	if o.IncludeReferences && o.ReferenceLimit > 0 {
-		r, rskipped, rerr := l.ListReferences()
-		if rerr != nil {
-			return nil, nil, rerr
+	var (
+		skipped               []store.SkippedNote
+		pNotes, pRefs, pRules []prepared
+	)
+	// 미리 읽어 둔 볼트가 있으면 그것을 쓴다 (Corpus 의 §).
+	if o.Corpus != nil {
+		skipped = o.Corpus.Skipped
+		pNotes = o.Corpus.pNotes
+		if o.IncludeReferences && o.ReferenceLimit > 0 {
+			pRefs = o.Corpus.pRefs
 		}
-		refs = r
-		skipped = append(skipped, rskipped...)
-	}
-	var rules []store.Note
-	if o.RuleLimit > 0 {
-		ru, ruskipped, ruerr := l.ListRules()
-		if ruerr != nil {
-			return nil, nil, ruerr
+		if o.RuleLimit > 0 {
+			pRules = o.Corpus.pRules
 		}
-		rules = ru
-		skipped = append(skipped, ruskipped...)
+	} else {
+		// **표식은 head 에서 파일명 메타데이터를 떼는 데 쓴다** (headText 의 §).
+		// nil Layout 에서 scoreAll 을 직접 부르는 테스트가 있으므로 빈 값도 유효하다.
+		marker := ""
+		if l != nil {
+			marker = l.DecisionMarker()
+		}
+		notes, sk, err := l.List()
+		if err != nil {
+			return nil, nil, err
+		}
+		skipped = sk
+		pNotes = prepare(notes, marker)
+		if o.IncludeReferences && o.ReferenceLimit > 0 {
+			r, rskipped, rerr := l.ListReferences()
+			if rerr != nil {
+				return nil, nil, rerr
+			}
+			pRefs = prepare(r, marker)
+			skipped = append(skipped, rskipped...)
+		}
+		if o.RuleLimit > 0 {
+			ru, ruskipped, ruerr := l.ListRules()
+			if ruerr != nil {
+				return nil, nil, ruerr
+			}
+			pRules = prepare(ru, marker)
+			skipped = append(skipped, ruskipped...)
+		}
 	}
 
 	// **선언된 경로로 걸렸을 때만 cwd 가점을 준다** (DomainForCwdDeclared 의 §).
@@ -278,16 +398,14 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	// **도메인 언급 판정에는 동의어를 쓰지 않는다.** 도메인 접두어는 뜻이 있는
 	// 낱말이 아니라 이름이고, 이름에 동의어를 붙이면 +6 이 엉뚱한 도메인 전체에
 	// 걸린다 — weightMention 이 가장 센 가중치라 피해가 가장 크다.
-	syn := LoadSynonyms(l)
-
-	// **표식은 head 에서 파일명 메타데이터를 떼는 데 쓴다** (headText 의 §).
-	// nil Layout 에서 scoreAll 을 직접 부르는 테스트가 있으므로 빈 값도 유효하다.
-	marker := ""
-	if l != nil {
-		marker = l.DecisionMarker()
+	syn := Synonyms{}
+	if o.Corpus != nil {
+		syn = o.Corpus.Syn
+	} else {
+		syn = LoadSynonyms(l)
 	}
 
-	hits := scoreAll(notes, keywords, nTokens, cwdDomain, mentioned, syn, marker)
+	hits := scoreAll(pNotes, keywords, nTokens, cwdDomain, mentioned, syn)
 
 	if !o.CrossProject && cwdDomain != "" {
 		scoped := filterByDomain(hits, cwdDomain)
@@ -304,21 +422,39 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	//
 	// 규칙에는 cwd·언급 가점이 붙지 않는다 — 도메인이 없기 때문이다(ListRules 의 §).
 	// 그래서 순수하게 낱말이 겹치는 정도로만 뽑힌다.
-	if len(rules) > 0 {
+	if len(pRules) > 0 {
 		ro := o
 		ro.Limit = o.RuleLimit
-		hits = append(trim(scoreAll(rules, keywords, nTokens, cwdDomain, mentioned, syn, marker), ro), hits...)
+		hits = append(trim(scoreAll(pRules, keywords, nTokens, cwdDomain, mentioned, syn), ro), hits...)
 	}
 
 	// **참고는 자기 자리에서 자른다.** 결정과 섞어 자르면 밀어낸다 (§ ReferenceLimit).
 	// 결정을 참고보다 앞에 둔다 — 확정된 것이 먼저다.
-	if len(refs) > 0 {
+	if len(pRefs) > 0 {
 		ro := o
 		ro.Limit = o.ReferenceLimit
-		rhits := trim(scoreAll(refs, keywords, nTokens, cwdDomain, mentioned, syn, marker), ro)
+		rhits := trim(scoreAll(pRefs, keywords, nTokens, cwdDomain, mentioned, syn), ro)
 		hits = append(hits, rhits...)
 	}
 	return hits, skipped, nil
+}
+
+// longestKeywords 는 긴 낱말부터 n 개를 남긴다 (Options.MaxKeywords 의 §).
+//
+// 결과는 다시 바이트순으로 세운다 — 자르는 순서가 결과 순서에 새어 나가면 같은
+// 질의가 호출마다 다른 것을 낼 수 있다.
+func longestKeywords(ks []string, n int) []string {
+	out := append([]string(nil), ks...)
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := len([]rune(out[i])), len([]rune(out[j]))
+		if li != lj {
+			return li > lj
+		}
+		return out[i] < out[j]
+	})
+	out = out[:n]
+	sort.Strings(out)
+	return out
 }
 
 func mentionedDomains(c *config.Config, keywords []string) map[string]bool {
@@ -623,12 +759,19 @@ type noteScan struct {
 // Matches 를 내보내는 것과 같은 이유다.
 func Head(n store.Note, marker string) string { return headText(n, marker) }
 
-func scoreAll(notes []store.Note, keywords []string, nTokens int, cwdDomain string, mentioned map[string]bool, syn Synonyms, marker string) []Hit {
+func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string, mentioned map[string]bool, syn Synonyms) []Hit {
 	// ── 1차: 히트를 기록하면서 문서빈도를 센다 ──────────────────────
+	// **형제 낱말은 질의어마다 한 번만 푼다** (hitsSiblings 의 §).
+	sibs := make([][]string, len(keywords))
+	for i, k := range keywords {
+		sibs[i] = syn.siblings(k)
+	}
+
 	scans := make([]noteScan, 0, len(notes))
 	df := make([]int, len(keywords))
 	pool := 0
-	for _, n := range notes {
+	for _, pn := range notes {
+		n := pn.note
 		// **철회된 노트는 아예 안 본다.**
 		//
 		// 이 시스템에는 "잘못 기록된 노트를 걷어낼 경로" 가 없었다. regretted 를
@@ -650,11 +793,10 @@ func scoreAll(notes []store.Note, keywords []string, nTokens int, cwdDomain stri
 		// 드문 낱말일수록 분모가 작아져 비율이 뒤집힌다.
 		pool++
 
-		// head 는 파일명 메타데이터를 뺀 것이다 (headText 의 §).
-		head := headText(n, marker)
-		body := strings.ToLower(string(n.Body))
+		// head·body 는 미리 접어 둔 것을 쓴다 (prepared 의 §).
+		head, body := pn.head, pn.body
 
-		sc := noteScan{note: n, headLen: len([]rune(head)), headHit: make([]bool, len(keywords))}
+		sc := noteScan{note: n, headLen: pn.headLen, headHit: make([]bool, len(keywords))}
 		for i, k := range keywords {
 			// **정확히 맞은 것이 우선이고, 한 질의어는 한 번만 센다.**
 			// 형제까지 따로 세면 표를 크게 쓴 낱말이 점수를 독식한다 (synonym.go).
@@ -663,15 +805,26 @@ func scoreAll(notes []store.Note, keywords []string, nTokens int, cwdDomain stri
 				sc.headHit[i] = true
 				sc.headHits++
 				df[i]++
-			case syn.hits(head, k):
+			case hitsSiblings(head, sibs[i]):
 				sc.synHits++
-			}
-			if matches(body, k) {
-				sc.bodyHits++
 			}
 		}
 		if sc.headHits+sc.synHits == 0 {
 			continue // head 히트가 없으면 어떤 게이트도 못 넘는다 — 들고 있을 이유가 없다
+		}
+		// **본문은 살아남은 노트에서만 훑는다.**
+		//
+		// 예전에는 위 루프 안에서 head 와 같이 봤는데, 바로 다음 줄이 head 히트
+		// 0인 노트를 통째로 버리므로 **그 노트들의 본문 훑기가 전부 버려졌다.**
+		// 살아남는 것은 대개 볼트의 몇 %라 그만큼이 낭비다.
+		//
+		// 실측(2026-08-31, 결정 558건 · 본문 합계 1.7MB): `prior queue` 가
+		// 16.6초 → 13.0초. 점수는 한 점도 안 바뀐다 — 버릴 노트의 bodyHits 는
+		// 어차피 아무 데도 안 쓰였다.
+		for _, k := range keywords {
+			if matches(body, k) {
+				sc.bodyHits++
+			}
 		}
 		scans = append(scans, sc)
 	}

@@ -12,7 +12,7 @@ import {
 import { renderHosts } from "./render/hosts";
 import { renderVaults } from "./render/vaults";
 import { renderHealth } from "./render/health";
-import { renderError, renderWarnings } from "./render/shell";
+import { el, renderError, renderWarnings } from "./render/shell";
 import { backlogLine } from "./format";
 
 // 앱은 **설정 콘솔**이다 (2026-08-14 전환).
@@ -56,6 +56,9 @@ const POLL_MS = 60_000;
 
 function start(app: HTMLElement): void {
   let tab: Tab = "hosts";
+  // 마지막으로 읽은 큐. 폴링마다 "읽는 중" 으로 되돌아가지 않게 들고 있는다.
+  let lastQ: Queue | null = null;
+  let queueErr: CmdError | null = null;
 
   function shell(): { tabs: HTMLElement; banner: HTMLElement; body: HTMLElement } {
     app.replaceChildren();
@@ -68,7 +71,7 @@ function start(app: HTMLElement): void {
     return { tabs, banner, body };
   }
 
-  function draw(q: Queue, s: Settings): void {
+  function draw(q: Queue | null, s: Settings): void {
     const { tabs, banner, body } = shell();
 
     for (const t of TABS) {
@@ -83,7 +86,7 @@ function start(app: HTMLElement): void {
     }
 
     // 두 곳의 경고를 합친다 — 사람은 어느 명령이 낸 것인지 모르고 알 필요도 없다.
-    renderWarnings(banner, [...(q.warnings ?? []), ...(s.warnings ?? [])]);
+    renderWarnings(banner, [...(q?.warnings ?? []), ...(s.warnings ?? [])]);
 
     const act = async (fn: () => Promise<void>): Promise<void> => {
       try {
@@ -111,22 +114,60 @@ function start(app: HTMLElement): void {
         });
         break;
       case "health":
-        renderHealth(body, q.health, backlogLine(q.confirm.length, q.retro.length));
+        // **큐가 아직 안 왔으면 기다린다고 말한다.** 이 탭만 큐가 필요하다.
+        if (queueErr) {
+          renderError(body, queueErr);
+        } else if (q) {
+          renderHealth(body, q.health, backlogLine(q.confirm.length, q.retro.length));
+        } else {
+          body.replaceChildren(el("p", "empty", "상태를 읽는 중이다…"));
+        }
         break;
     }
   }
 
+  /** refresh 는 **빠른 것부터 그린다.**
+   *
+   * # 왜 갈랐나
+   *
+   * 예전에는 `Promise.all([fetchQueue(), fetchSettings()])` 로 둘을 같이 기다렸다.
+   * 그런데 둘의 비용이 두 자릿수 배로 다르다 (2026-09-01 실측, 결정 560건):
+   *
+   *   prior settings --json   0.056초   ← 호스트·볼트 탭이 쓰는 전부
+   *   prior queue    --json   6.3초     ← 상태 탭과 트레이 배지만 쓴다
+   *
+   * 그래서 호스트 탭만 보려 해도 6.3초를 기다렸다. 게다가 queue 비용은 **볼트
+   * 크기에 비례해서 자란다** — 오늘 31.8초에서 6.3초로 줄였지만 다시 자란다.
+   * 빠른 쪽에 느린 쪽을 묶어 두면 그 성장이 앱 전체의 체감이 된다.
+   *
+   * # 실패는 여전히 가른다
+   *
+   * 옛 주석의 걱정("설정이 안 읽히는데 상태만 그리면 사람은 앱이 멀쩡한 줄
+   * 안다")은 그대로 지킨다 — **설정이 실패하면 화면 전체가 오류다.** 앱의
+   * 알맹이가 그것이기 때문이다. 큐만 실패하면 상태 탭에서만 말한다.
+   */
   async function refresh(): Promise<void> {
+    let s: Settings;
     try {
-      // **둘을 같이 읽는다.** 하나만 실패해도 화면 전체가 오류다 — 설정이 안
-      // 읽히는데 상태만 그리면 사람은 앱이 멀쩡한 줄 안다.
-      const [q, s] = await Promise.all([fetchQueue(), fetchSettings()]);
-      await invoke("set_tray_title", { title: badgeText(q) });
-      draw(q, s);
+      s = await fetchSettings();
     } catch (e) {
       const { body } = shell();
       renderError(body, e as CmdError);
+      return;
     }
+    // 아는 것으로 먼저 그린다. 두 번째 폴링부터는 lastQ 가 차 있어서
+    // "읽는 중" 으로 되돌아가지 않는다.
+    draw(lastQ, s);
+
+    try {
+      const q = await fetchQueue();
+      lastQ = q;
+      queueErr = null;
+      await invoke("set_tray_title", { title: badgeText(q) });
+    } catch (e) {
+      queueErr = e as CmdError;
+    }
+    draw(lastQ, s);
   }
 
   void refresh();
