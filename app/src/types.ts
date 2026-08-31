@@ -40,6 +40,9 @@ export interface VaultInfo {
   decisions: number;
   /** 이 볼트를 쓰는 도메인 접두어들. 항상 배열이지만 빌 수 있다. */
   domains: string[];
+  /** 동기화할 git origin. **빈 문자열은 고장이 아니다** — 이 머신에만 있는
+   * 볼트라는 뜻이다. 개인 볼트는 리모트가 없어도 되고, 회사 볼트는 있어야 한다. */
+  remote: string;
 }
 
 export interface DomainInfo {

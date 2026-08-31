@@ -64,6 +64,14 @@ export async function addVault(name: string): Promise<void> {
   await call<void>("add_vault", { name });
 }
 
+/** setVaultRemote 는 볼트가 동기화할 git 리모트를 정한다.
+ *
+ * 그 자리가 git 저장소가 아니면 CLI 가 만들어 준다 — 앱만 받은 사람이
+ * 터미널을 열지 않아도 되게 하는 것이 이 기능의 요점이다. */
+export async function setVaultRemote(name: string, url: string): Promise<void> {
+  await call<void>("set_vault_remote", { name, url });
+}
+
 /** bindDomain 은 프로젝트가 쓸 볼트를 정한다.
  *
  * vault 가 빈 문자열이면 **기본 볼트로 되돌린다** — Rust 쪽이 그때 인자를

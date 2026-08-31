@@ -331,3 +331,54 @@ func CommitMessage(now time.Time) string {
 	}
 	return fmt.Sprintf("sync(%s): %s", h, now.Format("2006-01-02 15:04"))
 }
+
+// ── 리모트 설정 ────────────────────────────────────────────────────────
+//
+// **이 패키지는 지금까지 리모트를 읽기만 했다** (precheck 의 `git remote`).
+// 그래서 볼트를 새로 만들면 사람이 터미널에서 `git init` 과 `git remote add` 를
+// 직접 쳐야 했고, 그건 앱만 받은 사람에게는 막힌 길이다.
+//
+// 볼트를 개인·회사로 가르기로 하면서(코드주권 결정 2026-08-31) 이게 진짜 문제가
+// 됐다 — 회사 볼트는 **만들자마자 회사 리모트에 붙어야** 그 결정이 개인 머신에만
+// 남지 않는다. 사업주 요구도 같다: "리모트는 앱에서 설정할 수 있어야 해."
+
+// Remote 는 볼트의 origin URL 이다. 없으면 빈 문자열.
+func Remote(vault string) (string, error) {
+	out, err := run(vault, 0, "remote", "get-url", "origin")
+	if err != nil {
+		// 리모트가 없는 것은 고장이 아니다 — 아직 안 붙인 볼트다.
+		if strings.Contains(out, "No such remote") || strings.Contains(out, "no such remote") {
+			return "", nil
+		}
+		return "", nil
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// SetRemote 는 볼트의 origin 을 정한다. 없으면 만들고 있으면 바꾼다.
+//
+// **git 저장소가 아니면 만들어 준다.** 앱에서 볼트를 추가한 사람에게 "먼저
+// git init 을 치세요" 라고 말하는 것은 그 사람이 할 수 없는 일을 시키는 것이다.
+//
+// URL 은 검증하지 않는다 — CodeCommit·GitHub·사내 GitLab 이 전부 모양이 다르고,
+// 우리가 아는 모양만 받으면 멀쩡한 주소를 거절한다. 틀린 주소는 첫 push 에서
+// 드러나고 그때는 `prior doctor` 의 동기화 검사가 말한다.
+func SetRemote(vault, url string) error {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return fmt.Errorf("리모트 URL 이 비었다")
+	}
+	if _, err := run(vault, 0, "rev-parse", "--git-dir"); err != nil {
+		if out, ierr := run(vault, 0, "init"); ierr != nil {
+			return fmt.Errorf("git 저장소를 만들 수 없다: %w (%s)", ierr, strings.TrimSpace(out))
+		}
+	}
+	// set-url 이 먼저다 — 이미 있는데 add 하면 "remote origin already exists" 로 죽는다.
+	if _, err := run(vault, 0, "remote", "set-url", "origin", url); err == nil {
+		return nil
+	}
+	if out, err := run(vault, 0, "remote", "add", "origin", url); err != nil {
+		return fmt.Errorf("리모트를 붙일 수 없다: %w (%s)", err, strings.TrimSpace(out))
+	}
+	return nil
+}

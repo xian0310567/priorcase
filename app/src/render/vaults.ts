@@ -6,6 +6,7 @@ export interface VaultActions {
   open: (name: string) => void;
   add: (name: string) => void;
   bind: (prefix: string, vault: string) => void;
+  remote: (name: string, url: string) => void;
 }
 
 /** DEFAULT_VAULT 는 Go 쪽 config.DefaultVaultName 과 같아야 한다.
@@ -45,6 +46,7 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
     openBtn.disabled = !v.exists;
     openBtn.addEventListener("click", () => on.open(v.name));
     row.append(openBtn);
+    row.append(remoteField(v, on));
     root.append(row);
   }
 
@@ -87,6 +89,53 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
     row.append(sel, el("span", "domain-folder", d.folder));
     root.append(row);
   }
+}
+
+/** remoteField 는 그 볼트가 동기화할 git 주소를 정하는 자리다.
+ *
+ * # 왜 볼트 줄 안에 있나
+ *
+ * 리모트는 **볼트마다 다르다** — 개인 볼트는 없어도 되고 회사 볼트는 회사
+ * 인프라를 가리켜야 한다. 따로 화면을 두면 "어느 볼트 얘기인가" 가 사라지고,
+ * 그 순간 회사 결정을 개인 리모트에 밀어 넣는 사고가 가능해진다.
+ *
+ * # 빈 값은 고장이 아니다
+ *
+ * 리모트가 없으면 그 볼트는 이 머신에만 있다. 정상 상태이므로 경고로 그리지
+ * 않는다 — 개인 볼트는 그게 기본이다.
+ *
+ * 저장은 **버튼을 눌러야** 일어난다. 입력할 때마다 부르면 주소를 치는 도중의
+ * 반쪽짜리 문자열이 origin 에 박힌다. */
+function remoteField(
+  v: { name: string; remote: string; exists: boolean },
+  on: VaultActions,
+): HTMLElement {
+  const box = el("div", "vault-remote");
+  box.append(el("label", "vault-remote-label", "git 리모트"));
+
+  const input = document.createElement("input");
+  input.className = "vault-remote-input";
+  input.type = "text";
+  input.value = v.remote ?? "";
+  input.placeholder = "없음 — 이 머신에만 있다";
+  input.spellcheck = false;
+  // 자리가 없는 볼트에는 리모트를 못 붙인다. 눌러도 아무 일이 안 나는 것보다
+  // 처음부터 못 누르게 하는 편이 낫다 (열기 버튼과 같은 규칙).
+  input.disabled = !v.exists;
+
+  const save = document.createElement("button");
+  save.className = "btn";
+  save.textContent = "저장";
+  const sync = () => {
+    const next = input.value.trim();
+    save.disabled = !v.exists || next === "" || next === (v.remote ?? "");
+  };
+  input.addEventListener("input", sync);
+  save.addEventListener("click", () => on.remote(v.name, input.value.trim()));
+  sync();
+
+  box.append(input, save);
+  return box;
 }
 
 /** addVaultForm 은 볼트를 만드는 자리다.

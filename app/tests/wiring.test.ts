@@ -19,8 +19,8 @@ const SETTINGS: Settings = {
   config_path: "/home/x/.config/priorcase/config.toml",
   vault_parent: "/v",
   vaults: [
-    { name: "default", path: "/v/기본 볼트", exists: true, decisions: 12, domains: ["proj"] },
-    { name: "work", path: "/v/work", exists: false, decisions: 0, domains: [] },
+    { name: "default", path: "/v/기본 볼트", exists: true, decisions: 12, domains: ["proj"], remote: "" },
+    { name: "work", path: "/v/work", exists: false, decisions: 0, domains: [], remote: "" },
   ],
   domains: [
     { prefix: "proj", folder: "proj", vault: "", paths: ["/p"], repos: [] },

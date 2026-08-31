@@ -112,6 +112,25 @@ pub fn add_vault(name: String) -> Result<(), CmdError> {
         .map_err(to_cmd_error)
 }
 
+/// set_vault_remote 는 볼트가 동기화할 git 리모트를 정한다.
+///
+/// **앱만 받은 사람에게는 이것이 유일한 문이다.** 터미널에서 `git remote add` 를
+/// 치라고 할 수 없고, 회사 볼트는 만들자마자 회사 리모트에 붙어야 그 결정이
+/// 개인 머신에만 남지 않는다.
+///
+/// URL 검증은 안 한다 — CodeCommit·GitHub·사내 GitLab 이 전부 모양이 달라서,
+/// 우리가 아는 모양만 받으면 멀쩡한 주소를 거절한다 (CLI 쪽 §).
+#[tauri::command]
+pub fn set_vault_remote(name: String, url: String) -> Result<(), CmdError> {
+    run(
+        &prior_bin(),
+        &["vault", "remote", &name, &url],
+        WRITE_TIMEOUT,
+    )
+    .map(|_| ())
+    .map_err(to_cmd_error)
+}
+
 /// bind_domain 은 프로젝트가 쓸 볼트를 정한다. vault 가 비면 기본 볼트로 되돌린다.
 #[tauri::command]
 pub fn bind_domain(prefix: String, vault: String) -> Result<(), CmdError> {

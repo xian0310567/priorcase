@@ -11,6 +11,7 @@ import (
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/split"
 	"github.com/xian0310567/priorcase/internal/core/store"
+	"github.com/xian0310567/priorcase/internal/core/sync"
 	"github.com/xian0310567/priorcase/internal/transcript/hosts"
 )
 
@@ -52,6 +53,9 @@ type vaultOut struct {
 	Exists    bool     `json:"exists"`
 	Decisions int      `json:"decisions"`
 	Domains   []string `json:"domains"`
+	// Remote 는 이 볼트가 동기화할 git origin 이다. 빈 값은 **이 머신에만 있다**
+	// 는 뜻이고 고장이 아니다 — 앱이 그 상태를 빨갛게 그리면 안 된다.
+	Remote string `json:"remote"`
 }
 
 type domainOut struct {
@@ -183,6 +187,8 @@ func collectSettings(cmd *cobra.Command) (settingsOut, error) {
 			// 접두어가 나오고, 그러면 VaultFor 가 **기본 볼트로 떨어뜨린다** —
 			// 방금 만든 빈 볼트가 기본 볼트의 결정 수를 그대로 달고 나왔다.
 			// 사람은 그걸 보고 "이미 옮겨졌다" 로 읽는다.
+			// 리모트를 못 읽는 것은 고장이 아니다 (sync.Remote 의 §).
+			vo.Remote, _ = sync.Remote(v.Path)
 			if notes, skipped, nerr := store.NewLayoutFor(c, v).List(); nerr == nil {
 				vo.Decisions = len(notes)
 				if len(skipped) > 0 {
@@ -342,8 +348,53 @@ func newVaultCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(add, list)
+	cmd.AddCommand(add, list, newVaultRemoteCmd())
 	return cmd
+}
+
+// newVaultRemoteCmd 는 볼트의 git 리모트를 보고 정한다.
+//
+// **앱이 이걸 부른다.** 앱만 받은 사람에게 "터미널에서 git remote add 를 치세요"
+// 라고 할 수는 없다 — 회사 볼트는 만들자마자 회사 리모트에 붙어야 그 결정이
+// 개인 머신에만 남지 않는다 (sync.SetRemote 의 §).
+func newVaultRemoteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remote <볼트> [URL]",
+		Short: "볼트가 동기화할 git 리모트를 보고 정한다 (URL 을 비우면 지금 값만 낸다)",
+		Long: "URL 을 주면 origin 을 그 주소로 정한다. 그 자리가 git 저장소가 아니면 만들어 준다.\n\n" +
+			"URL 을 비우면 지금 붙어 있는 origin 을 낸다.",
+		Args:          cobra.RangeArgs(1, 2),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, _, err := loadFrom(cmd)
+			if err != nil {
+				return err
+			}
+			v, err := c.VaultNamed(args[0])
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(args) == 1 {
+				url, rerr := sync.Remote(v.Path)
+				if rerr != nil {
+					return rerr
+				}
+				if url == "" {
+					fmt.Fprintf(out, "볼트 %s 에 리모트가 없다 — 이 볼트는 이 머신에만 있다\n", v.Name)
+					return nil
+				}
+				fmt.Fprintf(out, "%s\n", url)
+				return nil
+			}
+			if err := sync.SetRemote(v.Path, args[1]); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "볼트 %s → %s\n", v.Name, args[1])
+			return nil
+		},
+	}
 }
 
 func newDomainCmd() *cobra.Command {

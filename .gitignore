@@ -15,3 +15,8 @@ dist/
 /app/node_modules/
 /app/dist/
 /app/src-tauri/target/
+
+# 앱 빌드 산출물
+app/node_modules/
+app/dist/
+app/src-tauri/target/

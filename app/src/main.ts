@@ -7,6 +7,7 @@ import {
   addVault,
   bindDomain,
   openVault,
+  setVaultRemote,
 } from "./api";
 import { renderHosts } from "./render/hosts";
 import { renderVaults } from "./render/vaults";
@@ -106,6 +107,7 @@ function start(app: HTMLElement): void {
           open: (name) => void act(() => openVault(name)),
           add: (name) => void act(() => addVault(name)),
           bind: (prefix, vault) => void act(() => bindDomain(prefix, vault)),
+          remote: (name, url) => void act(() => setVaultRemote(name, url)),
         });
         break;
       case "health":

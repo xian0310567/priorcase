@@ -41,6 +41,12 @@ input, select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px
 .vault-name { font-weight: 600; }
 .vault-state { color: #666; font-size: 11px; font-variant-numeric: tabular-nums; }
 .vault-path { grid-column: 1 / 3; font-size: 10px; color: #888; word-break: break-all; }
+/* 리모트는 볼트 줄 전체를 쓴다 — 주소가 길어서 다른 칸과 나눠 쓰면 다 잘린다. */
+.vault-remote { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; margin-top: 4px; }
+.vault-remote-label { font-size: 10px; color: #888; white-space: nowrap; }
+.vault-remote-input { font-size: 11px; padding: 3px 6px; border: 1px solid #0002; border-radius: 4px; min-width: 0; }
+.vault-remote-input:disabled { background: #0000000a; color: #999; }
+
 .vault-add { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 10px; }
 /* 어디에 생기는지 — 경로를 안 물어봤으므로 이 줄이 그 답이다. */
 .vault-add-where { grid-column: 1 / -1; font-size: 10px; color: #888; word-break: break-all; min-height: 1em; }

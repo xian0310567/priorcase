@@ -69,6 +69,7 @@ const noop = {
   open: () => {},
   add: () => {},
   bind: () => {},
+      remote: () => {},
 };
 
 describe.skipIf(!fresh)("진짜 데이터로 화면을 그린다", () => {

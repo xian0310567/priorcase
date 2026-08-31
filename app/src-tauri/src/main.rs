@@ -66,6 +66,7 @@ fn main() {
             commands::set_host,
             commands::add_vault,
             commands::bind_domain,
+            commands::set_vault_remote,
             commands::open_vault,
             commands::set_tray_title,
         ])

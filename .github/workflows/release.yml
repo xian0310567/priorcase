@@ -35,6 +35,85 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  # ── 데스크탑 앱 ───────────────────────────────────────────────────────
+  #
+  # **CLI 릴리스와 따로 돈다.** 앱은 CLI 위의 얇은 설정 콘솔이라 갱신 주기가 다르고
+  # (무거운 로직은 전부 prior 에 있다), 앱 빌드가 깨져도 npm 배포는 나가야 한다.
+  #
+  # 사내가 윈도우·맥 혼용이라 둘 다 만든다 — 기획자는 윈도우, 개발자는 맥이다.
+  # **runner 가 곧 타깃이다**: Tauri 는 크로스컴파일을 안 하므로 macOS 산출물은
+  # macOS 러너에서, 윈도우 산출물은 윈도우 러너에서만 나온다.
+  #
+  # 지금은 **아티팩트로만 남긴다.** 배포 자리(회사 CodeCommit·드라이브 등)가 아직
+  # 안 정해졌고, 정해지기 전에 어딘가로 올리면 그 자리가 기본값이 되어 굳는다.
+  app:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Rust 빌드가 이 워크플로에서 가장 느리다. 타깃별로 캐시를 가른다 —
+      # 안 가르면 arm64 와 x64 가 서로의 캐시를 무효화한다.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: ${{ matrix.target }}
+
+      - run: pnpm install --frozen-lockfile
+      # **프런트 검사를 먼저 건다.** Rust 빌드가 몇 분이라, 타입 오류로 그걸 다
+      # 태우고 나서 실패하면 되돌아오는 데만 두 배가 든다.
+      - run: pnpm test
+      - run: pnpm build
+
+      # 앱 판을 태그에 맞춘다. 안 맞추면 설치 화면이 tauri.conf.json 에 박힌 옛
+      # 숫자를 그대로 보여 주고, 사람은 그걸 받은 판이라고 읽는다.
+      #
+      # heredoc 을 안 쓴다 — YAML 블록 스칼라 안에서 종료자의 들여쓰기가 조용히
+      # 어긋나면 스크립트가 통째로 안 끝난다. node 는 이 잡에 이미 있다.
+      - name: 앱 판을 태그에 맞춘다
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/set-app-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: 앱 빌드
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: priorcase-app-${{ matrix.label }}
+          # dmg(맥)·exe(윈도우 NSIS) 둘 다 집는다. 경로가 타깃마다 달라 넓게 잡고,
+          # if-no-files-found 로 **조용히 빈 아티팩트가 나오는 것**을 막는다.
+          path: |
+            app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            app/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     needs: test
     runs-on: ubuntu-latest

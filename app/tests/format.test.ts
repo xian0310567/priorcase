@@ -17,6 +17,7 @@ const vault = (o: Partial<VaultInfo>): VaultInfo => ({
   exists: true,
   decisions: 0,
   domains: [],
+  remote: "",
   ...o,
 });
 
