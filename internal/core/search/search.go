@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -241,6 +242,8 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(keywords) == 0 {
 		return nil, nil, nil
 	}
+	// **대화체 판정은 원문 토큰으로 한다** (PromptTokens 의 §).
+	nTokens := PromptTokens(prompt)
 	notes, skipped, err := l.List()
 	if err != nil {
 		return nil, nil, err
@@ -264,9 +267,11 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 		skipped = append(skipped, ruskipped...)
 	}
 
+	// **선언된 경로로 걸렸을 때만 cwd 가점을 준다** (DomainForCwdDeclared 의 §).
+	// 폴백 도메인은 "여기가 어느 프로젝트인지 모른다" 는 뜻이라 가점의 근거가 없다.
 	cwdDomain := ""
 	if o.Cwd != "" {
-		cwdDomain = c.DomainForCwd(o.Cwd)
+		cwdDomain = c.DomainForCwdDeclared(o.Cwd)
 	}
 	mentioned := mentionedDomains(c, keywords)
 
@@ -275,7 +280,14 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	// 걸린다 — weightMention 이 가장 센 가중치라 피해가 가장 크다.
 	syn := LoadSynonyms(l)
 
-	hits := scoreAll(notes, keywords, cwdDomain, mentioned, syn)
+	// **표식은 head 에서 파일명 메타데이터를 떼는 데 쓴다** (headText 의 §).
+	// nil Layout 에서 scoreAll 을 직접 부르는 테스트가 있으므로 빈 값도 유효하다.
+	marker := ""
+	if l != nil {
+		marker = l.DecisionMarker()
+	}
+
+	hits := scoreAll(notes, keywords, nTokens, cwdDomain, mentioned, syn, marker)
 
 	if !o.CrossProject && cwdDomain != "" {
 		scoped := filterByDomain(hits, cwdDomain)
@@ -295,7 +307,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(rules) > 0 {
 		ro := o
 		ro.Limit = o.RuleLimit
-		hits = append(trim(scoreAll(rules, keywords, cwdDomain, mentioned, syn), ro), hits...)
+		hits = append(trim(scoreAll(rules, keywords, nTokens, cwdDomain, mentioned, syn, marker), ro), hits...)
 	}
 
 	// **참고는 자기 자리에서 자른다.** 결정과 섞어 자르면 밀어낸다 (§ ReferenceLimit).
@@ -303,7 +315,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(refs) > 0 {
 		ro := o
 		ro.Limit = o.ReferenceLimit
-		rhits := trim(scoreAll(refs, keywords, cwdDomain, mentioned, syn), ro)
+		rhits := trim(scoreAll(refs, keywords, nTokens, cwdDomain, mentioned, syn, marker), ro)
 		hits = append(hits, rhits...)
 	}
 	return hits, skipped, nil
@@ -322,18 +334,21 @@ func mentionedDomains(c *config.Config, keywords []string) map[string]bool {
 }
 
 // minHeadHits 는 후보로 남기려면 필요한 head 히트 수다. scoreAll 주석에 근거가 있다.
-func minHeadHits(nKeywords int) int {
-	if nKeywords >= conversationalKeywords {
+//
+// **인자는 원문 토큰 수다** (PromptTokens). 키워드 수로 재면 불용어 목록을 고칠
+// 때마다 이 경계가 조용히 움직인다 — 그 사고의 실측은 PromptTokens 의 § 에 있다.
+func minHeadHits(nTokens int) int {
+	if nTokens >= conversationalTokens {
 		return 2
 	}
 	return 1
 }
 
-// conversationalKeywords 는 "이건 골라 넣은 질의가 아니라 대화체다" 로 보는 경계다.
+// conversationalTokens 는 "이건 골라 넣은 질의가 아니라 대화체다" 로 보는 경계다.
 //
-// 실측: 이 세션의 자연어 프롬프트들이 키워드 4·9·11개를 냈고, 사람이 CLI 에 치는
+// 실측: 이 세션의 자연어 프롬프트들이 토큰 4·9·11개를 냈고, 사람이 CLI 에 치는
 // 질의는 2~3개였다. 4를 경계로 두면 둘이 갈린다.
-const conversationalKeywords = 4
+const conversationalTokens = 4
 
 // lengthNorm 은 head 길이에 따른 감점 계수다. **1.0 을 넘지 않는다.**
 //
@@ -421,8 +436,8 @@ const headHitFloor = 1
 // body 히트는 정규화하지 않는다. 본문 길이는 여기서 재는 값이 아니고, 본문은
 // 이미 가중치가 1 이라 순위를 뒤집는 힘이 없다 — 그리고 본문 길이까지 재기
 // 시작하면 "짧게 쓴 결정문이 유리하다" 는 잘못된 유인이 생긴다.
-func headScore(headHits, synHits, headRunes int) int {
-	raw := weightHead*headHits + weightSynonym*synHits
+func headScore(headHits, rareHits, synHits, headRunes int) int {
+	raw := weightHead*headHits + weightRare*rareHits + weightSynonym*synHits
 	if raw == 0 {
 		return 0
 	}
@@ -433,8 +448,186 @@ func headScore(headHits, synHits, headRunes int) int {
 	return s
 }
 
-func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned map[string]bool, syn Synonyms) []Hit {
-	var hits []Hit
+// ── head 에서 파일명 메타데이터를 뺀다 ────────────────────────────────
+//
+// head 는 `stem + summary + contentTags` 인데, **stem 은 내용이 아니라 규약**이다:
+// `{domain}-결정-{slug}-{date}`. 그중 실제 주제어는 `{slug}` 뿐이고 나머지 셋은
+// 전 노트가 공유하는 메타데이터다. 그것들이 head 에 남아 있으면 회수가 오염된다.
+//
+// # 고장의 크기 (2026-08-31 실측, 실볼트 결정 540건)
+//
+// 실제 프롬프트 597개(promptSource=typed)의 키워드로 head 문서빈도를 쟀다:
+//
+//	2026  df 540 (100.0%)   ← 끝의 날짜. **모든 노트**에 head 히트를 만든다
+//	08    df 538 ( 99.6%)   ← 같은 날짜의 월 조각
+//	priorcase df 111 (20.6%) ← 접두어. 그 도메인 노트 수와 정확히 같다
+//	editup    df  65 (12.0%)
+//
+// 날짜를 스친 질의 하나가 **볼트 전건을 후보로 만든다.** minHeadHits=2 게이트는
+// 이때 아무것도 막지 못한다 — 날짜 조각이 첫 히트를 공짜로 주므로 다른 낱말
+// 하나만 우연히 걸리면 통과한다. 게이트가 막으려던 바로 그 우연을 **날짜가
+// 보조금처럼 대준다.**
+//
+// 도메인 접두어는 더 나쁘다. 바로 위 § 이 "도메인은 head 에서 뺀다 — 이중 계산인
+// 데다 질의에 도메인 이름이 스치기만 해도 그 도메인 전 노트가 headHits ≥ 1 이
+// 된다" 고 적어 놓고 **`Meta.Domain` 과 태그에서만 뺐다.** stem 안에 같은 문자열이
+// 그대로 남아 있어서 그 § 이 막으려던 일이 실제로는 계속 일어났다.
+//
+// # 왜 stem 을 통째로 버리지 않는가
+//
+// slug 는 사람이 그 결정을 부르는 이름이라 회수 어휘로 가장 값이 크다. 실제로
+// 정답질의 세트 하나가 slug 로 만들어져 있다(realvault_test.go). 버리는 것은
+// 규약이 만든 부분뿐이다.
+//
+// # 규칙·참고 노트에는 이 규약이 없다
+//
+// 표식(`-결정-`)이 없으면 stem 을 그대로 쓴다. 규칙은 `규칙-…`, 참고는 `00-…`
+// 이라 이 규약의 대상이 아니고, 각자 자기 슬롯에서만 경쟁하므로(RuleLimit·
+// ReferenceLimit) 결정 풀을 오염시키지 않는다.
+
+// stemDate 는 파일명 끝의 `-YYYY-MM-DD` 다. frontmatter 의 date 가 비었거나
+// 파일명과 다를 때를 위한 폴백이다 — 규약을 어긴 파일에서도 날짜는 떼야 한다.
+var stemDate = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
+
+// headText 는 점수 계산이 보는 head 다.
+//
+// **테스트 헬퍼(realvault_test.go 의 headOf)가 이 함수를 그대로 부른다.** 여기서
+// 갈리면 재는 것이 실제 회수와 다른 것이 된다.
+func headText(n store.Note, marker string) string {
+	stem := n.Stem
+	// ① 끝의 날짜. frontmatter 값이 있으면 그것으로 정확히 떼고, 없으면 모양으로 뗀다.
+	if d := strings.TrimSpace(n.Meta.Date); d != "" && strings.HasSuffix(stem, "-"+d) {
+		stem = stem[:len(stem)-len(d)-1]
+	} else {
+		stem = stemDate.ReplaceAllString(stem, "")
+	}
+	// ② 도메인 접두어와 표식. `{domain}-결정-` 을 통째로 떼면 둘 다 사라진다.
+	//
+	// 표식 **앞**을 떼는 것이지 표식을 찾아 지우는 것이 아니다 — slug 안에 "결정"
+	// 이 들어간 노트(`…-결정을-뒤집는다-…`)에서 뒷부분을 잘라먹지 않으려면
+	// 첫 등장만 봐야 하고, i > 0 이어야 접두어가 실제로 있는 것이다.
+	if marker != "" {
+		if i := strings.Index(stem, marker); i > 0 {
+			stem = stem[i+len(marker):]
+		}
+	}
+	return strings.ToLower(strings.Join([]string{
+		stem, n.Meta.Summary,
+		strings.Join(contentTags(n.Meta.Tags), " "),
+	}, " "))
+}
+
+// ── 게이트: 히트의 "수" 가 아니라 낱말의 "희소성" ──────────────────────
+//
+// 옛 게이트는 대화체 질의(낱말 4개 이상)에 head 히트 **2개**를 요구했다. 우연한
+// CJK 부분문자열 매칭을 막으려던 것이고 그 목적에는 맞았는데, **주제를 좁게 다룬
+// 짧은 노트를 같이 죽였다.**
+//
+// # 고장 (2026-08-31 재현)
+//
+// 사용자가 친 문장은 이것이다:
+//
+//	"나 이제 뭐 해야하지?? 지라, 슬랙, 구글챗을 확인해서 찾아봐줘"
+//
+// 볼트에는 셋의 접근 방법이 **각각 다른 노트**로 있다(지라·슬랙·구글챗 orca 결정
+// 3건). 그래서 각 노트는 자기 낱말 하나씩만 맞고, 게이트가 2를 요구하니 **셋 다
+// 탈락한다.** 그 자리를 채운 것은 잡다한 낱말로 2를 채운 무관한 긴 노트였다.
+// 질의에 `orca` 를 더하면 같은 노트들이 1·2·3위로 돌아온다 — **답을 알아야 답을
+// 찾을 수 있는 상태**였다.
+//
+// 실측(실볼트 540건, 노트마다 주제어 하나를 대화체 껍데기에 넣은 질의):
+// 못찾음 **89%** · MRR 0.065. 열 번 물으면 아홉 번 못 찾는다.
+//
+// # 왜 문서빈도인가 — 그리고 옛 주석이 왜 그것을 기각했는가
+//
+// 위 § 은 "흔한 낱말을 걸러도 안 된다 — `있어` 3.7%·`무슨` 0.4% 로 **드물어서**
+// 문서빈도로는 안 잡힌다" 고 적고 df 를 기각했다. 그 판단은 **그때의 head 기준으로는
+// 옳았다.** 바뀐 것이 둘 있다:
+//
+//	① headText 가 stem 의 날짜·도메인 접두어를 뺐다. 그 전에는 `2026` 이 df 100%,
+//	   `08` 이 99.6% 라 날짜를 스친 질의가 전건에 첫 히트를 공짜로 줬다. df 를
+//	   재도 그 보조금 때문에 아무 의미가 없었다.
+//	② 불용어에 활용형이 들어갔다. `있어`(질의 95개·df 4.8%)·`무슨`·`으로`·`하고`
+//	   는 이제 키워드가 되기 전에 빠진다 — **기능어는 빈도가 아니라 품사로 걸러야
+//	   한다.** 옛 주석이 df 로 잡으려다 실패한 것이 정확히 이 부류다.
+//
+// 둘을 걷어내고 나면 남는 낱말에서는 df 가 갈린다:
+// 지라 2.0% · 슬랙 0.7% · 구글챗 0.2% · 브라우저 2.8% 대 확인 11.9% · 볼트 8.3% ·
+// 파일 7.2% · 작업 4.1%. 앞쪽은 주제어고 뒤쪽은 어디에나 있다.
+//
+// # 규칙
+//
+// 변별어 히트 하나면 통과하고, 흔한 낱말은 여전히 둘이 필요하다. **옛 계약은
+// 그대로 남는다** — 흔한 낱말 둘로 통과하던 질의는 지금도 통과한다.
+var (
+	// rareDFRatio 는 "이 비율 이하로 나타나면 변별어" 의 경계다.
+	//
+	// 변수인 것은 스윕 테스트가 값을 바꿔 재기 위해서다. 밖으로 내지 않는다.
+	//
+	// 0.03 을 고른 근거는 스윕 표(TestRealVaultGateSweep)에 있다. 위쪽 한계는
+	// `작업`(df 4.1%)이 정한다 — 그것이 변별어가 되면 "무슨 작업을 하다가
+	// 멈춘것같은데 확인해줄 수 있어" 류의 내용어 없는 질의가 다시 통과하고,
+	// 실볼트에서 후보 22건이 돌아온다. 아래쪽은 0.02 미만에서 게이트가 안 풀린다.
+	rareDFRatio = 0.03
+
+	// 게이트에서 한 히트가 갖는 무게. 합이 minHeadHits 이상이어야 후보가 된다.
+	gateRare   = 2 // 변별어(희소) 히트 — 혼자서 게이트를 넘는다
+	gateCommon = 1 // 흔한 낱말 히트 — 둘이 모여야 넘는다
+	// 동의어 히트는 흔한 낱말과 같은 무게다. 큐레이션이 필터라 우연은 아니지만,
+	// 표에 어떤 낱말이 들어갈지는 사람에게 달려 있어 희소성을 보장하지 못한다.
+	gateSynonym = 1
+
+	// weightRare 는 **변별어로 맞은 히트에 얹는 가점**이다 (weightHead 에 더해진다).
+	//
+	// 게이트만 고치면 정답이 후보에 들어오기는 하는데 순위가 안 오른다. 실측
+	// (2026-08-31, 대화체 단일주제 541건): 게이트만 고쳤을 때 못찾음은 89%→2% 로
+	// 떨어졌지만 상위 3 안에 든 것은 44% 였다 — **절반 이상이 찾아 놓고 주입되지
+	// 못했다.** 훅이 결정 3줄만 싣기 때문에 순위가 곧 탈락이다.
+	//
+	// 원인은 점수식이 `지라`(df 2.0%)와 `이제`(df 1.1%, 우연한 부분문자열)를 똑같이
+	// 3점으로 세는 것이다. 게이트는 희소성을 보는데 점수는 안 보니, 게이트를 넘은
+	// 우연한 히트가 주제어 히트와 같은 값을 갖는다.
+	//
+	// 값의 근거는 스윕 표(rareDFRatio 의 §)에 있다.
+	weightRare = 2
+)
+
+// rareThreshold 는 변별어로 볼 문서빈도의 상한이다 (해당 풀의 노트 수 기준).
+//
+// **풀마다 따로 잰다.** 결정 540건과 규칙 9건은 같은 자로 잴 수 없다 — 비율만
+// 쓰면 규칙 풀에서는 어떤 낱말도 변별어가 되지 못해 게이트가 영영 2로 남는다.
+// 그래서 바닥을 1 로 둔다: 그 풀에서 한 건에만 걸리는 낱말은 변별어다.
+func rareThreshold(pool int) int {
+	if d := int(float64(pool) * rareDFRatio); d > 1 {
+		return d
+	}
+	return 1
+}
+
+// noteScan 은 1차 훑기의 결과다. 문서빈도를 세려면 전건을 한 번 본 뒤에야
+// 게이트를 판정할 수 있어서, 그 사이에 결과를 들고 있는 자리가 필요하다.
+type noteScan struct {
+	note     store.Note
+	headLen  int
+	headHit  []bool // keywords 와 같은 길이
+	headHits int
+	synHits  int
+	bodyHits int
+}
+
+// Head 는 headText 의 공개판이다.
+//
+// **회수가 보는 것과 같은 텍스트로 판정해야 하는 곳**이 밖에도 있다 — `prior doctor`
+// 의 폴백 적체 검사가 프로젝트 이름을 찾을 때 이것을 쓴다. 거기서 stem 을 직접
+// 조립하면 날짜(`2026`·`08`)와 도메인 접두어가 그대로 남아 이름 후보를 뒤덮는다.
+// Matches 를 내보내는 것과 같은 이유다.
+func Head(n store.Note, marker string) string { return headText(n, marker) }
+
+func scoreAll(notes []store.Note, keywords []string, nTokens int, cwdDomain string, mentioned map[string]bool, syn Synonyms, marker string) []Hit {
+	// ── 1차: 히트를 기록하면서 문서빈도를 센다 ──────────────────────
+	scans := make([]noteScan, 0, len(notes))
+	df := make([]int, len(keywords))
+	pool := 0
 	for _, n := range notes {
 		// **철회된 노트는 아예 안 본다.**
 		//
@@ -453,69 +646,63 @@ func scoreAll(notes []store.Note, keywords []string, cwdDomain string, mentioned
 		if n.Meta.Status == store.StatusRetracted {
 			continue
 		}
-		// **domain 과 보일러플레이트 태그는 head 에서 뺀다.**
-		//
-		// 도메인은 이미 weightCwdDomain·weightMention 이 따로 센다. head 에도 넣으면
-		// 이중 계산인 데다, 질의에 도메인 이름이 스치기만 해도 그 도메인 **전 노트**가
-		// headHits ≥ 1 이 되어 `headHits == 0` 필터가 통째로 무력해진다.
-		//
-		// `decision` 태그는 capture 가 모든 노트에 붙인다(실볼트 67/67). 그 낱말이
-		// 질의에 들어오면 전 노트가 걸린다 — 불용어에 "결정" 이 있는 것과 같은 이유다.
-		head := strings.ToLower(strings.Join([]string{
-			n.Stem, n.Meta.Summary,
-			strings.Join(contentTags(n.Meta.Tags), " "),
-		}, " "))
+		// **문서빈도의 모집단은 철회를 뺀 전건이다.** 히트가 있는 것만 세면
+		// 드문 낱말일수록 분모가 작아져 비율이 뒤집힌다.
+		pool++
+
+		// head 는 파일명 메타데이터를 뺀 것이다 (headText 의 §).
+		head := headText(n, marker)
 		body := strings.ToLower(string(n.Body))
 
-		headHits, bodyHits, synHits := 0, 0, 0
-		for _, k := range keywords {
+		sc := noteScan{note: n, headLen: len([]rune(head)), headHit: make([]bool, len(keywords))}
+		for i, k := range keywords {
 			// **정확히 맞은 것이 우선이고, 한 질의어는 한 번만 센다.**
 			// 형제까지 따로 세면 표를 크게 쓴 낱말이 점수를 독식한다 (synonym.go).
 			switch {
 			case matches(head, k):
-				headHits++
+				sc.headHit[i] = true
+				sc.headHits++
+				df[i]++
 			case syn.hits(head, k):
-				synHits++
+				sc.synHits++
 			}
 			if matches(body, k) {
-				bodyHits++
+				sc.bodyHits++
 			}
 		}
-		// **히트 하나로는 부족하다 — 질의가 길 때는 둘을 요구한다.**
-		//
-		// CJK 는 부분 문자열로 매칭하므로(match.go 의 근거) 2음절 대화체 토큰이
-		// 아무 데나 걸린다. 실측: "무슨 작업을 하다가 멈춘것같은데 확인해줄 수 있어" 의
-		// 키워드는 `멈춘것같은데·무슨·있어·확인해줄` 로 **내용어가 하나도 없는데**,
-		// `있어` 가 10개 노트의 head 에("…있어야…" 안쪽) 걸려서 후보 11건이 나오고
-		// 상위 3칸이 무관한 것으로 찼다.
-		//
-		// 흔한 낱말을 걸러도 안 된다 — 그 토큰들은 **드물다**(있어 3.7%, 무슨 0.4%).
-		// 문서빈도 필터로는 안 잡힌다. 우연한 매칭이라 빈도가 아니라 **개수**로 걸러야 한다.
-		//
-		// 실측 비교(같은 질의 4개, 후보 수):
-		//
-		//	                내용어0    pull/push   npm배포   어휘어긋남
-		//	현행(≥1)          11         24         19        32
-		//	≥2                 0          1          3         1
-		//	2음절 낱말경계      11         24         19        31
-		//
-		// ≥2 는 내용어 없는 질의에 **침묵하면서** 좋은 질의의 1위를 그대로 지켰다.
-		// 낱말경계 요구는 거의 효과가 없어 기각했다.
-		//
+		if sc.headHits+sc.synHits == 0 {
+			continue // head 히트가 없으면 어떤 게이트도 못 넘는다 — 들고 있을 이유가 없다
+		}
+		scans = append(scans, sc)
+	}
+
+	// ── 2차: 게이트와 점수 ─────────────────────────────────────────
+	rare := rareThreshold(pool)
+	need := minHeadHits(nTokens)
+	var hits []Hit
+	for _, sc := range scans {
 		// **질의가 짧으면 하나로 만족한다.** `prior recall "볼트 동기화"` 처럼 사람이
 		// 골라 넣은 두 낱말에 둘을 요구하면 정작 정확한 질의가 아무것도 못 찾는다.
 		// 대화체 프롬프트는 어미가 살아남아 거의 언제나 4개를 넘으므로, 그 경계가
 		// "자동 주입" 과 "사람이 물은 것" 을 자연스럽게 가른다.
-		// **동의어 히트는 이 게이트를 통과시킨다.** 게이트가 막으려는 것은 CJK
-		// 부분문자열이 만드는 *우연한* 히트인데, 형제 낱말은 사람이 표에 직접
-		// 적었을 때만 걸리므로 우연이 아니다 — 큐레이션이 필터다 (synonym.go).
-		// 통과시키지 않으면 이 기능이 아무것도 못 한다: 패러프레이즈 질의는
-		// 정의상 정확한 히트가 0 이고, 대화체라 게이트가 2를 요구한다.
-		if headHits+synHits < minHeadHits(len(keywords)) {
+		gate, rareHits := sc.synHits*gateSynonym, 0
+		for i := range keywords {
+			if !sc.headHit[i] {
+				continue
+			}
+			if df[i] <= rare {
+				gate += gateRare
+				rareHits++
+			} else {
+				gate += gateCommon
+			}
+		}
+		if gate < need {
 			continue
 		}
 
-		score := headScore(headHits, synHits, len([]rune(head))) + weightBody*bodyHits
+		score := headScore(sc.headHits, rareHits, sc.synHits, sc.headLen) + weightBody*sc.bodyHits
+		n := sc.note
 		if cwdDomain != "" && contains(n.Meta.Domain, cwdDomain) {
 			score += weightCwdDomain
 		}
@@ -606,6 +793,29 @@ func contains(ss []string, s string) bool {
 const warnLine = "위 결정 중 아쉬운 결과로 기록된 건이 있음. " +
 	"유사 선택 시 회고를 먼저 읽고 수정안을 제안할 것."
 
+// procedureLine 은 **본문에 실행 절차가 있다는 사실**을 주입에 싣는다.
+//
+// 근거는 store.ProcedureCommands 의 § 에 있다. 요약은 "무엇을 정했는가" 를
+// 말하는데 에이전트에게 필요한 것은 "지금 무엇을 부를 수 있는가" 라, 그 둘이
+// 어긋나면 노트를 받고도 "그런 수단이 없다" 로 끝난다 — 2026-08-31 에 실제로
+// 그랬다.
+//
+// **명령 이름만 준다.** 절차 전체를 실으면 요약을 길게 쓰는 것과 같아지고,
+// 길이 정규화가 감점하는 그 편향을 주입 쪽에서 다시 만든다. 이름 한 낱말이
+// "그 도구는 존재하고 부를 수 있다" 를 만들고, 나머지는 노트를 열면 있다.
+//
+// 절차가 없으면 빈 문자열이다. 실볼트 543건 중 5건에만 붙는다.
+func procedureLine(l *store.Layout, n store.Note) string {
+	cmds := store.ProcedureCommands(n.Body)
+	if len(cmds) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(l.Lang().T(
+		"  ↳ 본문에 실행 절차가 있다 (%s) — 그 방법이 필요하면 이 노트를 열어라\n",
+		"  ↳ the body has a runnable procedure (%s) — open this note before concluding it is unavailable\n"),
+		strings.Join(cmds, ", "))
+}
+
 // RenderInject 는 훅 주입용 형식으로 렌더링한다. 매칭이 없으면 빈 문자열.
 func RenderInject(l *store.Layout, hits []Hit) string {
 	if len(hits) == 0 {
@@ -676,6 +886,7 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 				fmt.Fprintf(&b, "- %s %s (%s) → %s\n",
 					l.Lang().T("[규칙]", "[rule]"), summary, status, l.RelPath(h.Note.Path))
 			}
+			b.WriteString(procedureLine(l, h.Note))
 			if r := overturnLine(l, m, summary); r != "" {
 				b.WriteString(r)
 			}
@@ -687,10 +898,12 @@ func RenderInject(l *store.Layout, hits []Hit) string {
 		if h.Note.IsReference() {
 			fmt.Fprintf(&b, "- %s %s → %s\n",
 				l.Lang().T("[참고]", "[reference]"), summary, l.RelPath(h.Note.Path))
+			b.WriteString(procedureLine(l, h.Note))
 			continue
 		}
 		fmt.Fprintf(&b, "- %s %s (%s/%s) → %s\n",
 			date, summary, status, outcome, l.RelPath(h.Note.Path))
+		b.WriteString(procedureLine(l, h.Note))
 		if r := overturnLine(l, m, summary); r != "" {
 			b.WriteString(r)
 		}

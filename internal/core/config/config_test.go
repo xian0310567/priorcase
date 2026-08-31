@@ -421,3 +421,39 @@ worklog = "99-{project}-작업-로그.md"
 		})
 	}
 }
+
+// ★ 2026-08-31 재현 고장을 잠근다.
+//
+// 선언되지 않은 작업 폴더에서 물었더니 `default_domain`(common)으로 떨어졌고,
+// 회수의 cwd 가점이 **common 노트 전체**에 붙어 무관한 노트가 1위를 먹었다.
+// 기록은 폴백이 맞지만 가점은 아니다 — 폴백은 "여기가 어디인지 모른다" 는 뜻이다.
+func TestDomainForCwdDeclaredDoesNotFallBack(t *testing.T) {
+	dir := t.TempDir()
+	declared := filepath.Join(dir, "declared")
+	unknown := filepath.Join(dir, "unknown")
+	for _, d := range []string{declared, unknown} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &Config{
+		DefaultDomain: "common",
+		Domain: []Domain{
+			{Prefix: "common", Folder: "common"},
+			{Prefix: "alpha", Folder: "alpha", Paths: []string{declared}},
+		},
+	}
+	// 기록 경로는 폴백이 있어야 한다 — 없으면 그 자리에서 아무것도 못 남긴다.
+	if got := c.DomainForCwd(unknown); got != "common" {
+		t.Errorf("DomainForCwd(미선언) = %q, 기록은 폴백(common)이어야 한다", got)
+	}
+	// 가점 경로는 폴백이 있으면 안 된다.
+	if got := c.DomainForCwdDeclared(unknown); got != "" {
+		t.Errorf("DomainForCwdDeclared(미선언) = %q, 빈 문자열이어야 한다 — "+
+			"폴백에 cwd 가점을 주면 그 도메인 노트 전체가 상위를 먹는다", got)
+	}
+	// 선언된 곳에서는 둘이 같다.
+	if got := c.DomainForCwdDeclared(declared); got != "alpha" {
+		t.Errorf("DomainForCwdDeclared(선언됨) = %q, want alpha", got)
+	}
+}

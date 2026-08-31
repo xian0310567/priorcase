@@ -75,7 +75,7 @@ func TestRealVaultRecallBias(t *testing.T) {
 	lens := make([]int, 0, len(notes))
 	byPath := map[string]int{}
 	for _, n := range notes {
-		hl := len([]rune(headOf(n)))
+		hl := len([]rune(headOf(l, n)))
 		lens = append(lens, hl)
 		byPath[n.Path] = hl
 	}
@@ -196,10 +196,10 @@ func TestRealVaultRecallBias(t *testing.T) {
 }
 
 // headOf 는 scoreAll 이 보는 head 를 그대로 만든다. 여기서 갈리면 재는 것이 다른 것이다.
-func headOf(n store.Note) string {
-	return strings.ToLower(strings.Join([]string{
-		n.Stem, n.Meta.Summary, strings.Join(contentTags(n.Meta.Tags), " "),
-	}, " "))
+// **그래서 직접 조립하지 않고 headText 를 부른다** — 예전에는 여기서 조립했고,
+// 그 사본이 stem 의 날짜·도메인 접두어를 그대로 남긴 채 편향을 재고 있었다.
+func headOf(l *store.Layout, n store.Note) string {
+	return headText(n, l.DecisionMarker())
 }
 
 func pct(sorted []int, p float64) int {

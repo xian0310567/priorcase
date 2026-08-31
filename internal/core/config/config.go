@@ -474,6 +474,39 @@ func (c *Config) DomainForCwd(cwd string) string {
 	return c.DefaultDomain
 }
 
+// DomainForCwdDeclared 는 **선언된 경로·저장소로 실제로 걸렸을 때만** 접두어를 준다.
+// 폴백(default_domain)으로 떨어지는 자리에서는 빈 문자열이다.
+//
+// # 왜 이 구별이 필요한가
+//
+// `DomainForCwd` 는 어디에도 안 걸리면 `default_domain` 을 준다. **기록에는 그것이
+// 맞다** — 어딘가에는 써야 하니까. 하지만 **회수의 cwd 가점에는 틀리다.**
+//
+// 2026-08-31 재현: 사용자가 `~/project/lotte-inspection/ragem` 에서 물었는데 그
+// 경로가 설정에 없어 `common` 으로 떨어졌고, `weightCwdDomain`(+2)이 **common
+// 노트 전체**에 붙었다. 1위를 먹은 것은 무관한 `common-결정-novels-routecaster-
+// 영문현지화` 였다. 그 폴더는 common 프로젝트가 아니다 — 이름을 못 붙였을 뿐이다.
+//
+// 이 볼트에서 `common` 은 `paths` 가 없어 **폴백으로만 도달한다.** 즉 그 가점은
+// 언제나 잘못 붙는다. 가점의 근거가 "지금 하는 일 쪽이 맞다" 인데, 폴백은
+// "지금 하는 일이 무엇인지 모른다" 는 뜻이라 근거 자체가 성립하지 않는다.
+func (c *Config) DomainForCwdDeclared(cwd string) string {
+	if c.IsExcluded(cwd) {
+		return ""
+	}
+	for _, d := range c.Domain {
+		for _, p := range d.Paths {
+			if under(p, cwd) {
+				return d.Prefix
+			}
+		}
+	}
+	if repo := RepoFor(cwd); repo != "" {
+		return c.DomainForRepo(repo)
+	}
+	return ""
+}
+
 // DomainForRepo 는 `owner/repo` 에 해당하는 도메인 접두어를 준다. 없으면 빈 문자열.
 //
 // 설정에 적힌 값도 정규화해서 비교한다 — 사람이 전체 URL 을 붙여 넣거나

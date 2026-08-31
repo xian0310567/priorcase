@@ -95,8 +95,8 @@ func TestHeadHitFloorKeepsVeryLongNoteVisible(t *testing.T) {
 	if raw := float64(weightHead) * lengthNorm(long); raw >= 0.5 {
 		t.Skipf("head %d자에서도 반올림이 0 이 안 된다(%v) — 이 테스트의 전제가 사라졌다", long, raw)
 	}
-	if got := headScore(1, 0, long); got < headHitFloor {
-		t.Errorf("headScore(1,0,%d) = %d — 바닥(%d) 아래로 내려가 노트가 사라진다",
+	if got := headScore(1, 0, 0, long); got < headHitFloor {
+		t.Errorf("headScore(1,0,0,%d) = %d — 바닥(%d) 아래로 내려가 노트가 사라진다",
 			long, got, headHitFloor)
 	}
 }
@@ -116,8 +116,8 @@ func TestShortHeadScoreIsUnchanged(t *testing.T) {
 	cases := []struct{ headHits, synHits int }{{1, 0}, {2, 0}, {3, 0}, {0, 1}, {1, 1}, {2, 2}}
 	for _, tc := range cases {
 		want := weightHead*tc.headHits + weightSynonym*tc.synHits
-		if got := headScore(tc.headHits, tc.synHits, refHeadRunes); got != want {
-			t.Errorf("headScore(%d,%d,%d) = %d, 정규화 전과 같은 %d 여야 한다",
+		if got := headScore(tc.headHits, 0, tc.synHits, refHeadRunes); got != want {
+			t.Errorf("headScore(%d,0,%d,%d) = %d, 정규화 전과 같은 %d 여야 한다",
 				tc.headHits, tc.synHits, refHeadRunes, got, want)
 		}
 	}
@@ -126,8 +126,8 @@ func TestShortHeadScoreIsUnchanged(t *testing.T) {
 // 히트가 없으면 0 이다 — 바닥이 "히트 없는 노트" 를 살려내면 안 된다.
 func TestHeadScoreZeroWithoutHits(t *testing.T) {
 	for _, n := range []int{10, refHeadRunes, 5000} {
-		if got := headScore(0, 0, n); got != 0 {
-			t.Errorf("headScore(0,0,%d) = %d, 0 이어야 한다", n, got)
+		if got := headScore(0, 0, 0, n); got != 0 {
+			t.Errorf("headScore(0,0,0,%d) = %d, 0 이어야 한다", n, got)
 		}
 	}
 }
