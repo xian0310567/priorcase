@@ -197,3 +197,25 @@ func TestRetroMirrorsCaptureRecallOptions(t *testing.T) {
 		}
 	}
 }
+
+// ★ 윈도우 배포가 조용히 빠지지 않게 한다.
+//
+// 사내에 윈도우 기획자가 있고 그 사람도 Claude Code 로 작업하고 기록한다
+// (2026-08-31). goos 에서 windows 가 빠지면 npm-pack.sh 가 "없다: …zip" 으로
+// 죽어서 릴리스가 멎기는 하는데, 그때는 태그를 이미 민 뒤다.
+func TestReleaseBuildsWindows(t *testing.T) {
+	body := readFile(t, filepath.Join(repoRoot(t), ".goreleaser.yaml"))
+	if !strings.Contains(body, "goos: [darwin, linux, windows]") {
+		t.Error(".goreleaser.yaml 의 goos 에 windows 가 없다 — 윈도우 팀원이 못 받는다")
+	}
+	// **윈도우 산출물은 zip 이어야 한다.** tar.gz 는 탐색기가 기본으로 못 열고,
+	// npm-pack.sh 가 zip 을 기대한다(unzip).
+	if !strings.Contains(body, "formats: [zip]") {
+		t.Error("윈도우 아카이브가 zip 이 아니다 — npm-pack.sh 의 unzip 이 못 찾는다")
+	}
+	// 게시 루프가 win32 패키지를 안 집으면 만들어 놓고 안 올린다.
+	wf := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "release.yml"))
+	if !strings.Contains(wf, "dist/npm/win32-*") {
+		t.Error("release.yml 의 게시 루프가 win32 패키지를 안 집는다 — 만들고 안 올린다")
+	}
+}

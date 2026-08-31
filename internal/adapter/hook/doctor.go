@@ -114,8 +114,8 @@ func checkHooks(r *health.Report, o DoctorOptions) {
 	for ev, groups := range root.Hooks {
 		for _, g := range groups {
 			for _, h := range g.Hooks {
-				if strings.Contains(h.Command, hookMarker) {
-					wired[ev] = h.Command
+				if isOurs(h) {
+					wired[ev] = shownCommand(h)
 				} else {
 					others++
 				}
@@ -166,7 +166,10 @@ func checkCodexHooks(r *health.Report, o DoctorOptions) {
 	if err != nil {
 		return // 파일이 없다 = Codex 를 안 쓴다. 고장이 아니다.
 	}
-	if !bytes.Contains(raw, []byte(hookMarker)) {
+	// **exec form 에는 표시 문자열이 없다** (init.go 의 윈도우 § ). 그래서 바이너리
+	// 이름도 같이 본다 — 이 빠른 검사가 틀리면 배선돼 있는데 "안 했다" 로 조용히
+	// 넘어간다.
+	if !bytes.Contains(raw, []byte(hookMarker)) && !bytes.Contains(raw, []byte(`"hook"`)) {
 		return // 남의 훅만 있다 = 아직 배선을 안 했다. 그것도 고장이 아니다.
 	}
 
@@ -181,8 +184,8 @@ func checkCodexHooks(r *health.Report, o DoctorOptions) {
 	for ev, groups := range root.Hooks {
 		for _, g := range groups {
 			for _, h := range g.Hooks {
-				if strings.Contains(h.Command, hookMarker) {
-					wired[ev] = h.Command
+				if isOurs(h) {
+					wired[ev] = shownCommand(h)
 				}
 			}
 		}
@@ -287,8 +290,25 @@ func checkBinary(r *health.Report, o DoctorOptions, wired map[string]string) {
 	add(r, "훅 바이너리", health.OK, got, "")
 }
 
+// shownCommand 는 사람에게 보일 명령 한 줄이다. exec form 은 command 와 args 가
+// 갈라져 있어서 그대로 내면 인자가 사라진다.
+func shownCommand(h hookEntry) string {
+	if len(h.Args) == 0 {
+		return h.Command
+	}
+	return h.Command + " " + strings.Join(h.Args, " ")
+}
+
 // binaryFromCommand 는 `PRIORCASE_HOOK=1 "<경로>" hook <event>` 에서 경로를 꺼낸다.
+//
+// **exec form 은 따옴표가 없다** — 그때는 첫 토큰이 곧 경로다. 이 함수가 못 꺼내면
+// doctor 의 "훅 바이너리" 검사가 빈 값으로 돌아 배선을 못 본다.
 func binaryFromCommand(cmd string) string {
+	if !strings.Contains(cmd, `"`) {
+		if f := strings.Fields(cmd); len(f) > 0 && isPriorBinary(f[0]) {
+			return f[0]
+		}
+	}
 	i := strings.Index(cmd, `"`)
 	if i < 0 {
 		return ""

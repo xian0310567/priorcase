@@ -27,6 +27,8 @@
     "priorcase-darwin-arm64": "0.0.0",
     "priorcase-darwin-x64": "0.0.0",
     "priorcase-linux-arm64": "0.0.0",
-    "priorcase-linux-x64": "0.0.0"
+    "priorcase-linux-x64": "0.0.0",
+    "priorcase-win32-arm64": "0.0.0",
+    "priorcase-win32-x64": "0.0.0"
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 릴리스 산출물로 npm 패키지 5개를 만든다 (런처 1 + 플랫폼 4).
+# 릴리스 산출물로 npm 패키지 7개를 만든다 (런처 1 + 플랫폼 6).
 #
 # goreleaser 는 npm 게시를 기본 지원하지 않는다. 그래서 dist/ 의 tar.gz 를 풀어
 # 플랫폼 패키지에 넣고, 버전을 태그로 맞춘다. 게시는 릴리스 워크플로가 한다.
@@ -12,32 +12,53 @@ VERSION="${VERSION#v}"
 OUT="${2:-dist/npm}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# goreleaser 의 os/arch 이름과 npm 의 process.arch 이름이 다르다. amd64 → x64.
-declare -a TARGETS=("darwin amd64 x64" "darwin arm64 arm64" "linux amd64 x64" "linux arm64 arm64")
+# goreleaser 의 os/arch 이름과 npm 이 보는 이름이 다르다.
+#   arch: amd64 → x64
+#   os:   windows → win32   (node 의 process.platform 은 64비트에서도 win32 다)
+# 표의 넷째 칸이 npm 패키지 이름에 들어가는 os 다. 여기가 어긋나면 런처가
+# 못 찾는데, 그 실패는 그 플랫폼 사용자에게만 보인다.
+declare -a TARGETS=(
+  "darwin  amd64 x64   darwin"
+  "darwin  arm64 arm64 darwin"
+  "linux   amd64 x64   linux"
+  "linux   arm64 arm64 linux"
+  "windows amd64 x64   win32"
+  "windows arm64 arm64 win32"
+)
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
 for t in "${TARGETS[@]}"; do
-  read -r goos goarch npmarch <<<"$t"
-  tarball="$ROOT/dist/priorcase_${goos}_${goarch}.tar.gz"
-  [ -f "$tarball" ] || { echo "없다: $tarball — goreleaser 를 먼저 돌려라" >&2; exit 1; }
+  read -r goos goarch npmarch npmos <<<"$t"
 
-  pkgdir="$OUT/${goos}-${npmarch}"
+  # 윈도우 산출물은 zip 이고 실행파일에 확장자가 붙는다 (.goreleaser.yaml 의 §).
+  if [ "$goos" = "windows" ]; then
+    archive="$ROOT/dist/priorcase_${goos}_${goarch}.zip"; exe="prior.exe"
+  else
+    archive="$ROOT/dist/priorcase_${goos}_${goarch}.tar.gz"; exe="prior"
+  fi
+  [ -f "$archive" ] || { echo "없다: $archive — goreleaser 를 먼저 돌려라" >&2; exit 1; }
+
+  pkgdir="$OUT/${npmos}-${npmarch}"
   mkdir -p "$pkgdir/bin"
-  tar xzf "$tarball" -C "$pkgdir/bin" prior
-  chmod +x "$pkgdir/bin/prior"
+  if [ "$goos" = "windows" ]; then
+    unzip -q -o -j "$archive" "$exe" -d "$pkgdir/bin"
+  else
+    tar xzf "$archive" -C "$pkgdir/bin" "$exe"
+  fi
+  chmod +x "$pkgdir/bin/$exe"
   cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.md" "$pkgdir/"
 
   # os·cpu 를 적어 두면 npm 이 **다른 플랫폼에는 아예 안 받는다.** 이게 없으면
   # 사용자가 4개를 전부 받아 디스크를 4배 쓴다.
   cat > "$pkgdir/package.json" <<JSON
 {
-  "name": "priorcase-${goos}-${npmarch}",
+  "name": "priorcase-${npmos}-${npmarch}",
   "version": "${VERSION}",
-  "description": "priorcase binary for ${goos}-${npmarch}",
+  "description": "priorcase binary for ${npmos}-${npmarch}",
   "license": "SEE LICENSE IN LICENSE",
-  "os": ["${goos}"],
+  "os": ["${npmos}"],
   "cpu": ["${npmarch}"],
   "files": ["bin/", "LICENSE", "THIRD-PARTY-NOTICES.md"]
 }
@@ -76,8 +97,9 @@ host_goos=$(go env GOOS 2>/dev/null || uname -s | tr 'A-Z' 'a-z')
 host_goarch=$(go env GOARCH 2>/dev/null || true)
 case "$host_goarch" in amd64) host_npmarch=x64 ;; arm64) host_npmarch=arm64 ;; *) host_npmarch="" ;; esac
 
-if [ -n "$host_npmarch" ] && [ -x "$OUT/${host_goos}-${host_npmarch}/bin/prior" ]; then
-  reported=$("$OUT/${host_goos}-${host_npmarch}/bin/prior" --version 2>&1 | awk '{print $NF}')
+case "$host_goos" in windows) host_npmos=win32 ;; *) host_npmos="$host_goos" ;; esac
+if [ -n "$host_npmarch" ] && [ -x "$OUT/${host_npmos}-${host_npmarch}/bin/prior" ]; then
+  reported=$("$OUT/${host_npmos}-${host_npmarch}/bin/prior" --version 2>&1 | awk '{print $NF}')
   if [ "$reported" != "$VERSION" ]; then
     echo "판이 어긋난다 — package.json 은 ${VERSION} 인데 바이너리는 ${reported} 라고 답한다." >&2
     echo "  goreleaser 를 --snapshot 으로 돌렸을 때 이렇게 된다. 태그를 붙여 다시 빌드해라." >&2
@@ -88,4 +110,4 @@ else
   echo "판 확인 건너뜀 — 호스트(${host_goos}/${host_goarch})와 같은 플랫폼 산출물이 없다" >&2
 fi
 
-echo "npm 패키지 5개: $OUT"
+echo "npm 패키지 7개: $OUT"

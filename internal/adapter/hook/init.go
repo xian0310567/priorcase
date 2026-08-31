@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ import (
 // 사람이 열어 봤을 때 무엇인지 바로 보인다. JSON 에는 주석이 없어서 이 방법이 필요하다.
 // 멱등성(두 번 돌려도 중복 등록 안 됨)과 `--revert` 가 전부 이 표시에 기댄다.
 const hookMarker = "PRIORCASE_HOOK=1"
+
+// goos 는 배선을 만드는 머신의 운영체제다. **변수인 것은 테스트가 윈도우 배선을
+// 맥에서 검증하기 위해서다** — 밖으로 내지 않는다 (sync.timeout 과 같은 규약).
+var goos = runtime.GOOS
 
 // legacyHookMarker 는 개명(2026-08-10, casebook → priorcase) 전에 심어 둔 훅의 표시다.
 //
@@ -65,14 +70,97 @@ type InitOptions struct {
 }
 
 type hookEntry struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout,omitempty"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+	Timeout int      `json:"timeout,omitempty"`
 }
 
 type hookGroup struct {
 	Matcher string      `json:"matcher,omitempty"`
 	Hooks   []hookEntry `json:"hooks"`
+}
+
+// ── 윈도우 배선은 셸을 안 탄다 ────────────────────────────────────────
+//
+// # 왜 갈라야 했나
+//
+// POSIX 배선은 명령 한 줄이다: `PRIORCASE_HOOK=1 "<경로>" hook <이벤트>`.
+// 그 접두어는 표시이자 환경변수인데, **윈도우에는 그 문법이 없다.**
+//
+// 그리고 어느 셸인지도 못 고른다. Claude Code 문서:
+//
+//	"Defaults to bash, or to powershell on Windows when Git Bash isn't installed."
+//
+// 즉 **같은 조직 안에서도 머신마다 갈린다** — Git Bash 를 깐 사람은 bash, 안 깐
+// 사람은 PowerShell 이다. 한쪽에 맞추면 다른 쪽에서 훅이 조용히 죽는다. `Host`
+// 타입의 § 이 적어 둔 "이 프로젝트가 제일 싫어하는 고장 모양" 그대로다.
+//
+// # 그래서 셸을 안 쓴다
+//
+// Claude Code 는 exec form 을 받는다 — `command` 에 실행파일, `args` 에 인자 배열.
+// 문서: "Ignored when args is set" (shell 필드가 무시된다) — **셸이 안 낀다.**
+// 윈도우 제약도 우리는 이미 만족한다: "exec form requires command to resolve to a
+// real executable such as a .exe" 인데 `prior.exe` 가 바로 그것이다.
+//
+// 셸 차이를 우회하는 것이 아니라 **없앤다.** Codex 에 `/usr/bin/env` 를 붙였던
+// 것과 같은 판단이다 — 호스트 내부를 알아내는 대신 알 필요가 없게 만든다.
+//
+// # 환경변수를 안 붙여도 되는 이유
+//
+// `PRIORCASE_HOOK=1` 은 **어디서도 읽지 않는다.** 표시일 뿐이다(hookMarker 의 §).
+// 그래서 exec form 에서는 그냥 뺀다 — 표시는 `command` 가 우리 바이너리라는 사실이
+// 대신한다(isOurs). 오히려 더 세다: 문자열은 남이 복사해 붙일 수 있지만 실행파일
+// 경로는 그 자체가 신원이다.
+//
+// # POSIX 는 안 건드린다
+//
+// 지금 돌고 있는 배선이고 바꿀 이유가 없다. 이 프로젝트가 훅 명령을 통째로 바꾸는
+// 것을 "감수할 이유가 없는 위험" 으로 이미 적어 뒀다(hostFlag 의 §).
+
+// execArgs 는 exec form 의 인자 배열이다. POSIX 명령 문자열과 **같은 것**을 담아야
+// 한다 — 여기서 갈리면 윈도우만 다른 훅이 돈다.
+func execArgs(h Host, ev Event) []string {
+	args := []string{"hook"}
+	if h != "" && h != HostClaudeCode {
+		args = append(args, "--host", string(h))
+	}
+	return append(args, string(ev))
+}
+
+// isOurs 는 그 훅을 priorcase 가 심었는지 본다.
+//
+// **표시가 두 벌이라 판정도 한 곳에 모은다.** POSIX 는 명령 문자열 안의 환경변수,
+// 윈도우는 `command` 가 우리 바이너리이고 첫 인자가 `hook` 인 것. 두 곳(걷어내기와
+// doctor)이 각자 판정하면 한쪽만 고쳐져서 훅이 두 벌이 되거나 남의 훅을 지운다.
+func isOurs(h hookEntry) bool {
+	if strings.Contains(h.Command, hookMarker) {
+		return true
+	}
+	// exec form: {"command": "<...>/prior.exe", "args": ["hook", ...]}
+	if len(h.Args) == 0 || h.Args[0] != "hook" {
+		return false
+	}
+	return isPriorBinary(h.Command)
+}
+
+// isPriorBinary 는 그 경로가 이 도구의 실행파일인지 본다.
+//
+// **구분자를 양쪽 다 본다.** `filepath.Base` 는 도는 OS 의 구분자만 아는데, 이
+// 판정은 윈도우가 쓴 `C:\Tools\prior.exe` 를 맥에서 읽을 때도 맞아야 한다 —
+// 설정 파일이 머신을 건너다니고, 테스트는 맥에서 윈도우 배선을 검증한다.
+// 실측으로 물렸다: 맥에서 `filepath.Base` 가 역슬래시를 안 잘라 자기가 심은 훅을
+// 남의 것으로 보고 두 번째 배선이 훅을 두 벌로 만들었다.
+func isPriorBinary(path string) bool {
+	p := strings.Trim(strings.TrimSpace(path), `"`)
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		p = p[i+1:]
+	}
+	switch strings.ToLower(p) {
+	case "prior", "prior.exe":
+		return true
+	}
+	return false
 }
 
 // BuildPlan 은 설정 파일을 읽어 무엇을 바꿀지 계산한다. **파일을 쓰지 않는다.**
@@ -145,7 +233,7 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 		for _, g := range groups {
 			keptHooks := g.Hooks[:0]
 			for _, h := range g.Hooks {
-				drop := strings.Contains(h.Command, hookMarker) ||
+				drop := isOurs(h) ||
 					strings.Contains(h.Command, legacyHookMarker) ||
 					(o.RemoveMatching != "" && strings.Contains(h.Command, o.RemoveMatching))
 				if drop {
@@ -194,11 +282,17 @@ func BuildPlan(o InitOptions) (*Plan, error) {
 	}
 	for _, ev := range EventsFor(o.Host) {
 		name := ev.NameFor(o.Host)
-		cmd := fmt.Sprintf("%s %q hook%s %s", prefix, o.Binary, hostFlag, ev)
-		hooks[name] = append(hooks[name], hookGroup{
-			Hooks: []hookEntry{{Type: "command", Command: cmd, Timeout: hookTimeout(ev)}},
-		})
-		p.Add = append(p.Add, name+": "+summarize(cmd))
+		e := hookEntry{Type: "command", Timeout: hookTimeout(ev)}
+		var shown string
+		if goos == "windows" {
+			e.Command, e.Args = o.Binary, execArgs(o.Host, ev)
+			shown = e.Command + " " + strings.Join(e.Args, " ")
+		} else {
+			e.Command = fmt.Sprintf("%s %q hook%s %s", prefix, o.Binary, hostFlag, ev)
+			shown = e.Command
+		}
+		hooks[name] = append(hooks[name], hookGroup{Hooks: []hookEntry{e}})
+		p.Add = append(p.Add, name+": "+summarize(shown))
 	}
 
 	root["hooks"] = hooks

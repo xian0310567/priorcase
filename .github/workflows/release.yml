@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --version
-          for d in dist/npm/darwin-* dist/npm/linux-*; do
+          for d in dist/npm/darwin-* dist/npm/linux-* dist/npm/win32-*; do
             echo "게시: $d"
             npm publish "$d" --access public
           done

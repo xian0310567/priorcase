@@ -17,7 +17,10 @@ const { spawnSync } = require("child_process");
 const { existsSync } = require("fs");
 const path = require("path");
 
-const PKG = { darwin: "darwin", linux: "linux" };
+// **npm 의 플랫폼 이름과 Go 의 GOOS 가 다르다.** node 는 win32, Go 는 windows 다
+// (그리고 64비트에서도 win32 다 — 역사적 이름이라 안 바뀐다). 패키지 이름은 node 가
+// 보는 쪽을 따른다: 이 표를 잘못 적으면 윈도우 사용자가 "no binary" 로 튕긴다.
+const PKG = { darwin: "darwin", linux: "linux", win32: "win32" };
 const ARCH = { arm64: "arm64", x64: "x64" };
 
 function binaryPath() {
@@ -33,7 +36,9 @@ function binaryPath() {
     // require.resolve 가 node_modules 해석을 대신한다 — 경로를 직접 짜면
     // pnpm·yarn PnP 같은 배치에서 깨진다.
     const entry = require.resolve(`${pkg}/package.json`);
-    const p = path.join(path.dirname(entry), "bin", "prior");
+    // 윈도우 실행파일에는 확장자가 붙는다. 없으면 spawnSync 가 못 찾는다.
+    const exe = process.platform === "win32" ? "prior.exe" : "prior";
+    const p = path.join(path.dirname(entry), "bin", exe);
     return existsSync(p) ? p : null;
   } catch {
     return null;
@@ -45,7 +50,7 @@ if (!bin) {
   const target = `${process.platform}-${process.arch}`;
   process.stderr.write(
     `priorcase: no binary for ${target}.\n` +
-      `  Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64.\n` +
+      `  Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64, win32-x64.\n` +
       `  If your platform is listed, the optional dependency did not install —\n` +
       `  try: npm install --include=optional priorcase\n`
   );
