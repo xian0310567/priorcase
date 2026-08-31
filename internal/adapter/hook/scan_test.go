@@ -353,3 +353,46 @@ func TestJudgeFailureKeepsPending(t *testing.T) {
 		t.Errorf("판별기가 깨졌는데 표시를 지웠다 (%d건) — 그 구간을 잃는다", len(items))
 	}
 }
+
+// ★★★ **판별기 세션에는 회수를 주입하지 않는다.**
+//
+// TestJudgeSessionDoesNotRecurse 가 "훅이 아무것도 하지 않는다" 를 이름으로 걸어
+// 뒀는데 실제로는 SessionEnd 하나만 덮고 있었다. 회수 주입 경로가 빠져 있었고,
+// 그 자리가 실제로 샜다.
+//
+// 실측(2026-08-31): 홈 디렉토리에 쌓인 판별기 세션 7개가 **전부** 회수 주입을
+// 4,007~4,889자씩 받았고 **전부 API safeguard 로 차단됐다.** 이 머신의 차단 42회
+// 중 16회가 그것이다 — 사람은 못 보는 자리에서 판별기가 계속 죽고 있었다.
+//
+// 주입이 차단의 원인이라는 증거는 없다(같은 노트가 실린 무차단 세션이 58건이다).
+// 막는 이유는 다른 것이다: 판별기는 발췌 하나를 등급 매기는 일만 하므로 볼트
+// 회수를 보여 줄 이유가 하나도 없고, 그 4,889자는 순수한 낭비다.
+func TestJudgeSessionGetsNoRecallInjection(t *testing.T) {
+	for _, ev := range []Event{EventUserPromptSubmit, EventSessionStart} {
+		t.Run(string(ev), func(t *testing.T) {
+			c := cfg(t)
+			sd := t.TempDir()
+
+			// 먼저 가드가 없을 때 실제로 주입이 나가는지 확인한다 — 안 나가면
+			// 이 테스트가 아무것도 안 지키는 셈이다.
+			base := runHook(t, c, sd, ev, Input{
+				Cwd: "/tmp/proj/alpha", SessionID: "S1", Prompt: "저장 엔진을 무엇으로 골랐지"})
+			if base.e != nil {
+				t.Fatal(base.e)
+			}
+			if strings.TrimSpace(base.out) == "" {
+				t.Fatalf("판별기 세션이 아닌데도 주입이 없다 — 이 테스트의 전제가 사라졌다")
+			}
+
+			t.Setenv("PRIORCASE_JUDGE", "1")
+			got := runHook(t, c, sd, ev, Input{
+				Cwd: "/tmp/proj/alpha", SessionID: "S2", Prompt: "저장 엔진을 무엇으로 골랐지"})
+			if got.e != nil {
+				t.Fatal(got.e)
+			}
+			if strings.TrimSpace(got.out) != "" {
+				t.Errorf("판별기 세션에 주입이 나갔다 (%d자):\n%s", len(got.out), got.out)
+			}
+		})
+	}
+}
