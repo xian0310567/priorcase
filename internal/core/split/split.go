@@ -56,13 +56,23 @@ type Plan struct {
 var stemDate = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 
 // Build 는 계획을 세운다. 파일은 하나도 건드리지 않는다.
-func Build(c *config.Config, l *store.Layout, notes []store.Note, token, prefix string) (*Plan, error) {
-	token = strings.ToLower(strings.TrimSpace(token))
-	if token == "" {
+//
+// **낱말을 여럿 받는다.** 한 프로젝트가 여러 이름으로 불리기 때문이다 — 실볼트에서
+// `twincrew`(13건)와 `lg`(10건)가 같은 프로젝트였고, 롯데 건은 `롯데`(3건)와
+// `lotte`(2건)로 갈렸다. 하나만 받으면 나머지 이름의 노트가 폴백에 남고, 도메인이
+// 이미 생겨 버려서 두 번째 실행이 막힌다. 합집합으로 한 번에 옮긴다.
+func Build(c *config.Config, l *store.Layout, notes []store.Note, tokens []string, prefix string) (*Plan, error) {
+	var toks []string
+	for _, t := range tokens {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			toks = append(toks, t)
+		}
+	}
+	if len(toks) == 0 {
 		return nil, fmt.Errorf("옮길 낱말이 비었다")
 	}
 	if prefix = strings.TrimSpace(prefix); prefix == "" {
-		prefix = token
+		prefix = toks[0]
 	}
 	fallback := strings.TrimSpace(c.DefaultDomain)
 	if fallback == "" {
@@ -89,7 +99,7 @@ func Build(c *config.Config, l *store.Layout, notes []store.Note, token, prefix 
 		if len(n.Meta.Domain) != 1 || !strings.EqualFold(n.Meta.Domain[0], fallback) {
 			continue
 		}
-		if !search.Matches(search.Head(n, marker), token) {
+		if !matchesAny(search.Head(n, marker), toks) {
 			continue
 		}
 		slug, date := slugDateOf(n, marker)
@@ -157,4 +167,14 @@ func slugDateOf(n store.Note, marker string) (slug, date string) {
 		return "", ""
 	}
 	return stem[i+len(marker):], date
+}
+
+// matchesAny 는 낱말 중 하나라도 걸리는지 본다.
+func matchesAny(head string, tokens []string) bool {
+	for _, t := range tokens {
+		if search.Matches(head, t) {
+			return true
+		}
+	}
+	return false
 }

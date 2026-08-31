@@ -38,7 +38,7 @@ func build(t *testing.T, c *config.Config, l *store.Layout, token, as string) *P
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := Build(c, l, notes, token, as)
+	p, err := Build(c, l, notes, []string{token}, as)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +109,11 @@ func TestApplyMovesRewritesDomainAndLinks(t *testing.T) {
 		t.Errorf("domain 이 안 바뀌었다:\n%s", b)
 	}
 
-	cb, err := os.ReadFile(citer)
+	citerBody, err := os.ReadFile(citer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(cb)
+	got := string(citerBody)
 	if strings.Contains(got, old) {
 		t.Errorf("옛 stem 을 가리키는 링크가 남았다:\n%s", got)
 	}
@@ -151,7 +151,7 @@ func TestBuildRefusesExistingDomain(t *testing.T) {
 	c, l := setup(t)
 	write(t, l, "common-결정-alpha-무언가-2026-08-28", "common", "alpha 어쩌고", "본문")
 	notes, _, _ := l.List()
-	if _, err := Build(c, l, notes, "alpha", ""); err == nil {
+	if _, err := Build(c, l, notes, []string{"alpha"}, ""); err == nil {
 		t.Error("이미 있는 도메인으로 떼어내려는데 에러가 안 났다")
 	}
 }
@@ -159,7 +159,7 @@ func TestBuildRefusesExistingDomain(t *testing.T) {
 func TestBuildRefusesFallbackItself(t *testing.T) {
 	c, l := setup(t)
 	notes, _, _ := l.List()
-	if _, err := Build(c, l, notes, "common", ""); err == nil {
+	if _, err := Build(c, l, notes, []string{"common"}, ""); err == nil {
 		t.Error("폴백 도메인 자신으로 떼어내려는데 에러가 안 났다")
 	}
 }

@@ -394,13 +394,13 @@ func newDomainSplitCmd() *cobra.Command {
 	var as, path string
 	var apply bool
 	cmd := &cobra.Command{
-		Use:   "split <낱말>",
+		Use:   "split <낱말>...",
 		Short: "폴백 도메인에 쌓인 프로젝트를 새 도메인으로 떼어낸다 (기본은 계획만)",
 		Long: "`prior doctor` 의 폴백 적체 검사가 찾아낸 프로젝트를 자기 도메인으로 옮긴다.\n\n" +
 			"결정 노트를 옮기고 파일명·frontmatter 의 domain 을 바꾸며, 그 노트를 가리키던\n" +
 			"위키링크를 볼트 전체에서 고친다.\n\n" +
 			"**되돌리기는 git 이다.** 볼트에 커밋하지 않은 변경이 있으면 먼저 정리해라.",
-		Args:          cobra.ExactArgs(1),
+		Args:          cobra.MinimumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -416,12 +416,12 @@ func newDomainSplitCmd() *cobra.Command {
 			for _, sk := range skipped {
 				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ 읽지 못해 대상에서 빠졌다: %s\n", l.RelPath(sk.Path))
 			}
-			p, err := split.Build(c, l, notes, args[0], as)
+			p, err := split.Build(c, l, notes, args, as)
 			if err != nil {
 				return err
 			}
 			if len(p.Moves) == 0 {
-				fmt.Fprintf(out, "%s/ 에서 %q 로 옮길 결정이 없다\n", c.DefaultDomain, args[0])
+				fmt.Fprintf(out, "%s/ 에서 %v 로 옮길 결정이 없다\n", c.DefaultDomain, args)
 				return nil
 			}
 			fmt.Fprintf(out, "도메인 %s ← %s/ 결정 %d건\n", p.Prefix, c.DefaultDomain, len(p.Moves))
