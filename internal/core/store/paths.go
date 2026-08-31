@@ -82,6 +82,25 @@ func (l *Layout) DecisionPath(prefix, slug, date string) (string, error) {
 	return filepath.Join(dir, NFC(name)), nil
 }
 
+// DecisionPathIn 은 **아직 설정에 없는 도메인**의 결정 경로를 만든다.
+//
+// `DecisionPath` 는 `FolderFor` 로 폴더를 찾으므로 선언되지 않은 접두어에서는
+// 에러가 난다. 그게 맞다 — 기록은 선언된 곳에만 해야 한다. 하지만 `prior domain
+// split` 은 **도메인을 만들기 전에 계획을 보여 줘야 해서**(설정을 고치기 전에
+// 사람이 옮길 목록을 봐야 한다) 그 순서가 뒤집힌다. 폴더를 인자로 받는다.
+func (l *Layout) DecisionPathIn(folder, prefix, slug, date string) (string, error) {
+	folder = strings.TrimSpace(folder)
+	if folder == "" {
+		return "", fmt.Errorf("폴더 이름이 비었다")
+	}
+	rel := strings.ReplaceAll(l.c.Naming.DecisionsDir, "{project}", folder)
+	name := l.c.Naming.DecisionFile
+	name = strings.ReplaceAll(name, "{domain}", prefix)
+	name = strings.ReplaceAll(name, "{slug}", Slugify(slug))
+	name = strings.ReplaceAll(name, "{date}", date)
+	return filepath.Join(l.vault, rel, NFC(name)), nil
+}
+
 // PrefixOf 는 stem 에서 도메인 접두어를 뽑는다. 규약에 안 맞으면 빈 문자열.
 func (l *Layout) PrefixOf(stem string) string {
 	if l.marker == "" {

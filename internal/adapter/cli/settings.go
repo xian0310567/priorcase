@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/split"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/transcript/hosts"
 )
@@ -381,7 +382,88 @@ func newDomainCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.AddCommand(bind)
+	cmd.AddCommand(bind, newDomainSplitCmd())
+	return cmd
+}
+
+// newDomainSplitCmd 는 폴백 도메인에 쌓인 프로젝트를 떼어낸다.
+//
+// `prior doctor` 의 **폴백 적체** 검사가 찾아낸 것을 실행하는 자리다. 그 검사가
+// 이 명령을 가리키므로 둘은 짝이다 — 한쪽만 있으면 진단이 갈 곳을 잃는다.
+func newDomainSplitCmd() *cobra.Command {
+	var as, path string
+	var apply bool
+	cmd := &cobra.Command{
+		Use:   "split <낱말>",
+		Short: "폴백 도메인에 쌓인 프로젝트를 새 도메인으로 떼어낸다 (기본은 계획만)",
+		Long: "`prior doctor` 의 폴백 적체 검사가 찾아낸 프로젝트를 자기 도메인으로 옮긴다.\n\n" +
+			"결정 노트를 옮기고 파일명·frontmatter 의 domain 을 바꾸며, 그 노트를 가리키던\n" +
+			"위키링크를 볼트 전체에서 고친다.\n\n" +
+			"**되돌리기는 git 이다.** 볼트에 커밋하지 않은 변경이 있으면 먼저 정리해라.",
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, l, err := loadFrom(cmd)
+			if err != nil {
+				return err
+			}
+			notes, skipped, err := l.List()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			for _, sk := range skipped {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ 읽지 못해 대상에서 빠졌다: %s\n", l.RelPath(sk.Path))
+			}
+			p, err := split.Build(c, l, notes, args[0], as)
+			if err != nil {
+				return err
+			}
+			if len(p.Moves) == 0 {
+				fmt.Fprintf(out, "%s/ 에서 %q 로 옮길 결정이 없다\n", c.DefaultDomain, args[0])
+				return nil
+			}
+			fmt.Fprintf(out, "도메인 %s ← %s/ 결정 %d건\n", p.Prefix, c.DefaultDomain, len(p.Moves))
+			for _, m := range p.Moves {
+				fmt.Fprintf(out, "  %s\n    → %s\n", m.OldStem, m.NewStem)
+			}
+			if n := len(p.Relinks); n > 0 {
+				total := 0
+				for _, r := range p.Relinks {
+					total += r.Count
+				}
+				fmt.Fprintf(out, "위키링크 %d개를 문서 %d건에서 고친다\n", total, n)
+			}
+			for _, s := range p.Skipped {
+				fmt.Fprintf(out, "건너뜀: %s\n", s)
+			}
+			if !apply {
+				fmt.Fprintf(out, "\n계획만 냈다. 실행하려면 --apply 를 붙여라 (되돌리기는 git 이다).\n")
+				return nil
+			}
+			// **설정을 먼저 고친다.** 파일을 옮겨 놓고 설정이 실패하면 그 폴더는
+			// 미선언 도메인이 되어 회수에서 통째로 빠진다 — doctor 가 잡기는 하지만
+			// 그 사이에 조용히 안 보인다. 순서를 뒤집으면 그 창이 없다.
+			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
+				var paths []string
+				if path != "" {
+					paths = []string{path}
+				}
+				return config.AddDomain(src, p.Prefix, p.Folder, paths)
+			}); err != nil {
+				return err
+			}
+			if err := split.Apply(p); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "옮겼다: 결정 %d건 → %s\n", len(p.Moves), l.RelPath(p.Dir))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&as, "as", "", "새 도메인 접두어 (기본: 낱말 그대로)")
+	cmd.Flags().StringVar(&path, "path", "", "이 프로젝트의 작업 경로 (설정의 paths 에 넣는다)")
+	cmd.Flags().BoolVar(&apply, "apply", false, "실제로 옮긴다")
 	return cmd
 }
 

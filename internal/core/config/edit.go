@@ -409,3 +409,52 @@ func SetHost(src []byte, name string, enabled bool, root string) ([]byte, error)
 		c.Host = append(c.Host, h)
 	})
 }
+
+// AddDomain 은 도메인 블록 하나를 새로 만든다.
+//
+// **`BindDomain` 과 짝이지만 반대 방향이다.** 그쪽은 이미 있는 도메인을 고치고,
+// 여기는 없던 도메인을 만든다. 만드는 쪽이 필요해진 이유는 `prior doctor` 의
+// 폴백 적체 검사다(health/fallback.go) — 도메인이 없어 `common` 에 쌓인 프로젝트를
+// 찾아내는데, 찾아 놓고 손으로 TOML 을 열어 적게 하면 그 검사는 안 읽힌다.
+//
+// 파일 끝에 붙인다. `[[domain]]` 은 테이블 배열이라 뒤에 아무것도 없어 삼킬 것이
+// 없다 (SetHost 와 같은 근거).
+func AddDomain(src []byte, prefix, folder string, paths []string) ([]byte, error) {
+	prefix, folder = strings.TrimSpace(prefix), strings.TrimSpace(folder)
+	if prefix == "" {
+		return nil, fmt.Errorf("도메인 접두어가 비었다")
+	}
+	if folder == "" {
+		folder = prefix
+	}
+	cur, err := parseBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("지금 설정을 읽을 수 없어 고칠 수 없다: %w", err)
+	}
+	for _, d := range cur.Domain {
+		if d.Prefix == prefix {
+			return nil, fmt.Errorf("도메인 %q 는 이미 설정에 있다", prefix)
+		}
+	}
+	var clean []string
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" {
+			clean = append(clean, p)
+		}
+	}
+	return edit(src, func(lines []string) ([]string, error) {
+		lines = trimTrailingBlanks(lines)
+		lines = append(lines, "", "[[domain]]",
+			"prefix = "+tomlString(prefix), "folder = "+tomlString(folder))
+		if len(clean) > 0 {
+			q := make([]string, 0, len(clean))
+			for _, p := range clean {
+				q = append(q, tomlString(p))
+			}
+			lines = append(lines, "paths  = ["+strings.Join(q, ", ")+"]")
+		}
+		return lines, nil
+	}, func(c *Config) {
+		c.Domain = append(c.Domain, Domain{Prefix: prefix, Folder: folder, Paths: clean})
+	})
+}
