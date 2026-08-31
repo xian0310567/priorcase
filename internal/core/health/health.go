@@ -79,6 +79,32 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkVaultDir(r, c)
 	checkStaleKeys(r, c, l)
 	checkDomainFolders(r, c, l)
+	content(r, c, l)
+	checkSync(r, c)
+	checkBuildDrift(r, c, sync.ThisBuild())
+	return r
+}
+
+// Content 는 **한 볼트 안의 것만** 검사한다.
+//
+// # 왜 따로 필요한가
+//
+// `Vault` 는 기본 볼트 하나로 돈다. 볼트가 하나일 때는 그게 전부였는데, 볼트를
+// 가르면(코드주권 결정 2026-08-31) 나머지 볼트의 깨진 링크·못 읽는 노트·뒤집힌
+// 결정이 **한 번도 검사되지 않는다.** 그리고 조용하다 — 초록불이 뜬다.
+//
+// 이 패키지의 존재 이유가 "고장이 정상과 구별되지 않는 것" 이라 그 상태를 두면
+// 여기가 스스로를 부정한다. 부르는 쪽(doctor)이 볼트마다 이것을 돌린다.
+//
+// 전역 검사(볼트 디렉토리·동기화·판 드리프트)는 여기 없다 — 이미 자기들이
+// `c.Vaults` 를 전부 돈다. 볼트마다 부르면 같은 말이 N번 나온다.
+func Content(c *config.Config, l *store.Layout) *Report {
+	r := &Report{}
+	content(r, c, l)
+	return r
+}
+
+func content(r *Report, c *config.Config, l *store.Layout) {
 	checkUndeclared(r, l)
 	checkUnscanned(r, c, l)
 	notes := checkNotes(r, l)
@@ -91,9 +117,6 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkVocabulary(r, notes)
 	checkSynonyms(r, l)
 	checkRules(r, l)
-	checkSync(r, c)
-	checkBuildDrift(r, c, sync.ThisBuild())
-	return r
 }
 
 // RecentDecisions 는 최근 days 일 안에 날짜가 찍힌 결정 수다.

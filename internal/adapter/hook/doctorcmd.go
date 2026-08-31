@@ -55,6 +55,20 @@ func NewDoctorCommand() *cobra.Command {
 			l := store.NewLayout(c)
 			r.Checks = append(r.Checks, health.Vault(c, l).Checks...)
 
+			// **기본이 아닌 볼트도 본다** (health.Content 의 §). 안 보면 그 볼트의
+			// 깨진 링크와 못 읽는 노트가 초록불 뒤에 숨는다 — 회사 볼트를 쓰는
+			// 팀원에게는 그쪽이 유일한 볼트다.
+			def, _ := c.DefaultVault()
+			for _, v := range c.Vaults {
+				if v.Path == def.Path {
+					continue
+				}
+				for _, ck := range health.Content(c, store.NewLayoutFor(c, v)).Checks {
+					ck.Name = v.Name + "·" + ck.Name
+					r.Checks = append(r.Checks, ck)
+				}
+			}
+
 			if settingsPath == "" {
 				if home, err := os.UserHomeDir(); err == nil {
 					settingsPath = filepath.Join(home, ".claude", "settings.json")

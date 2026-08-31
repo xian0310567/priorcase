@@ -23,8 +23,18 @@ var skipDirs = map[string]bool{
 	".obsidian": true, ".git": true, ".trash": true, "_derived": true,
 }
 
-// scanRelinks 는 옮겨질 stem 을 가리키는 문서를 찾는다.
-func scanRelinks(vault string, renames map[string]string) []Relink {
+// scanRelinks 는 옮겨질 stem 을 가리키는 문서를 **볼트 전부에서** 찾는다.
+func scanRelinks(roots []string, renames map[string]string) []Relink {
+	var out []Relink
+	seen := map[string]bool{}
+	for _, root := range roots {
+		out = append(out, scanRelinksIn(root, renames, seen)...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+func scanRelinksIn(vault string, renames map[string]string, seen map[string]bool) []Relink {
 	var out []Relink
 	_ = filepath.WalkDir(vault, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -43,12 +53,15 @@ func scanRelinks(vault string, renames map[string]string) []Relink {
 		if rerr != nil {
 			return nil
 		}
+		if seen[p] {
+			return nil // 볼트가 겹쳐 있으면 같은 파일을 두 번 고칠 뻔한다
+		}
 		if n := countLinks(string(b), renames); n > 0 {
+			seen[p] = true
 			out = append(out, Relink{Path: p, Count: n})
 		}
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 

@@ -151,9 +151,32 @@ func (l *Layout) ResolveStem(stem string) (string, error) {
 //
 // 존재 여부는 보지 않는다 — 폴더는 그 도메인의 첫 결정을 쓸 때 만들어지므로,
 // 아직 없는 것이 정상이다. 존재를 알고 싶으면 호출자가 stat 한다.
+// DecisionDirs 는 **이 볼트가 가진 도메인의** 결정 폴더다.
+//
+// # 왜 볼트로 거르는가
+//
+// `decisionsDir` 는 도메인의 볼트를 안 보고 `{project}/decisions` 를 지금 볼트에
+// 그대로 이어 붙인다. 볼트가 하나일 때는 그게 맞았다 — 전부 같은 볼트니까.
+//
+// 볼트를 가르면(코드주권 결정 2026-08-31: 개인 볼트 + 회사 볼트) 걸러야 한다.
+// 안 걸면 개인 볼트에서 `개인볼트/editup/decisions` 를 훑는데, 그건 존재하지 않는
+// 자리라 조용히 건너뛴다. 결과는 셋이다:
+//
+//	① `prior doctor` 의 "도메인 폴더" 가 남의 볼트 도메인을 "아직 없음" 으로 센다
+//	② 볼트마다 도는 검사가 남의 도메인까지 자기 것으로 셈해 판정이 흐려진다
+//	③ 읽을 자리가 아닌 곳을 매 회수마다 stat 한다
+//
+// **쓰기 경로는 이 함수를 안 쓴다.** `Layout.For(prefix)` 가 도메인의 볼트를 직접
+// 찾아가므로(그 함수의 §) 회사 결정은 cwd 와 무관하게 회사 볼트에 쓰인다.
+// 여기는 읽기 쪽 — "이 볼트에 무엇이 있는가" 다.
+//
+// 볼트가 하나면 전 도메인이 그 볼트로 풀리므로 결과가 예전과 같다.
 func (l *Layout) DecisionDirs() []string {
 	var out []string
 	for _, d := range l.c.Domain {
+		if !l.owns(d.Prefix) {
+			continue
+		}
 		if p, err := l.decisionsDir(d.Prefix); err == nil {
 			out = append(out, p)
 		}
@@ -161,10 +184,30 @@ func (l *Layout) DecisionDirs() []string {
 	return out
 }
 
+// owns 는 그 도메인이 이 볼트에 사는지다.
+//
+// 볼트를 못 풀면 **가진 것으로 본다** — 설정이 깨졌을 때 조용히 사라지는 것보다
+// 한 번 더 훑고 doctor 가 말하게 하는 편이 낫다.
+func (l *Layout) owns(prefix string) bool {
+	v, err := l.c.VaultFor(prefix)
+	if err != nil {
+		return true
+	}
+	return v.Path == l.vault
+}
+
 // RelPath 는 절대 경로를 볼트 상대 경로로 바꾼다.
 func (l *Layout) RelPath(p string) string {
 	if rel, err := filepath.Rel(l.vault, p); err == nil {
-		return rel
+		// **다른 볼트의 파일은 상대 경로로 그리지 않는다.**
+		//
+		// 볼트가 여럿이면 `../work/acme/decisions/…` 같은 문자열이 나오는데,
+		// 그건 "이 볼트 기준 어딘가" 라는 뜻이라 어느 볼트인지 읽을 수가 없다.
+		// 볼트를 넘으면 절대 경로가 정직하다.
+		if !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return rel
+		}
+		return p
 	}
 	return p
 }

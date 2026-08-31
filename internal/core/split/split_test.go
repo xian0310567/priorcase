@@ -38,7 +38,7 @@ func build(t *testing.T, c *config.Config, l *store.Layout, token, as string) *P
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := Build(c, l, notes, []string{token}, as)
+	p, err := Build(c, l, l, notes, []string{token}, as)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestBuildRefusesExistingDomain(t *testing.T) {
 	c, l := setup(t)
 	write(t, l, "common-결정-alpha-무언가-2026-08-28", "common", "alpha 어쩌고", "본문")
 	notes, _, _ := l.List()
-	if _, err := Build(c, l, notes, []string{"alpha"}, ""); err == nil {
+	if _, err := Build(c, l, l, notes, []string{"alpha"}, ""); err == nil {
 		t.Error("이미 있는 도메인으로 떼어내려는데 에러가 안 났다")
 	}
 }
@@ -159,7 +159,7 @@ func TestBuildRefusesExistingDomain(t *testing.T) {
 func TestBuildRefusesFallbackItself(t *testing.T) {
 	c, l := setup(t)
 	notes, _, _ := l.List()
-	if _, err := Build(c, l, notes, []string{"common"}, ""); err == nil {
+	if _, err := Build(c, l, l, notes, []string{"common"}, ""); err == nil {
 		t.Error("폴백 도메인 자신으로 떼어내려는데 에러가 안 났다")
 	}
 }
@@ -167,5 +167,65 @@ func TestBuildRefusesFallbackItself(t *testing.T) {
 func TestApplyIsNoopWithoutMoves(t *testing.T) {
 	if err := Apply(&Plan{}); err != nil {
 		t.Errorf("옮길 것이 없는데 에러가 났다: %v", err)
+	}
+}
+
+// ★ 볼트를 건너 옮긴다.
+//
+// 개인 볼트에 섞여 있는 회사 결정을 회사 볼트로 보내는 것이 이 기능의 첫 용도다
+// (코드주권 결정 2026-08-31). 파일이 다른 볼트에 생기고, **원래 볼트에 남은 노트가
+// 걸어 둔 위키링크도 고쳐져야 한다** — 한쪽만 고치면 링크가 조용히 끊긴다.
+func TestBuildAcrossVaults(t *testing.T) {
+	c, src := setup(t)
+	workDir := t.TempDir()
+	c.Vaults = append(c.Vaults, config.Vault{Name: "work", Path: workDir})
+	dst := store.NewLayoutFor(c, config.Vault{Name: "work", Path: workDir})
+
+	old := "common-결정-twincrew-라우터-2026-08-28"
+	write(t, src, old, "common", "twincrew 라우터", "본문")
+	// 개인 볼트에 남는 노트가 그것을 가리킨다.
+	citer := write(t, src, "beta-결정-인용-2026-08-28", "beta", "인용한다",
+		"앞 결정 [["+old+"]] 을 본다")
+
+	notes, _, err := src.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Build(c, src, dst, notes, []string{"twincrew"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Moves) != 1 {
+		t.Fatalf("옮길 노트가 %d건", len(p.Moves))
+	}
+	if !strings.HasPrefix(p.Moves[0].To, workDir) {
+		t.Errorf("도착 경로가 회사 볼트 밖이다: %s", p.Moves[0].To)
+	}
+	if len(p.Relinks) != 1 {
+		t.Fatalf("링크를 고칠 문서가 %d건 — 원래 볼트의 인용 1건이어야 한다", len(p.Relinks))
+	}
+	if err := Apply(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p.Moves[0].To); err != nil {
+		t.Errorf("회사 볼트에 파일이 없다: %v", err)
+	}
+	if _, err := os.Stat(p.Moves[0].From); !os.IsNotExist(err) {
+		t.Errorf("개인 볼트에 옛 파일이 남았다")
+	}
+	b, err := os.ReadFile(citer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), old) {
+		t.Errorf("볼트를 건넜는데 원래 볼트의 링크가 안 고쳐졌다:\n%s", b)
+	}
+}
+
+// 없는 볼트 이름은 조용히 기본 볼트로 떨어지지 않는다.
+func TestVaultNamedRejectsUnknown(t *testing.T) {
+	c, _ := setup(t)
+	if _, err := c.VaultNamed("없는볼트"); err == nil {
+		t.Error("모르는 볼트 이름인데 에러가 안 났다 — 회사 결정이 개인 볼트에 쌓인다")
 	}
 }

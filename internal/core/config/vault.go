@@ -200,3 +200,29 @@ func (c *Config) NewVaultPath(name string) (string, error) {
 	}
 	return p, nil
 }
+
+// VaultNamed 는 이름으로 볼트를 찾는다.
+//
+// **없는 이름을 조용히 기본 볼트로 떨어뜨리지 않는다.** `--vault work` 오타 하나가
+// 회사 결정을 개인 볼트에 쌓는데 아무 말도 안 하면, 그 사실은 팀원이 그 노트를
+// 못 찾을 때에야 드러난다 — hook.ParseHost 가 모르는 호스트를 거부하는 것과 같은
+// 이유다.
+func (c *Config) VaultNamed(name string) (Vault, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return c.DefaultVault()
+	}
+	for _, v := range c.Vaults {
+		if v.Name == name {
+			return v, nil
+		}
+	}
+	var names []string
+	for _, v := range c.Vaults {
+		if v.Name != "" {
+			names = append(names, v.Name)
+		}
+	}
+	return Vault{}, fmt.Errorf("볼트 %q 가 설정에 없다 (있는 것: %s)",
+		name, strings.Join(names, ", "))
+}

@@ -45,6 +45,7 @@ type Relink struct {
 type Plan struct {
 	Prefix  string // 새 도메인 접두어
 	Folder  string // 볼트 안 폴더 이름
+	Vault   string // 새 도메인이 살 볼트 이름 (빈 값이면 기본 볼트)
 	Dir     string // 새 결정 폴더의 절대 경로
 	Moves   []Move
 	Relinks []Relink
@@ -61,7 +62,15 @@ var stemDate = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 // `twincrew`(13건)와 `lg`(10건)가 같은 프로젝트였고, 롯데 건은 `롯데`(3건)와
 // `lotte`(2건)로 갈렸다. 하나만 받으면 나머지 이름의 노트가 폴백에 남고, 도메인이
 // 이미 생겨 버려서 두 번째 실행이 막힌다. 합집합으로 한 번에 옮긴다.
-func Build(c *config.Config, l *store.Layout, notes []store.Note, tokens []string, prefix string) (*Plan, error) {
+// Build 의 볼트 둘
+//
+// `src` 는 지금 결정이 쌓여 있는 볼트(폴백 도메인이 사는 곳)이고 `dst` 는 새 도메인이
+// 살 볼트다. 같아도 되고 달라도 된다.
+//
+// **다를 수 있어야 하는 이유**: 개인 볼트에 섞여 있는 회사 결정을 회사 볼트로
+// 보내는 것이 이 기능의 첫 용도다(코드주권 결정 2026-08-31). 한 볼트 안에서만
+// 옮길 수 있으면 그 이관을 손으로 해야 하고, 손으로 하면 위키링크가 끊긴다.
+func Build(c *config.Config, src, dst *store.Layout, notes []store.Note, tokens []string, prefix string) (*Plan, error) {
 	var toks []string
 	for _, t := range tokens {
 		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
@@ -88,7 +97,7 @@ func Build(c *config.Config, l *store.Layout, notes []store.Note, tokens []strin
 	}
 
 	p := &Plan{Prefix: prefix, Folder: prefix}
-	marker := l.DecisionMarker()
+	marker := src.DecisionMarker()
 	if marker == "" {
 		return nil, fmt.Errorf("결정 파일명 규약(decision_file)에서 표식을 유도할 수 없다")
 	}
@@ -114,7 +123,7 @@ func Build(c *config.Config, l *store.Layout, notes []store.Note, tokens []strin
 		if cand == "" || taken[newStem(prefix, marker, cand, date)] {
 			cand = slug // 부딪히면 원래 slug 를 쓴다 — 잃는 것보다 중복이 낫다
 		}
-		to, err := l.DecisionPathIn(p.Folder, prefix, cand, date)
+		to, err := dst.DecisionPathIn(p.Folder, prefix, cand, date)
 		if err != nil {
 			return nil, fmt.Errorf("%s: 새 경로를 만들 수 없다: %w", n.Stem, err)
 		}
@@ -138,7 +147,7 @@ func Build(c *config.Config, l *store.Layout, notes []store.Note, tokens []strin
 	for _, m := range p.Moves {
 		renames[m.OldStem] = m.NewStem
 	}
-	p.Relinks = scanRelinks(l.Vault(), renames)
+	p.Relinks = scanRelinks(vaultRoots(c, src, dst), renames)
 	return p, nil
 }
 
@@ -177,4 +186,25 @@ func matchesAny(head string, tokens []string) bool {
 		}
 	}
 	return false
+}
+
+// vaultRoots 는 **링크를 고쳐야 할 수 있는 모든 볼트 뿌리**다.
+//
+// 옮기는 볼트 둘만 보면 안 된다 — 세 번째 볼트의 노트가 옮겨진 stem 을 가리키고
+// 있으면 그 링크는 조용히 끊긴다. 볼트는 몇 개뿐이라 전부 훑어도 싸다.
+func vaultRoots(c *config.Config, src, dst *store.Layout) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	add(src.Vault())
+	add(dst.Vault())
+	for _, v := range c.Vaults {
+		add(v.Path)
+	}
+	return out
 }

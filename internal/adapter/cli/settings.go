@@ -172,19 +172,22 @@ func collectSettings(cmd *cobra.Command) (settingsOut, error) {
 		})
 	}
 
-	l := store.NewLayout(c)
 	for _, v := range c.Vaults {
 		vo := vaultOut{Name: v.Name, Path: v.Path, Domains: byVault[v.Name]}
 		if st, serr := os.Stat(v.Path); serr == nil && st.IsDir() {
 			vo.Exists = true
-			if ll, lerr := l.For(prefixUsing(c, v.Name)); lerr == nil {
-				notes, skipped, nerr := ll.List()
-				if nerr == nil {
-					vo.Decisions = len(notes)
-					if len(skipped) > 0 {
-						out.Warnings = append(out.Warnings,
-							fmt.Sprintf("볼트 %s 의 결정 노트 %d건을 읽지 못했다", v.Name, len(skipped)))
-					}
+			// **볼트에서 곧장 레이아웃을 만든다.**
+			//
+			// 예전에는 그 볼트를 쓰는 도메인 하나를 찾아(prefixUsing) 거기서
+			// 레이아웃을 얻었다. 그런데 아직 아무 도메인도 안 엮인 볼트는 빈
+			// 접두어가 나오고, 그러면 VaultFor 가 **기본 볼트로 떨어뜨린다** —
+			// 방금 만든 빈 볼트가 기본 볼트의 결정 수를 그대로 달고 나왔다.
+			// 사람은 그걸 보고 "이미 옮겨졌다" 로 읽는다.
+			if notes, skipped, nerr := store.NewLayoutFor(c, v).List(); nerr == nil {
+				vo.Decisions = len(notes)
+				if len(skipped) > 0 {
+					out.Warnings = append(out.Warnings,
+						fmt.Sprintf("볼트 %s 의 결정 노트 %d건을 읽지 못했다", v.Name, len(skipped)))
 				}
 			}
 		} else {
@@ -222,20 +225,6 @@ func collectSettings(cmd *cobra.Command) (settingsOut, error) {
 		out.Hosts = append(out.Hosts, ho)
 	}
 	return out, nil
-}
-
-// prefixUsing 은 그 볼트를 쓰는 도메인 접두어 하나를 준다. Layout.For 는
-// 도메인으로 볼트를 고르므로, 볼트를 직접 지목할 통로가 없다.
-func prefixUsing(c *config.Config, vault string) string {
-	for _, d := range c.Domain {
-		if d.Vault == vault {
-			return d.Prefix
-		}
-		if d.Vault == "" && vault == config.DefaultVaultName {
-			return d.Prefix
-		}
-	}
-	return ""
 }
 
 func printSettings(cmd *cobra.Command, s settingsOut) {
@@ -391,7 +380,7 @@ func newDomainCmd() *cobra.Command {
 // `prior doctor` 의 **폴백 적체** 검사가 찾아낸 것을 실행하는 자리다. 그 검사가
 // 이 명령을 가리키므로 둘은 짝이다 — 한쪽만 있으면 진단이 갈 곳을 잃는다.
 func newDomainSplitCmd() *cobra.Command {
-	var as, path string
+	var as, path, vault string
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "split <낱말>...",
@@ -416,7 +405,19 @@ func newDomainSplitCmd() *cobra.Command {
 			for _, sk := range skipped {
 				fmt.Fprintf(cmd.ErrOrStderr(), "⚠ 읽지 못해 대상에서 빠졌다: %s\n", l.RelPath(sk.Path))
 			}
-			p, err := split.Build(c, l, notes, args, as)
+			// **도착 볼트를 먼저 정한다.** 새 도메인은 그 볼트에 산다.
+			dst := l
+			if vault != "" {
+				v, verr := c.VaultNamed(vault)
+				if verr != nil {
+					return verr
+				}
+				dst = store.NewLayoutFor(c, v)
+			}
+			p, err := split.Build(c, l, dst, notes, args, as)
+			if err == nil {
+				p.Vault = vault
+			}
 			if err != nil {
 				return err
 			}
@@ -424,7 +425,12 @@ func newDomainSplitCmd() *cobra.Command {
 				fmt.Fprintf(out, "%s/ 에서 %v 로 옮길 결정이 없다\n", c.DefaultDomain, args)
 				return nil
 			}
-			fmt.Fprintf(out, "도메인 %s ← %s/ 결정 %d건\n", p.Prefix, c.DefaultDomain, len(p.Moves))
+			where := ""
+			if p.Vault != "" {
+				where = fmt.Sprintf(" (볼트 %s)", p.Vault)
+			}
+			fmt.Fprintf(out, "도메인 %s%s ← %s/ 결정 %d건\n",
+				p.Prefix, where, c.DefaultDomain, len(p.Moves))
 			for _, m := range p.Moves {
 				fmt.Fprintf(out, "  %s\n    → %s\n", m.OldStem, m.NewStem)
 			}
@@ -450,7 +456,7 @@ func newDomainSplitCmd() *cobra.Command {
 				if path != "" {
 					paths = []string{path}
 				}
-				return config.AddDomain(src, p.Prefix, p.Folder, paths)
+				return config.AddDomain(src, p.Prefix, p.Folder, p.Vault, paths)
 			}); err != nil {
 				return err
 			}
@@ -463,6 +469,8 @@ func newDomainSplitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&as, "as", "", "새 도메인 접두어 (기본: 낱말 그대로)")
 	cmd.Flags().StringVar(&path, "path", "", "이 프로젝트의 작업 경로 (설정의 paths 에 넣는다)")
+	cmd.Flags().StringVar(&vault, "vault", "",
+		"새 도메인이 살 볼트 (비우면 기본 볼트) — 회사 결정을 회사 볼트로 보낼 때 쓴다")
 	cmd.Flags().BoolVar(&apply, "apply", false, "실제로 옮긴다")
 	return cmd
 }

@@ -417,10 +417,16 @@ func SetHost(src []byte, name string, enabled bool, root string) ([]byte, error)
 // 폴백 적체 검사다(health/fallback.go) — 도메인이 없어 `common` 에 쌓인 프로젝트를
 // 찾아내는데, 찾아 놓고 손으로 TOML 을 열어 적게 하면 그 검사는 안 읽힌다.
 //
+// **볼트를 같이 받는다.** 이 워크스페이스는 개인 볼트와 회사 볼트를 가르기로 했고
+// (코드주권 결정 2026-08-31), 새 도메인이 어느 쪽으로 갈지는 만드는 순간 정해져야
+// 한다. 나중에 `prior domain bind` 로 옮기면 이미 그 볼트에 쌓인 결정이 남는다 —
+// 회사 결정이 개인 볼트에 하루라도 머무는 것이 이 분리로 막으려는 바로 그 일이다.
+//
 // 파일 끝에 붙인다. `[[domain]]` 은 테이블 배열이라 뒤에 아무것도 없어 삼킬 것이
 // 없다 (SetHost 와 같은 근거).
-func AddDomain(src []byte, prefix, folder string, paths []string) ([]byte, error) {
+func AddDomain(src []byte, prefix, folder, vault string, paths []string) ([]byte, error) {
 	prefix, folder = strings.TrimSpace(prefix), strings.TrimSpace(folder)
+	vault = strings.TrimSpace(vault)
 	if prefix == "" {
 		return nil, fmt.Errorf("도메인 접두어가 비었다")
 	}
@@ -436,6 +442,20 @@ func AddDomain(src []byte, prefix, folder string, paths []string) ([]byte, error
 			return nil, fmt.Errorf("도메인 %q 는 이미 설정에 있다", prefix)
 		}
 	}
+	// **없는 볼트로 엮으면 그 도메인의 기록이 통째로 갈 곳을 잃는다** (BindDomain 과 같은 검사).
+	// 빈 값은 "기본 볼트" 라는 뜻이므로 허용한다.
+	if vault != "" {
+		known := false
+		for _, v := range cur.Vaults {
+			if v.Name == vault {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return nil, fmt.Errorf("볼트 %q 가 설정에 없다 — 먼저 만들어야 한다 (prior vault add %s)", vault, vault)
+		}
+	}
 	var clean []string
 	for _, p := range paths {
 		if p = strings.TrimSpace(p); p != "" {
@@ -446,6 +466,11 @@ func AddDomain(src []byte, prefix, folder string, paths []string) ([]byte, error
 		lines = trimTrailingBlanks(lines)
 		lines = append(lines, "", "[[domain]]",
 			"prefix = "+tomlString(prefix), "folder = "+tomlString(folder))
+		// **볼트는 prefix 바로 아래에 둔다** — 사람이 블록을 훑을 때 "이건 어느
+		// 볼트인가" 가 가장 먼저 궁금한 값이고, BindDomain 도 그 자리에 넣는다.
+		if vault != "" {
+			lines = append(lines, "vault  = "+tomlString(vault))
+		}
 		if len(clean) > 0 {
 			q := make([]string, 0, len(clean))
 			for _, p := range clean {
@@ -455,6 +480,8 @@ func AddDomain(src []byte, prefix, folder string, paths []string) ([]byte, error
 		}
 		return lines, nil
 	}, func(c *Config) {
-		c.Domain = append(c.Domain, Domain{Prefix: prefix, Folder: folder, Paths: clean})
+		c.Domain = append(c.Domain, Domain{
+			Prefix: prefix, Folder: folder, Vault: vault, Paths: clean,
+		})
 	})
 }
