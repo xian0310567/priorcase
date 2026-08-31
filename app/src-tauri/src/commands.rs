@@ -52,15 +52,89 @@ pub fn to_cmd_error(e: PriorError) -> CmdError {
 
 /// prior_bin 은 부를 바이너리 경로다.
 ///
-/// 환경변수로 덮을 수 있게 두는 이유는 **테스트다** — 가짜 prior 로 각 오류 화면을
-/// 재현하는 유일한 문이다. 기본은 PATH 의 prior 다.
+/// # 찾는 순서: 환경변수 → PATH → 앱 안에 번들된 것
+///
+/// **PATH 가 번들보다 먼저다.** 둘의 갱신 주기가 다르기 때문이다 — CLI 는 npm 으로
+/// 자주 갱신되고(`npm i -g priorcase`) 앱 셸은 드물게 재배포된다. 번들을 먼저 쓰면
+/// npm 으로 최신을 깐 사람이 **앱을 통해서만 옛 판을 쓰게 되는데**, 그 사실이
+/// 아무 데도 안 보인다.
+///
+/// **번들이 있어야 하는 이유는 그 반대쪽이다.** 사내 배포 대상이 개발자만이 아니다
+/// (윈도우 기획자도 Claude Code 로 작업하고 기록한다). 그 사람에게 "먼저 Node 를
+/// 깔고 npm i -g priorcase 를 치세요" 라고 하면 거기서 멈춘다. 앱 하나로 되어야 한다.
+///
+/// 환경변수가 맨 앞인 이유는 **테스트다** — 가짜 prior 로 각 오류 화면을 재현하는
+/// 유일한 문이다.
+///
+/// 결과를 캐시한다. 이 함수는 커맨드마다 불리는데 PATH 훑기와 디렉터리 읽기를
+/// 매번 하면 그 비용이 화면 응답에 그대로 얹힌다.
 pub fn prior_bin() -> String {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<String> = OnceLock::new();
+
+    // 환경변수는 캐시 밖이다 — 테스트가 한 프로세스에서 여러 가짜를 갈아 끼운다.
     if let Ok(p) = std::env::var("PRIORCASE_APP_BIN") {
         if !p.is_empty() {
             return p;
         }
     }
+    CACHE.get_or_init(resolve_bin).clone()
+}
+
+fn resolve_bin() -> String {
+    if on_path("prior") {
+        return "prior".to_string();
+    }
+    if let Some(p) = bundled_bin() {
+        return p;
+    }
+    // **못 찾아도 "prior" 를 돌려준다.** 그래야 오류 메시지가 그 이름을 담고,
+    // 사람이 "prior 가 없다" 는 것을 안다. 빈 문자열을 주면 그냥 실행 실패다.
     "prior".to_string()
+}
+
+/// on_path 는 PATH 에서 실행 가능한 그 이름을 찾는다.
+///
+/// `which` 를 부르지 않는다 — 윈도우에는 없고, 프로세스를 하나 더 띄우는 값이 있다.
+fn on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    // 윈도우는 확장자가 붙어야 실행된다. PATHEXT 를 다 보지 않고 .exe 만 본다 —
+    // 우리가 배포하는 것이 그것뿐이다.
+    let names: &[&str] = if cfg!(windows) { &["prior.exe"] } else { &["prior"] };
+    let _ = name;
+    std::env::split_paths(&path).any(|dir| {
+        names.iter().any(|n| {
+            let p = dir.join(n);
+            p.is_file()
+        })
+    })
+}
+
+/// bundled_bin 은 앱 실행파일 옆에 딸려 온 prior 를 찾는다 (Tauri externalBin).
+///
+/// 이름을 둘로 보는 이유: Tauri 는 번들할 때 타깃 트리플을 떼고 넣는데, 판에 따라
+/// `prior-<트리플>` 그대로 남는 경우가 있다. **둘 다 보는 것이 싸다** — 못 찾으면
+/// 앱이 통째로 못 도는데, 그 실패를 판 차이로 만들 이유가 없다.
+fn bundled_bin() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let plain = if cfg!(windows) { "prior.exe" } else { "prior" };
+    let p = dir.join(plain);
+    if p.is_file() {
+        return Some(p.to_string_lossy().into_owned());
+    }
+    // `prior-aarch64-apple-darwin` 처럼 트리플이 붙어 있는 판.
+    let entries = std::fs::read_dir(dir).ok()?;
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("prior-") && (!cfg!(windows) || name.ends_with(".exe")) {
+            return Some(e.path().to_string_lossy().into_owned());
+        }
+    }
+    None
 }
 
 pub fn run_queue(bin: &str) -> Result<String, CmdError> {

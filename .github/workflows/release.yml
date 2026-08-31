@@ -83,6 +83,18 @@ jobs:
           workspaces: app/src-tauri
           key: ${{ matrix.target }}
 
+      # **Go 도 필요하다.** 앱에 prior 를 사이드카로 넣기 때문이다 — 그래야 Node 를
+      # 안 깐 사람도 앱 하나로 쓸 수 있다 (bundle-prior.sh 의 §).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - name: prior 사이드카 만들기
+        shell: bash
+        working-directory: .
+        env:
+          PRIORCASE_VERSION: ${{ github.ref_name }}
+        run: app/scripts/bundle-prior.sh ${{ matrix.target }}
+
       - run: pnpm install --frozen-lockfile
       # **프런트 검사를 먼저 건다.** Rust 빌드가 몇 분이라, 타입 오류로 그걸 다
       # 태우고 나서 실패하면 되돌아오는 데만 두 배가 든다.

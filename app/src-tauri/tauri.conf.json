@@ -52,6 +52,9 @@
       }
     },
     "shortDescription": "에이전트가 내린 결정을 기록하고 다음 판단 지점에서 되살린다",
-    "longDescription": "priorcase 설정 콘솔. 볼트·호스트·리모트를 여기서 정하고, 기록과 회수는 prior CLI 가 한다."
+    "longDescription": "priorcase 설정 콘솔. 볼트·호스트·리모트를 여기서 정하고, 기록과 회수는 prior CLI 가 한다.",
+    "externalBin": [
+      "binaries/prior"
+    ]
   }
 }

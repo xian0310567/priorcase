@@ -1,2 +1,15 @@
+# pnpm 11 은 네이티브 빌드 스크립트를 **기본으로 막고** 여기서 허락을 받는다.
+#
+# 원래 이 파일에는 pnpm 이 만들어 둔 플레이스홀더가 그대로 있었다:
+#
+#     allowBuilds:
+#       esbuild: set this to true or false
+#
+# 값이 안 정해져 있으면 `ERR_PNPM_IGNORED_BUILDS` 로 설치가 실패한다. 그런데
+# `pnpm test` 나 `vite build` 는 이미 받아 둔 것으로 그냥 돌아서 **아무도 안 물렸다** —
+# `tauri build` 가 beforeBuildCommand 로 `pnpm install` 을 다시 태우는 순간 드러났다
+# (2026-08-31). CI 의 `--frozen-lockfile` 설치도 같은 자리에서 죽는다.
+#
+# esbuild 는 vite 가 쓰는 네이티브 바이너리라 postinstall 이 필요하다.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true

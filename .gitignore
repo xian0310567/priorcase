@@ -20,3 +20,6 @@ dist/
 app/node_modules/
 app/dist/
 app/src-tauri/target/
+
+# Tauri 사이드카 — 빌드 때 만들어 넣는다 (scripts/bundle-prior.sh)
+app/src-tauri/binaries/
