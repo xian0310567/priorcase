@@ -43,6 +43,9 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newDomainCmd())
 	root.AddCommand(newHostsCmd())
 	root.AddCommand(newBriefCmd())
+	root.AddCommand(newListCmd())
+	root.AddCommand(newShowCmd())
+	root.AddCommand(newEditCmd())
 	return root
 }
 

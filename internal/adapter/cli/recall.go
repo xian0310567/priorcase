@@ -50,6 +50,15 @@ func newRecallCmd() *cobra.Command {
 			// 주입 경로에서만 침묵하게 되는데, 거기가 가장 알아야 하는 자리다.
 			warnSkipped(cmd.ErrOrStderr(), l, skipped)
 			out := cmd.OutOrStdout()
+			if format == "json" {
+				// **앱이 이걸 쓴다.** 파일 탐색기는 이름으로 찾지만 여기는 순위를
+				// 매긴다 — 옵시디언에 없는 것이 이 랭킹이고, 그것이 앱을 만드는
+				// 이유 중 하나다 (2026-09-01 결정).
+				//
+				// 작업 로그는 안 싣는다. 이 통로의 소비자는 목록 화면이고,
+				// 거기에 확정 전 기록이 섞이면 결정과 구별이 안 된다.
+				return recallJSON(out, l, c, hits)
+			}
 			if format == "inject" {
 				// **작업 로그는 여기 안 온다.** inject 의 stdout 은 에이전트
 				// 컨텍스트로 그대로 밀려 들어가는 자동 주입이고, 회수는 Limit 3 ·
@@ -99,7 +108,7 @@ func newRecallCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "human", "출력 형식: human | inject")
+	cmd.Flags().StringVar(&format, "format", "human", "출력 형식: human | inject | json")
 	cmd.Flags().BoolVar(&crossProject, "cross-project", true, "cwd 도메인 밖의 결정도 찾는다")
 	cmd.Flags().IntVar(&limit, "limit", 3, "최대 결과 수")
 	return cmd

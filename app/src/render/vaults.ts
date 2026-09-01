@@ -86,7 +86,13 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
       // 기본 볼트를 고르면 빈 값으로 되돌린다 — 설정에 줄을 남기지 않는다.
       on.bind(d.prefix, sel.value === DEFAULT_VAULT ? "" : sel.value);
     });
-    row.append(sel, el("span", "domain-folder", d.folder));
+    row.append(sel);
+    // **폴더가 접두어와 같으면 안 쓴다.** 열일곱 줄이 전부 `common / common` 처럼
+    // 같은 낱말을 두 번 보여 주고 있었다 — 정보가 아니라 잡음이다. 다른 때만
+    // 보여 주면 그때는 진짜 알아야 할 사실이 된다.
+    if (d.folder && d.folder !== d.prefix) {
+      row.append(el("span", "domain-folder", d.folder));
+    }
     root.append(row);
   }
 }

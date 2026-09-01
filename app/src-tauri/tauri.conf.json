@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "priorcase",
-        "width": 460,
-        "height": 620,
+        "width": 520,
+        "height": 660,
         "resizable": true,
         "visible": false,
         "decorations": true

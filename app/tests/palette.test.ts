@@ -25,15 +25,21 @@ describe("색 토큰", () => {
     expect(hex, `하드코딩된 색: ${hex.join(", ")}`).toEqual([]);
   });
 
-  it("라이트와 다크가 같은 토큰을 정의한다", () => {
-    const names = (block: string) => new Set([...block.matchAll(/(--[a-z-]+):/g)].map((m) => m[1]));
+  it("라이트가 정의한 **색** 토큰을 다크가 전부 덮는다", () => {
+    // **이름이 아니라 값으로 가른다.** `--radius`·`--gap` 처럼 색이 아닌 토큰은
+    // 다크에서 덮을 이유가 없다. 이름 규칙으로 면제하면 그 규칙을 어긴 새 색이
+    // 조용히 빠져나간다 — 이 검사가 막으려는 것이 정확히 그것이다.
+    const decls = (block: string) =>
+      new Map([...block.matchAll(/(--[a-z-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
     const light = css.match(/:root\s*\{([^}]*)\}/)![1];
     const dark = css.match(/@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/)![1];
-    const l = names(light);
-    const d = names(dark);
-    // 다크에 없는 토큰은 라이트 값을 그대로 쓰게 되는데, 그게 바로 이 사고였다.
-    const missing = [...l].filter((n) => !n.startsWith("--font") && !d.has(n));
-    expect(missing, `다크에서 안 덮인 토큰: ${missing.join(", ")}`).toEqual([]);
+    const isColor = (v: string) => /^(#[0-9a-fA-F]{3,8}|rgb|hsl|color-mix)/.test(v);
+    const d = decls(dark);
+    const missing = [...decls(light)]
+      .filter(([, v]) => isColor(v))
+      .map(([n]) => n)
+      .filter((n) => !d.has(n));
+    expect(missing, `다크에서 안 덮인 색: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("배경과 글자색을 body 에 명시한다", () => {

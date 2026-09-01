@@ -2,126 +2,195 @@
  *
  * **예전에는 토큰이 없었다.** `color-scheme: light dark` 를 선언해 OS 가 어두운
  * 배경을 칠하게 해 놓고, 색은 전부 밝은 배경 기준 하드코딩이었다. 다크 모드에서
- * 잰 대비(2026-09-01):
- *
- *   #666 본문 2.90 · #555 진단 2.24 · #2563eb 강조 3.23 · #dc2626 실패 3.45
- *   #0001 구분선 → 검정 6% 라 **아예 안 보인다**
- *
- * 구분선이 사라지니 행 구조가 없는 글자 벽이 됐다. 취향이 아니라 고장이었다.
+ * 잰 대비(2026-09-01): #666 본문 2.90 · #555 진단 2.24 · #0001 구분선은 검정 6%
+ * 라 아예 안 보였다. 구분선이 사라지니 행 구조가 없는 글자 벽이 됐다.
  *
  * 값은 WCAG AA(4.5:1)를 양쪽 모드에서 넘도록 골랐다. 아래 숫자는 실측이다.
  * 색을 바꿀 때 이 대비를 다시 재라 — 눈으로는 3.2 와 4.6 이 잘 안 갈린다.
+ *
+ * # 결이 노션인 이유
+ *
+ * 이 앱은 앞으로 **문서를 읽는 자리**가 된다(볼트의 결정 노트 조회). 그러면
+ * 화면의 일이 "설정을 조작한다" 에서 "글을 읽는다" 로 옮겨간다. 노션의 규칙이
+ * 그 둘을 같이 감당한다: 선을 거의 안 쓰고 여백으로 가르며, 컨트롤은 손이
+ * 닿기 전까지 조용하고, 색은 뜻이 있을 때만 쓴다.
+ *
+ * 노션 원값(#37352f·#2383e2)은 그대로 못 쓴다 — 흰 배경에서 각각 12.3 은
+ * 넉넉하지만 파랑이 3.88 이라 AA 에 못 미친다. 결은 지키고 명도만 올렸다.
  */
 :root {
   color-scheme: light dark;
   font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 
-  --bg: #fbfbfd;
-  --bg-sunken: #0000000a;   /* 코드·배지처럼 살짝 가라앉은 자리 */
-  --fg: #1c1c1e;            /* 16.5 */
-  --fg-dim: #5a5a60;        /*  6.6 — 부연 설명 */
-  --fg-faint: #6e6e75;      /*  4.9 — 경로·메타 */
-  --line: #00000018;
-  --line-strong: #00000028;
-  --accent: #0a5fd0;        /*  5.7 */
+  --bg: #ffffff;
+  --bg-hover: #f4f3f0;      /* 행에 손이 닿았을 때 */
+  --bg-sunken: #f7f6f3;     /* 코드·배지처럼 살짝 가라앉은 자리 */
+  --fg: #37352f;            /* 12.3 — 노션의 따뜻한 먹색 */
+  --fg-dim: #6b6a67;        /*  5.4 — 부연 설명 */
+  --fg-faint: #76756f;      /*  4.6 — 경로·메타 */
+  --line: #ecebe9;
+  --line-strong: #dfdedb;
+  --accent: #1c6fc4;        /*  5.1 */
   --accent-fg: #ffffff;
-  --ok: #15803d;            /*  4.9 */
-  --warn: #b45309;          /*  4.9 */
-  --fail: #c81e1e;          /*  5.6 */
-  --warn-bg: #b4530915;
-  --focus: #0a5fd066;
+  --ok: #1a7f4b;            /*  5.0 */
+  --warn: #b06000;          /*  4.7 */
+  --fail: #c4443c;          /*  5.0 */
+  --warn-bg: #b0600012;
+  --focus: #1c6fc455;
+
+  --radius: 5px;
+  --gap: 10px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1c1e;
-    --bg-sunken: #ffffff0f;
-    --fg: #f2f2f7;          /* 15.3 */
-    --fg-dim: #b0b0b8;      /*  7.9 */
-    --fg-faint: #95959c;    /*  5.7 */
-    --line: #ffffff1f;
-    --line-strong: #ffffff33;
-    --accent: #63a4ff;      /*  6.7 */
-    --accent-fg: #10233f;
-    --ok: #4ade80;          /*  9.8 */
-    --warn: #fbbf24;        /* 10.2 */
-    --fail: #ff6b6b;        /*  6.1 */
-    --warn-bg: #fbbf2418;
-    --focus: #63a4ff66;
+    --bg: #191919;
+    --bg-hover: #252525;
+    --bg-sunken: #222222;
+    --fg: #d4d4d4;          /* 11.9 */
+    --fg-dim: #9b9b9b;      /*  6.3 */
+    --fg-faint: #8f8e86;    /*  5.3 */
+    --line: #2c2c2c;
+    --line-strong: #3a3a3a;
+    --accent: #529cca;      /*  5.8 */
+    --accent-fg: #10233f;   /*  5.2 (파랑 위 글씨) */
+    --ok: #4dab6d;          /*  6.2 */
+    --warn: #d9a441;        /*  7.8 */
+    --fail: #e06c62;        /*  5.4 */
+    --warn-bg: #d9a4411a;
+    --focus: #529cca66;
   }
 }
 
-/* **패딩을 폭에 세지 않으면 창보다 넓어진다.** 창은 460px 인데 #app 이
-   min-width 460 + 좌우 패딩 24 를 차지해 가로 스크롤바가 생겼다. */
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; font-size: 13px; background: var(--bg); color: var(--fg); }
-#app { padding: 12px 14px 16px; }
-
-/* 초점은 반드시 보여야 한다 — 이 앱은 탭만으로도 다 돌 수 있어야 한다. */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+#app { padding: 10px 14px 20px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 4px; }
 
-.error { padding: 20px 4px; }
-.error-title { font-size: 14px; margin: 0 0 8px; color: var(--fg); }
-.error-body { color: var(--fg-dim); line-height: 1.55; margin: 0 0 10px; }
-.error-body code { background: var(--bg-sunken); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
-.error-stderr { background: var(--bg-sunken); color: var(--fg-dim); padding: 8px; border-radius: 5px; white-space: pre-wrap; font-size: 11px; margin: 0; }
+/* ── 탭 ──────────────────────────────────────────────────────────────
+ * 노션의 탭은 밑줄 하나다. 상자도 배경도 없다. */
+.tabs { display: flex; gap: 2px; margin: 0 -4px 14px; border-bottom: 1px solid var(--line); }
+.tab {
+  border: none; background: none; border-radius: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 7px 10px; font-size: 14px; color: var(--fg-dim); cursor: pointer;
+}
+.tab:hover { color: var(--fg); }
+.tab.active { border-bottom-color: var(--fg); color: var(--fg); font-weight: 600; }
+.body { min-height: 220px; }
 
-.warnings { background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
-.warnings-list { margin: 4px 0 0; padding-left: 18px; }
-.warnings-item { color: var(--warn); }
-.empty { color: var(--fg-faint); text-align: center; padding: 28px 0; margin: 0; }
+/* ── 절 제목 ─────────────────────────────────────────────────────────
+ * 대문자 변환을 안 쓴다. 노션은 작은 회색 글씨로만 가르고, 한글은 대문자가
+ * 없어서 letter-spacing 만 벌어져 오히려 읽기 나빠진다. */
+.section-title {
+  font-size: 12px; font-weight: 600; color: var(--fg-faint);
+  margin: 22px 0 2px; padding: 0 6px;
+}
+.section-title:first-child { margin-top: 2px; }
 
-button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line-strong); cursor: pointer; background: var(--bg-sunken); color: var(--fg); }
-button:hover:not(:disabled) { border-color: var(--fg-faint); }
-button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 600; }
-button:disabled { opacity: .4; cursor: not-allowed; }
-input, select { font: inherit; padding: 4px 7px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); }
-input::placeholder { color: var(--fg-faint); }
+/* ── 행 ──────────────────────────────────────────────────────────────
+ * **선이 아니라 여백으로 가른다.** 행마다 밑줄을 그으면 17줄짜리 목록이
+ * 격자가 되는데, 격자는 표를 읽는 자세를 만든다 — 이 화면은 훑는 자리다.
+ * 대신 손이 닿은 행만 배경으로 든다(노션의 서명 같은 동작). */
+.host-row, .vault-row, .domain-row {
+  border-radius: var(--radius);
+  padding: 7px 6px;
+  transition: background-color .08s ease;
+}
+.host-row:hover, .vault-row:hover, .domain-row:hover { background: var(--bg-hover); }
 
-.tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
-.tab { border: none; background: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 6px 11px; color: var(--fg-dim); margin-bottom: -1px; }
-.tab:hover { color: var(--fg); border-color: var(--line-strong); }
-.tab.active { border-bottom-color: var(--accent); color: var(--fg); font-weight: 600; }
-.body { min-height: 200px; }
-
-.section-title { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); margin: 18px 0 4px; font-weight: 700; }
-.section-title:first-child { margin-top: 0; }
-
-/* 호스트 — 체크박스 · 이름 · 상태가 한 줄, 자리는 그 아래 작게. */
-.host-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.host-row.off .host-name, .host-row.off .host-state { opacity: .5; }
-.host-toggle { width: 14px; height: 14px; accent-color: var(--accent); }
+.host-row { display: grid; grid-template-columns: auto 1fr auto; gap: var(--gap); align-items: center; }
+.host-row.off .host-name, .host-row.off .host-state { opacity: .45; }
+.host-toggle { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
 .host-name { font-weight: 600; }
-.host-state { color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
-.host-root { grid-column: 2 / -1; font-size: 10px; color: var(--fg-faint); word-break: break-all; }
+.host-state { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.host-root { grid-column: 2 / -1; font-size: 12px; color: var(--fg-faint); word-break: break-all; }
 
-/* 볼트 — 이름 · 상태 · 열기 가 한 줄, 경로는 그 아래. */
-.vault-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.vault-row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--gap); align-items: center; }
 .vault-row.broken .vault-name { color: var(--warn); }
 .vault-name { font-weight: 600; }
-.vault-state { color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
-.vault-path { grid-column: 1 / 3; font-size: 10px; color: var(--fg-faint); word-break: break-all; }
+.vault-state { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vault-path { grid-column: 1 / 3; font-size: 12px; color: var(--fg-faint); word-break: break-all; }
 /* 리모트는 볼트 줄 전체를 쓴다 — 주소가 길어서 다른 칸과 나눠 쓰면 다 잘린다. */
 .vault-remote { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; margin-top: 6px; }
-.vault-remote-label { font-size: 10px; color: var(--fg-faint); white-space: nowrap; }
-.vault-remote-input { font-size: 11px; padding: 3px 6px; border-radius: 4px; min-width: 0; }
-.vault-remote-input:disabled { background: var(--bg-sunken); color: var(--fg-faint); }
+.vault-remote-label { font-size: 12px; color: var(--fg-faint); white-space: nowrap; }
+.vault-remote-input { font-size: 12px; min-width: 0; }
+.vault-add { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin: 12px 6px 0; }
+.vault-add-where { grid-column: 1 / -1; font-size: 12px; color: var(--fg-faint); word-break: break-all; min-height: 1em; }
 
-.vault-add { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 12px; }
-/* 어디에 생기는지 — 경로를 안 물어봤으므로 이 줄이 그 답이다. */
-.vault-add-where { grid-column: 1 / -1; font-size: 10px; color: var(--fg-faint); word-break: break-all; min-height: 1em; }
+.domain-row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--gap); align-items: center; }
+.domain-prefix { font-weight: 500; }
+.domain-folder { font-size: 12px; color: var(--fg-faint); }
 
-.domain-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline; padding: 6px 0; }
-.domain-prefix { font-weight: 600; }
-.domain-folder { font-size: 10px; color: var(--fg-faint); }
+/* ── 컨트롤 ──────────────────────────────────────────────────────────
+ * **손이 닿기 전까지 조용하다.** 화면에 셀렉트가 열일곱 개인데 전부 macOS
+ * 기본 모양이면 그 파란 상자들이 화면을 지배한다 — 정작 읽어야 할 것은
+ * 프로젝트 이름인데. 테두리를 지우고 호버·초점에서만 드러낸다. */
+button, input, select { font: inherit; color: inherit; }
+button {
+  padding: 4px 10px; border-radius: var(--radius);
+  border: 1px solid var(--line-strong); background: transparent; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--bg-hover); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+button:disabled { opacity: .35; cursor: not-allowed; }
 
-.health-row { display: grid; grid-template-columns: 16px 118px 1fr; gap: 8px; align-items: baseline; padding: 5px 0; font-size: 12px; }
-.health-row .health-fix { grid-column: 2 / -1; font-size: 11px; color: var(--fg-faint); }
+input {
+  padding: 5px 8px; border-radius: var(--radius);
+  border: 1px solid var(--line-strong); background: var(--bg);
+}
+input::placeholder { color: var(--fg-faint); }
+input:disabled { background: var(--bg-sunken); color: var(--fg-faint); }
+
+select {
+  appearance: none;
+  padding: 4px 26px 4px 8px; border-radius: var(--radius);
+  border: 1px solid transparent; background: transparent; cursor: pointer;
+  color: var(--fg-dim);
+  /* 삼각형은 직접 그린다 — appearance:none 이 기본 화살표를 지운다. */
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 13px center, right 9px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+select:hover:not(:disabled) { border-color: var(--line-strong); color: var(--fg); }
+select:disabled { opacity: .5; cursor: wait; }
+
+/* ── 상태·알림 ───────────────────────────────────────────────────── */
+.health-row { display: grid; grid-template-columns: 16px 120px 1fr; gap: var(--gap); align-items: baseline; padding: 5px 6px; font-size: 13px; }
+.health-row .health-fix { grid-column: 2 / -1; font-size: 12px; color: var(--fg-faint); margin-top: 2px; }
 .level-ok .health-mark { color: var(--ok); }
 .level-warn .health-mark { color: var(--warn); }
 .level-fail .health-mark { color: var(--fail); }
 .level-unknown .health-mark { color: var(--fg-faint); }
 .health-detail { color: var(--fg-dim); }
 
+.warnings { background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 6px; padding: 8px 11px; margin-bottom: 12px; }
+.warnings-list { margin: 4px 0 0; padding-left: 18px; }
+.warnings-item { color: var(--warn); }
+
 /* 밀린 일감은 **진단**이지 할 일 목록이 아니다 — 누를 것이 없으니 버튼처럼
    보이면 안 되고, 경고처럼 붉지도 않아야 한다. */
-.backlog { font-size: 11px; color: var(--fg-dim); background: var(--bg-sunken); border-radius: 6px; padding: 7px 9px; margin-bottom: 10px; }
+.backlog { font-size: 12px; color: var(--fg-dim); background: var(--bg-sunken); border-radius: 6px; padding: 7px 10px; margin-bottom: 12px; }
+.empty { color: var(--fg-faint); text-align: center; padding: 32px 0; margin: 0; }
+
+/* ── 글 읽는 자리 ────────────────────────────────────────────────────
+ * 아직 문서 조회 화면은 없지만, 오류 본문이 이미 그 자리다. 줄길이와 행간을
+ * 여기서 정해 두면 나중에 결정 노트를 띄울 때 같은 규칙을 그대로 쓴다. */
+.error { padding: 24px 6px; }
+.error-title { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.error-body { color: var(--fg-dim); line-height: 1.65; margin: 0 0 12px; max-width: 60ch; }
+.error-body code, .error-stderr {
+  background: var(--bg-sunken); border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+.error-body code { padding: 1px 5px; font-size: 12px; }
+.error-stderr { display: block; color: var(--fg-dim); padding: 9px 10px; white-space: pre-wrap; font-size: 12px; margin: 0; }
