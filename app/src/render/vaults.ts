@@ -33,29 +33,38 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
   if (s.vaults.length === 0) {
     root.append(el("p", "empty", "볼트가 하나도 없다. 아래에서 만들어라."));
   }
-  for (const v of s.vaults) {
-    const row = el("div", `vault-row${v.exists ? "" : " broken"}`);
-    row.append(el("span", "vault-name", v.name), el("span", "vault-state", vaultState(v)));
-    row.append(el("div", "vault-path", v.path));
-
-    const openBtn = document.createElement("button");
-    openBtn.className = "btn";
-    openBtn.textContent = "열기";
-    // **자리가 없으면 못 연다.** 눌러서 아무 일도 안 나는 버튼은 앱이 고장난
-    // 것처럼 보이게 한다.
-    openBtn.disabled = !v.exists;
-    openBtn.addEventListener("click", () => on.open(v.name));
-    row.append(openBtn);
-    row.append(remoteField(v, on));
-    root.append(row);
-  }
-
+  for (const v of s.vaults) root.append(vaultCard(v, on));
   root.append(addVaultForm(s.vault_parent, on));
 
   root.append(el("h3", "section-title", "프로젝트 → 볼트"));
   if (s.domains.length === 0) {
     root.append(el("p", "empty", "설정에 프로젝트가 없다."));
+    return;
   }
+
+  // **볼트가 하나면 고를 것이 없다.**
+  //
+  // 2026-09-01 지적: 열일곱 줄이 전부 `default (기본)` 이었다. 선택 상자 열일곱
+  // 개가 전부 같은 값을 가리키는 화면은 정보가 0인데 자리는 제일 많이 차지한다.
+  // 고를 곳이 하나뿐일 때 고르라고 묻는 것은 질문이 아니다.
+  //
+  // 그래도 **목록은 남긴다.** 어느 프로젝트가 이 볼트로 오는지는 이 화면의 존재
+  // 이유고, 특히 "선언 안 된 프로젝트는 회수에서 통째로 빠진다" 는 고장을 여기서
+  // 알아챈다. 고를 것이 없을 뿐이지 알 것이 없는 게 아니다.
+  if (s.vaults.length < 2) {
+    const note = el("p", "domain-note",
+      `전부 ${DEFAULT_VAULT} 로 간다 — 볼트가 하나뿐이다. 볼트를 더 만들면 프로젝트마다 고를 수 있다.`);
+    const chips = el("div", "domain-chips");
+    for (const d of s.domains) {
+      const chip = el("span", "domain-chip", d.prefix);
+      // 폴더가 접두어와 다를 때만 덧붙인다 — 같으면 같은 낱말을 두 번 보여 준다.
+      if (d.folder && d.folder !== d.prefix) chip.title = `폴더: ${d.folder}`;
+      chips.append(chip);
+    }
+    root.append(note, chips);
+    return;
+  }
+
   const names = s.vaults.map((v) => v.name);
   for (const d of s.domains) {
     const row = el("div", "domain-row");
@@ -95,6 +104,43 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
     }
     root.append(row);
   }
+}
+
+/** vaultCard 는 볼트 하나를 **경계가 있는 한 덩이**로 그린다.
+ *
+ * 예전에는 이름·자리·리모트가 위에서 아래로 그냥 흘렀고, 바로 뒤에 "새 볼트
+ * 만들기" 입력이 같은 흐름으로 이어졌다 — 어디까지가 한 볼트인지 안 보였다.
+ * 볼트가 둘 이상이 되는 순간(그게 이 화면의 목적이다) 그 모호함이 사고가 된다. */
+function vaultCard(v: Settings["vaults"][number], on: VaultActions): HTMLElement {
+  const card = el("div", `vault-card${v.exists ? "" : " broken"}`);
+
+  const head = el("div", "vault-card-head");
+  head.append(el("span", "vault-name", v.name), el("span", "vault-state", vaultState(v)));
+  card.append(head);
+
+  const where = el("div", "vault-field");
+  where.append(el("span", "vault-field-label", "자리"), el("span", "vault-path", v.path));
+  const openBtn = document.createElement("button");
+  // **이름을 준다.** 카드 안에는 버튼이 둘(열기·저장)이라 "n번째 버튼" 으로
+  // 집으면 시험이 엉뚱한 것을 잡는다 — 실제로 그랬다(2026-09-01): 리모트가
+  // 빈 볼트의 저장 버튼도 막혀 있어서 "열기가 막혔다" 는 단언이 우연히 통과했다.
+  openBtn.className = "btn btn-quiet vault-open";
+  openBtn.textContent = "열기";
+  // **자리가 없으면 못 연다.** 눌러서 아무 일도 안 나는 버튼은 앱이 고장난
+  // 것처럼 보이게 한다.
+  openBtn.disabled = !v.exists;
+  openBtn.addEventListener("click", () => on.open(v.name));
+  where.append(openBtn);
+  card.append(where, remoteField(v, on));
+
+  // **아무 프로젝트도 안 쓰는 볼트는 조용하다.** 볼트는 만들어졌고 기록은 전부
+  // 옛 볼트로 계속 간다 — 흔한 실수인데 화면 어디에도 안 나타났다.
+  // 경고로 그리지 않는다: 볼트를 막 만든 직후의 정상 상태이기도 하다.
+  if (v.exists && v.domains.length === 0) {
+    card.append(el("p", "vault-idle",
+      "아무 프로젝트도 이 볼트를 안 쓴다 — 아래에서 엮어야 기록이 여기로 온다"));
+  }
+  return card;
 }
 
 /** remoteField 는 그 볼트가 동기화할 git 주소를 정하는 자리다.

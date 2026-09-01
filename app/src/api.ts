@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Queue, Settings, CmdError } from "./types";
+import type { Queue, Settings, CmdError, NoteRow, NoteFull, SearchRow } from "./types";
 
 /** **여기만 백엔드를 안다.** 화면 코드가 invoke 를 직접 부르면 가짜로 바꿔
  * 테스트하기가 어려워지고, 커맨드 이름이 화면마다 흩어진다. */
@@ -87,4 +87,36 @@ export async function bindDomain(prefix: string, vault: string): Promise<void> {
  * 기능보다 넓어진다. */
 export async function openVault(name: string): Promise<void> {
   await call<void>("open_vault", { name });
+}
+
+/** listNotes 는 볼트 전부의 결정 목록을 준다 (본문 없음). */
+export async function listNotes(): Promise<NoteRow[]> {
+  return parseOr<NoteRow[]>(await call<string>("list_notes"), "list");
+}
+
+/** showNote 는 결정 하나를 본문까지 준다. */
+export async function showNote(stem: string): Promise<NoteFull> {
+  return parseOr<NoteFull>(await call<string>("show_note", { stem }), "show");
+}
+
+/** searchNotes 는 **순위를 매긴** 검색이다 (회수 랭킹).
+ *
+ * 이름으로 거르는 필터와 다르다 — 요약·태그·본문을 보고 점수를 매긴다. */
+export async function searchNotes(query: string): Promise<SearchRow[]> {
+  return parseOr<SearchRow[]>(await call<string>("search_notes", { query }), "recall");
+}
+
+/** saveBody 는 결정의 **본문만** 바꾼다. frontmatter 는 CLI 가 지킨다. */
+export async function saveBody(stem: string, body: string): Promise<void> {
+  await call<void>("save_body", { stem, body });
+}
+
+/** reviewNote 는 **frontmatter 를 고친다.**
+ *
+ * 본문(`saveBody`)과 통로가 다르다 — 스키마를 아는 `prior review` 만 거친다.
+ * 준 필드만 바뀐다. */
+export async function reviewNote(stem: string, patch: {
+  summary?: string; status?: string; outcome?: string; retro?: string; tags?: string[];
+}): Promise<void> {
+  await call<void>("review_note", { stem, ...patch });
 }

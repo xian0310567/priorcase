@@ -82,6 +82,39 @@ export interface Settings {
  * 모르는 kind 가 오면 "그 밖"(io 처럼) 으로 그려야 한다 — 새 값이 생겼을 때
  * 화면이 통째로 비는 것보다 낫다. */
 export interface CmdError {
-  kind: "not_found" | "failed" | "timeout" | "io";
+  kind: "not_found" | "failed" | "timeout" | "io" | "render";
   message: string;
+}
+
+/** NoteRow 는 목록 한 줄이다. **본문이 없다** — `prior list` 가 안 담는다.
+ *
+ * 결정 560건의 본문 합계가 1.7MB 인데 목록 화면은 그것을 한 글자도 안 쓴다. */
+export interface NoteRow {
+  stem: string;
+  path: string;
+  rel: string;
+  vault: string;
+  domain: string[];
+  date: string;
+  status: string;
+  outcome: string;
+  summary: string;
+  tags: string[];
+}
+
+/** SearchRow 는 회수 결과 한 줄이다. 점수가 붙는다 — **왜 이 순서인지가 보여야 한다.** */
+export interface SearchRow extends NoteRow {
+  score: number;
+}
+
+/** NoteFull 은 결정 하나 전체다. 여기서만 본문이 온다. */
+export interface NoteFull extends NoteRow {
+  body: string;
+  supersedes: string[];
+  related: string[];
+  author: string;
+  superseded_reason: string;
+  type: string;
+  source_session: string;
+  summary_history: string[];
 }

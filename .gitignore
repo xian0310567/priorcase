@@ -23,3 +23,7 @@ app/src-tauri/target/
 
 # Tauri 사이드카 — 빌드 때 만들어 넣는다 (scripts/bundle-prior.sh)
 app/src-tauri/binaries/
+
+# 화면 녹화 — 고장을 알릴 때 붙여 넣는 것이라 저장소에 남을 물건이 아니다.
+# (2026-09-01 스크롤 고장 제보로 22MB 짜리가 작업 트리에 들어왔다)
+*.mov

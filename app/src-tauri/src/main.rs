@@ -67,6 +67,11 @@ fn main() {
             commands::add_vault,
             commands::bind_domain,
             commands::set_vault_remote,
+            commands::list_notes,
+            commands::show_note,
+            commands::search_notes,
+            commands::save_body,
+            commands::review_note,
             commands::open_vault,
             commands::set_tray_title,
         ])
@@ -98,13 +103,12 @@ fn main() {
             // Accessory 는 Dock 아이콘과 메뉴바 메뉴를 없앤다. 창은 그대로 뜬다.
             // 실패해도 앱을 못 띄울 이유는 아니다 — Dock 에 뜰 뿐이다.
             // 다만 조용히 넘기지는 않는다.
-            #[cfg(target_os = "macos")]
-            if let Err(e) = app
-                .handle()
-                .set_activation_policy(tauri::ActivationPolicy::Accessory)
-            {
-                eprintln!("활성화 정책을 못 바꿨다 (Dock 에 뜬다): {e}");
-            }
+            // 2026-09-01: **Accessory 를 뗐다.** 앱의 주역이 설정 팝오버에서
+            // 볼트를 읽고 고치는 창으로 바뀌었다. 글을 읽는 창은 Dock 에 있어야
+            // 한다 — ⌘-Tab 으로 못 돌아오는 창은 "잠깐 보는 것" 취급이 되고,
+            // 그러면 결정문을 읽다 다른 앱으로 갔을 때 돌아올 길이 트레이뿐이다.
+            //
+            // 트레이는 남는다. 배지(⚠)와 창 열기가 거기 걸려 있다.
 
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&quit])?;

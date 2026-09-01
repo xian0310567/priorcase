@@ -20,8 +20,29 @@ import type { Queue, Settings } from "../src/types";
 // prior 가 없는 기계에서는 건너뛴다 — 이 시험은 여기 있는 것이 값이지,
 // 어디서나 도는 것이 값이 아니다.
 
-const PRIOR = join(homedir(), ".local", "bin", "prior");
-const installed = existsSync(PRIOR);
+/** PRIOR 는 이 기계의 prior 다. **PATH 를 먼저 본다.**
+ *
+ * 예전에는 `~/.local/bin/prior` 하나만 봤다. 그런데 이 프로젝트는 npm 으로도
+ * 배포되고(`priorcase-<os>-<arch>`), 그렇게 깔면 노드의 bin 에 들어간다 —
+ * 2026-09-01 실측으로 이 기계의 prior 는 `~/.nvm/versions/node/v24.19.0/bin/prior`
+ * 였고, 그래서 **이 파일의 8개 시험이 여기서 한 번도 안 돌았다.** 위 주석이
+ * 경고한 바로 그 상태다: 영영 건너뛰면서 통과한 것처럼 보인다.
+ *
+ * 앱의 Rust 쪽이 PATH 먼저·번들 나중으로 푸는 것과 같은 순서다. */
+function findPrior(): string | null {
+  try {
+    const p = execFileSync("sh", ["-c", "command -v prior"], { encoding: "utf8" }).trim();
+    if (p && existsSync(p)) return p;
+  } catch {
+    // PATH 에 없다 — 아래 기본 자리를 본다
+  }
+  const fallback = join(homedir(), ".local", "bin", "prior");
+  return existsSync(fallback) ? fallback : null;
+}
+
+const found = findPrior();
+const PRIOR = found ?? "";
+const installed = found !== null;
 
 function readJSON<T>(args: string[]): T {
   return JSON.parse(
@@ -105,21 +126,37 @@ describe.skipIf(!fresh)("진짜 데이터로 화면을 그린다", () => {
   it("볼트 화면이 그려진다", () => {
     const root = document.createElement("div");
     renderVaults(root, s, noop);
-    expect(root.querySelectorAll(".vault-row").length).toBe(s.vaults.length);
-    expect(root.querySelectorAll(".domain-row").length).toBe(s.domains.length);
-    // 도메인마다 고른 볼트가 하나씩 있어야 한다. 빈 선택은 "어디로 가는지 모름"
-    // 으로 보이는데, 실제로는 기본 볼트로 잘 가고 있다.
-    for (const sel of root.querySelectorAll<HTMLSelectElement>("select.domain-vault")) {
-      expect(sel.value, "볼트가 안 골라진 도메인이 있다").not.toBe("");
+    expect(root.querySelectorAll(".vault-card").length).toBe(s.vaults.length);
+
+    // **어느 프로젝트가 있는지는 볼트 수와 무관하게 전부 보여야 한다.**
+    // 선언 안 된 프로젝트는 회수에서 통째로 빠지는데, 그것을 알아채는 자리가
+    // 여기다. 다만 그리는 방식은 갈린다 — 고를 것이 있느냐 없느냐다.
+    const rows = root.querySelectorAll(".domain-row").length;
+    const chips = root.querySelectorAll(".domain-chip").length;
+    expect(rows + chips, "프로젝트가 다 안 보인다").toBe(s.domains.length);
+
+    if (s.vaults.length < 2) {
+      // 볼트가 하나면 고를 것이 없다 — 같은 값짜리 선택 상자를 열 몇 개 그리면
+      // 자리만 차지하고 정보는 0이다.
+      expect(root.querySelectorAll("select.domain-vault").length,
+        "고를 곳이 하나뿐인데 선택 상자를 그렸다").toBe(0);
+    } else {
+      // 도메인마다 고른 볼트가 하나씩 있어야 한다. 빈 선택은 "어디로 가는지 모름"
+      // 으로 보이는데, 실제로는 기본 볼트로 잘 가고 있다.
+      const sels = root.querySelectorAll<HTMLSelectElement>("select.domain-vault");
+      expect(sels.length).toBe(s.domains.length);
+      for (const sel of sels) {
+        expect(sel.value, "볼트가 안 골라진 도메인이 있다").not.toBe("");
+      }
     }
   });
 
   it("자리가 없는 볼트는 열기가 막힌다", () => {
     const root = document.createElement("div");
     renderVaults(root, s, noop);
-    const rows = root.querySelectorAll(".vault-row");
+    const rows = root.querySelectorAll(".vault-card");
     for (const [i, v] of s.vaults.entries()) {
-      const btn = rows[i].querySelector<HTMLButtonElement>("button.btn")!;
+      const btn = rows[i].querySelector<HTMLButtonElement>(".vault-open")!;
       expect(btn.disabled, `볼트 ${v.name}: exists=${v.exists} 인데 버튼 상태가 다르다`).toBe(
         !v.exists,
       );
@@ -151,7 +188,11 @@ describe.skipIf(!fresh)("진짜 데이터로 화면을 그린다", () => {
   it("설정 값이 요소를 만들지 않는다", () => {
     const root = document.createElement("div");
     renderVaults(root, s, noop);
-    const allowed = new Set(["DIV", "SPAN", "BUTTON", "P", "H3", "INPUT", "SELECT", "OPTION"]);
+    // **우리가 짜 넣는 태그만 늘린다.** 여기를 넓히는 것은 리뷰가 필요한 일이라
+    // 일부러 손으로 적는다 — LABEL 은 리모트 칸의 고정 문구다(vaults.ts).
+    const allowed = new Set([
+      "DIV", "SPAN", "BUTTON", "P", "H3", "INPUT", "SELECT", "OPTION", "LABEL",
+    ]);
     const bad = Array.from(root.querySelectorAll("*")).filter((n) => !allowed.has(n.tagName));
     expect(
       bad.map((n) => n.tagName),

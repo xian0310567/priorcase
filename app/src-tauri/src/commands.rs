@@ -137,6 +137,36 @@ fn bundled_bin() -> Option<String> {
     None
 }
 
+// ── prior 호출은 메인 스레드에서 하지 않는다 ──────────────────────────────
+//
+// **Tauri 는 동기 커맨드를 메인 스레드에서 돌린다.** 그 스레드가 곧 UI 라,
+// `prior` 가 도는 동안 창이 통째로 멈춘다 — 클릭도 스크롤도 안 먹는다.
+//
+// 예전에는 커맨드 열여섯이 전부 동기였다. 명령 하나가 40~65ms 일 때는 티가 덜
+// 났는데, 볼트가 자라 `prior queue` 가 6.3초가 되자(2026-09-01 실측) **앱을
+// 띄우자마자 6초를 멈추고 그 뒤로 60초마다 다시 멈췄다.** 사업주 표현으로
+// "사람이 쓸 수 없는" 상태였다.
+//
+// 고장의 크기가 볼트 크기에 비례해 자라는 종류라, 명령을 더 빠르게 만드는 것으로는
+// 못 막는다 — **자리를 옮겨야 한다.**
+//
+// `async` 로 선언하면 Tauri 가 비동기 런타임에서 돌리는데, 우리 일은 프로세스를
+// 띄우고 기다리는 **블로킹** 이라 런타임 스레드를 잡아먹는다. 그래서 한 겹 더
+// 보내 `spawn_blocking` 위에서 돈다.
+async fn off_main<T, F>(f: F) -> Result<T, CmdError>
+where
+    F: FnOnce() -> Result<T, CmdError> + Send + 'static,
+    T: Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(f).await {
+        Ok(r) => r,
+        Err(e) => Err(CmdError {
+            kind: "io".to_string(),
+            message: format!("작업 스레드가 죽었다: {e}"),
+        }),
+    }
+}
+
 pub fn run_queue(bin: &str) -> Result<String, CmdError> {
     run(bin, &["queue", "--json"], READ_TIMEOUT).map_err(to_cmd_error)
 }
@@ -151,14 +181,20 @@ pub fn run_settings(bin: &str) -> Result<String, CmdError> {
 /// 를 묻는 순간 자동 기록이라는 전제를 사람이 대신 갚기 때문이다. 남은 것은
 /// health 검사와 "밀린 구간이 몇 개인가" 라는 진단 한 줄이다.
 #[tauri::command]
-pub fn queue() -> Result<String, CmdError> {
-    run_queue(&prior_bin())
+pub async fn queue() -> Result<String, CmdError> {
+    off_main(move || {
+        run_queue(&prior_bin())
+    })
+    .await
 }
 
 /// settings 는 볼트·도메인·호스트를 한 번에 준다.
 #[tauri::command]
-pub fn settings() -> Result<String, CmdError> {
-    run_settings(&prior_bin())
+pub async fn settings() -> Result<String, CmdError> {
+    off_main(move || {
+        run_settings(&prior_bin())
+    })
+    .await
 }
 
 /// set_host 는 호스트 하나를 켜거나 끈다.
@@ -167,11 +203,14 @@ pub fn settings() -> Result<String, CmdError> {
 /// 검증이 두 벌이 되면 한쪽만 고쳐진 채로 남고, 그때 망가지는 것은 사람이 손으로
 /// 쓴 설정이다.
 #[tauri::command]
-pub fn set_host(name: String, enabled: bool) -> Result<(), CmdError> {
-    let sub = if enabled { "enable" } else { "disable" };
-    run(&prior_bin(), &["hosts", sub, &name], WRITE_TIMEOUT)
-        .map(|_| ())
-        .map_err(to_cmd_error)
+pub async fn set_host(name: String, enabled: bool) -> Result<(), CmdError> {
+    off_main(move || {
+        let sub = if enabled { "enable" } else { "disable" };
+        run(&prior_bin(), &["hosts", sub, &name], WRITE_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
+    })
+    .await
 }
 
 /// add_vault 는 볼트를 하나 만든다. CLI 가 자리(폴더)까지 만든다.
@@ -180,10 +219,132 @@ pub fn set_host(name: String, enabled: bool) -> Result<(), CmdError> {
 /// 지금 볼트 옆이다. CLI 가 그것을 정하므로 규칙이 한 곳에만 산다.
 /// 앱은 `prior settings` 의 vault_parent 로 어디에 생길지 미리 보여 준다.
 #[tauri::command]
-pub fn add_vault(name: String) -> Result<(), CmdError> {
-    run(&prior_bin(), &["vault", "add", &name], WRITE_TIMEOUT)
-        .map(|_| ())
+pub async fn add_vault(name: String) -> Result<(), CmdError> {
+    off_main(move || {
+        run(&prior_bin(), &["vault", "add", &name], WRITE_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
+    })
+    .await
+}
+
+// ── 볼트를 읽고 고친다 ────────────────────────────────────────────────
+//
+// 앱의 주역이 설정 콘솔에서 볼트 브라우저로 바뀌었다(2026-09-01 결정).
+// 넷 다 CLI 가 이미 하는 일을 그대로 넘긴다 — 앱은 `prior` 만 부른다.
+
+/// list_notes 는 볼트 전부의 결정 목록을 준다. **본문은 없다.**
+#[tauri::command]
+pub async fn list_notes() -> Result<String, CmdError> {
+    off_main(move || {
+        run(&prior_bin(), &["list", "--json"], READ_TIMEOUT).map_err(to_cmd_error)
+    })
+    .await
+}
+
+/// show_note 는 결정 하나를 본문까지 준다.
+#[tauri::command]
+pub async fn show_note(stem: String) -> Result<String, CmdError> {
+    off_main(move || {
+        run(&prior_bin(), &["show", &stem, "--json"], READ_TIMEOUT).map_err(to_cmd_error)
+    })
+    .await
+}
+
+/// search_notes 는 **순위를 매긴** 검색이다.
+///
+/// 파일 탐색기는 이름으로 찾지만 여기는 회수 랭킹을 쓴다 — 옵시디언에 없는 것이
+/// 이것이고, 그것이 이 앱을 만드는 이유 중 하나다.
+#[tauri::command]
+pub async fn search_notes(query: String) -> Result<String, CmdError> {
+    off_main(move || {
+        run(
+            &prior_bin(),
+            &["recall", &query, "--format", "json", "--limit", "20"],
+            READ_TIMEOUT,
+        )
         .map_err(to_cmd_error)
+    })
+    .await
+}
+
+/// save_body 는 결정의 **본문만** 바꾼다. frontmatter 는 CLI 가 지킨다.
+///
+/// # 왜 임시 파일인가
+///
+/// `prior edit` 는 본문을 표준입력으로도 받는데, 이 앱의 `run` 은 stdin 을 닫고
+/// 자식을 띄운다(prior.rs 의 §: 대화형으로 빠지는 것을 막는다). 그 규약을 이 명령
+/// 하나 때문에 흔들지 않는다 — `--body-file` 이 같은 일을 하고 흔적도 남지 않는다.
+#[tauri::command]
+pub async fn save_body(stem: String, body: String) -> Result<(), CmdError> {
+    off_main(move || {
+        let mut path = std::env::temp_dir();
+        path.push(format!("priorcase-edit-{}.md", std::process::id()));
+        std::fs::write(&path, body).map_err(|e| CmdError {
+            kind: "io".into(),
+            message: format!("임시 파일을 쓸 수 없다: {e}"),
+        })?;
+        let arg = path.to_string_lossy().into_owned();
+        let out = run(
+            &prior_bin(),
+            &["edit", &stem, "--body-file", &arg],
+            WRITE_TIMEOUT,
+        );
+        // **성공하든 실패하든 지운다.** 결정문 본문이 임시 폴더에 남으면 그것도 유출이다.
+        let _ = std::fs::remove_file(&path);
+        out.map(|_| ()).map_err(to_cmd_error)
+    })
+    .await
+}
+
+/// review_note 는 **frontmatter 를 고친다.**
+///
+/// # 왜 본문과 통로가 다른가
+///
+/// 본문은 `prior edit` 이 frontmatter 를 바이트 그대로 두고 갈아 끼우는데, 여기는
+/// 반대다 — 스키마를 아는 `prior review` 만 거친다. 그래야 상태·결과의 허용값,
+/// 철회에 이유가 필요하다는 규칙, 옛 요약 보존 같은 것이 한 자리에서 지켜진다
+/// (2026-09-01 결정: 본문은 자유, frontmatter 는 구조화된 명령으로만).
+///
+/// 빈 값은 **"안 바꾼다"** 다. 지우려면 그 필드의 전용 규약을 쓴다(태그는 빈 목록).
+#[tauri::command]
+pub async fn review_note(
+    stem: String,
+    summary: Option<String>,
+    status: Option<String>,
+    outcome: Option<String>,
+    retro: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<(), CmdError> {
+    off_main(move || {
+        let mut args: Vec<String> = vec!["review".into(), stem.clone()];
+        let mut push = |flag: &str, v: &str| {
+            args.push(flag.into());
+            args.push(v.into());
+        };
+        if let Some(v) = summary.as_deref().filter(|v| !v.is_empty()) {
+            push("--summary", v);
+        }
+        if let Some(v) = status.as_deref().filter(|v| !v.is_empty()) {
+            push("--status", v);
+        }
+        if let Some(v) = outcome.as_deref().filter(|v| !v.is_empty()) {
+            push("--outcome", v);
+        }
+        if let Some(v) = retro.as_deref().filter(|v| !v.is_empty()) {
+            push("--retro", v);
+        }
+        if let Some(t) = tags.as_ref() {
+            // **빈 목록도 보낸다.** 그것이 "전부 지운다" 라, 안 보내는 것(변경 없음)과
+            // 구별되어야 한다. 쉼표로 이어 한 인자로 준다.
+            push("--tags", &t.join(","));
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run(&prior_bin(), &refs, WRITE_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
+    })
+    .await
 }
 
 /// set_vault_remote 는 볼트가 동기화할 git 리모트를 정한다.
@@ -195,26 +356,32 @@ pub fn add_vault(name: String) -> Result<(), CmdError> {
 /// URL 검증은 안 한다 — CodeCommit·GitHub·사내 GitLab 이 전부 모양이 달라서,
 /// 우리가 아는 모양만 받으면 멀쩡한 주소를 거절한다 (CLI 쪽 §).
 #[tauri::command]
-pub fn set_vault_remote(name: String, url: String) -> Result<(), CmdError> {
-    run(
-        &prior_bin(),
-        &["vault", "remote", &name, &url],
-        WRITE_TIMEOUT,
-    )
-    .map(|_| ())
-    .map_err(to_cmd_error)
+pub async fn set_vault_remote(name: String, url: String) -> Result<(), CmdError> {
+    off_main(move || {
+        run(
+            &prior_bin(),
+            &["vault", "remote", &name, &url],
+            WRITE_TIMEOUT,
+        )
+        .map(|_| ())
+        .map_err(to_cmd_error)
+    })
+    .await
 }
 
 /// bind_domain 은 프로젝트가 쓸 볼트를 정한다. vault 가 비면 기본 볼트로 되돌린다.
 #[tauri::command]
-pub fn bind_domain(prefix: String, vault: String) -> Result<(), CmdError> {
-    let mut args = vec!["domain", "bind", prefix.as_str()];
-    if !vault.is_empty() {
-        args.push(vault.as_str());
-    }
-    run(&prior_bin(), &args, WRITE_TIMEOUT)
-        .map(|_| ())
-        .map_err(to_cmd_error)
+pub async fn bind_domain(prefix: String, vault: String) -> Result<(), CmdError> {
+    off_main(move || {
+        let mut args = vec!["domain", "bind", prefix.as_str()];
+        if !vault.is_empty() {
+            args.push(vault.as_str());
+        }
+        run(&prior_bin(), &args, WRITE_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
+    })
+    .await
 }
 
 /// open_vault 는 볼트 폴더를 OS 파일 관리자로 연다.
@@ -227,19 +394,22 @@ pub fn bind_domain(prefix: String, vault: String) -> Result<(), CmdError> {
 /// 셸 문자열로 만들면 거기서 쪼개지고, 따옴표로 감싸는 순간 경로에 따옴표가
 /// 있는 경우가 뚫린다. 인자로 넘기면 그런 자리가 없다.
 #[tauri::command]
-pub fn open_vault(name: String) -> Result<(), CmdError> {
-    let raw = run_settings(&prior_bin())?;
-    let path = vault_path_in(&raw, &name)?;
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else if cfg!(target_os = "windows") {
-        "explorer"
-    } else {
-        "xdg-open"
-    };
-    run(opener, &[path.as_str()], READ_TIMEOUT)
-        .map(|_| ())
-        .map_err(to_cmd_error)
+pub async fn open_vault(name: String) -> Result<(), CmdError> {
+    off_main(move || {
+        let raw = run_settings(&prior_bin())?;
+        let path = vault_path_in(&raw, &name)?;
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(target_os = "windows") {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        run(opener, &[path.as_str()], READ_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
+    })
+    .await
 }
 
 /// vault_path_in 은 settings 출력에서 그 볼트의 경로를 꺼낸다.
