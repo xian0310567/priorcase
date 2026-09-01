@@ -25,6 +25,11 @@ type Options struct {
 	Out io.Writer
 	// Err 은 사람과 로그가 보는 자리다. 진단은 전부 여기로.
 	Err io.Writer
+
+	// spawn 은 백그라운드 프로세스를 띄운다. **시험이 갈아 끼울 수 있게 필드다** —
+	// 진짜 프로세스를 띄우는 시험은 느리고 기계마다 다르게 군다. 비어 있으면
+	// 진짜로 띄운다(freshen.go).
+	spawn func(bin string, args ...string) error
 }
 
 // Run 은 이벤트를 처리한다.
@@ -75,6 +80,9 @@ func Run(ctx context.Context, o Options) error {
 		o.syncPull()
 		return o.sessionStart()
 	case EventUserPromptSubmit:
+		// **회수하기 전에 신선도를 챙긴다.** 공유 볼트에서만, 창을 넘겼을 때만,
+		// 그리고 기다리지 않는다 (freshen.go).
+		o.freshen()
 		return o.userPromptSubmit()
 	case EventStop, EventPreCompact, EventSessionEnd:
 		// 압축은 앞부분을 날린다 — 이미 주입한 요약도 같이 사라진다. 표시를
