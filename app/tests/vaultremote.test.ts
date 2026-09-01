@@ -92,3 +92,49 @@ describe("볼트 리모트", () => {
     expect(calls[0][1]).toBe("https://a.example/x.git");
   });
 });
+
+// ── 라벨을 없앤 뒤의 계약 ────────────────────────────────────────────
+//
+// 2026-09-01 사용자 지적: 이 화면이 실제 화면에서 **깨져 보였다.** 라벨 열을
+// 58px 로 고정했는데 `git 리모트` 가 그보다 넓어 입력창 밑으로 깔렸고, 그 바람에
+// 입력창이 안 늘어나 주소가 `https://github.com/xian0310` 에서 잘렸다.
+//
+// 고정 폭을 넓히는 대신 **라벨을 없앴다.** 한국어 라벨은 길이가 제각각이라
+// 어떤 고정 폭을 골라도 다음 라벨에서 또 깨진다. 대신 placeholder 가 설명한다 —
+// 경로는 보면 알고, 리모트 칸은 비어 있을 때 무엇을 넣는 자리인지 말해야 한다.
+//
+// 그 대가로 **눈에 보이는 이름이 사라진다.** 스크린리더는 placeholder 를 이름으로
+// 쓰지 않으므로 aria-label 이 반드시 있어야 한다. 아래 시험이 그것을 잠근다.
+
+describe("라벨 없는 리모트 칸", () => {
+  it("★ 접근성 이름이 있다 — 눈에 보이는 라벨을 없앴으므로", () => {
+    const { root } = screen([vault({ name: "회사" })]);
+    const got = inputs(root)[0];
+    const name = got.getAttribute("aria-label") ?? "";
+    expect(name, "이름이 없다 — 스크린리더에서 무명 입력이 된다").not.toBe("");
+    // **어느 볼트의 칸인지가 이름에 있어야 한다.** 볼트가 여럿이면 "리모트" 만으로는
+    // 회사 결정을 개인 리모트에 밀어 넣는 사고를 막을 수 없다.
+    expect(name).toContain("회사");
+  });
+
+  it("★ 빈 칸이 무엇을 넣는 자리인지 말한다", () => {
+    const { root } = screen([vault({ remote: "" })]);
+    const ph = inputs(root)[0].placeholder;
+    expect(ph, "무엇을 넣는 칸인지 모른다").toMatch(/리모트|주소/);
+    // 비어 있는 것이 고장이 아니라는 사실도 그대로 남는다.
+    expect(ph).toContain("이 머신에만");
+  });
+
+  it("★ 긴 경로는 잘려도 전체를 볼 수 있다", () => {
+    const long = "/Users/eonghan/Documents/아주 긴 경로/Obsidian Vault";
+    const { root } = screen([vault({ path: long })]);
+    const p = root.querySelector<HTMLElement>(".vault-path")!;
+    // 한 줄로 줄여 그리므로, 전체 값은 title 로 남아야 한다.
+    expect(p.title, "잘린 경로의 전체를 볼 길이 없다").toBe(long);
+  });
+
+  it("★ 고정 폭 라벨 열은 없앤다 — 다음 라벨에서 또 깨진다", () => {
+    const { root } = screen([vault({})]);
+    expect(root.querySelector(".vault-field-label"), "고정 폭 라벨이 남아 있다").toBeNull();
+  });
+});

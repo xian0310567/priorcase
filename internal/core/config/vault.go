@@ -245,3 +245,16 @@ func (c *Config) VaultNamed(name string) (Vault, error) {
 	return Vault{}, fmt.Errorf("볼트 %q 가 설정에 없다 (있는 것: %s)",
 		name, strings.Join(names, ", "))
 }
+
+// VaultAtPath 는 경로로 볼트를 찾는다.
+//
+// `VaultNamed` 는 이름으로 찾는데, 도메인의 파일이 **실제로 어디 있는지**를 디스크에서
+// 알아낸 뒤에는 경로만 손에 남는다(split.FindSource). 그때 쓰는 자리다.
+func (c *Config) VaultAtPath(path string) (Vault, error) {
+	for _, v := range c.Vaults {
+		if v.Path == path {
+			return v, nil
+		}
+	}
+	return Vault{}, fmt.Errorf("설정에 없는 볼트 경로다: %s", path)
+}

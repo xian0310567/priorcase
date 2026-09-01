@@ -485,3 +485,75 @@ func AddDomain(src []byte, prefix, folder, vault string, paths []string) ([]byte
 		})
 	})
 }
+
+// SetVaultPath 는 이미 있는 볼트의 자리를 옮긴다.
+//
+// # 왜 필요한가
+//
+// 2026-09-01: 앱에서 회사 볼트를 만들었더니 `~/Documents/회사` 에 생겼다.
+// `AddVault` 를 부르는 쪽이 경로를 안 묻고 **기존 볼트 옆**에 만들기 때문이다
+// (NewVaultPath). 그런데 macOS 는 `~/Documents` 를 보호해서, 앱은 읽지만
+// **터미널에서 도는 prior 와 훅은 못 읽는다** — 그 볼트에는 기록도 회수도
+// 동기화도 안 되는데 앱 화면은 멀쩡해 보인다.
+//
+// 폴더를 옮기려 해도 같은 권한이 막는다(`mv` 가 Operation not permitted).
+// 그래서 **설정에서 자리를 옮기는 길**이 있어야 한다.
+//
+// 파일은 안 건드린다. 새 자리를 만들고 내용을 옮기는 것은 부르는 쪽의 일이다 —
+// 여기서 같이 하면 "설정만 고치고 싶다" 는 경우에 되돌릴 수 없다.
+func SetVaultPath(src []byte, name, path string) ([]byte, error) {
+	name, path = strings.TrimSpace(name), strings.TrimSpace(path)
+	if path == "" {
+		return nil, fmt.Errorf("볼트 경로가 비었다")
+	}
+	cur, err := parseBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("지금 설정을 읽을 수 없어 고칠 수 없다: %w", err)
+	}
+	// **없는 볼트를 조용히 만들지 않는다.** 오타로 새 볼트가 생기면 그 도메인의
+	// 기록이 두 자리로 갈리는데, 그건 이 명령이 고치려는 것보다 나쁘다.
+	found := false
+	for _, v := range cur.Vaults {
+		if v.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("볼트 %q 가 설정에 없다", name)
+	}
+
+	return edit(src, func(lines []string) ([]string, error) {
+		// `[[vault]]` 블록을 찾아 그 안의 name 이 맞으면 path 를 바꾼다.
+		inBlock, matched, done := false, false, false
+		for i, l := range lines {
+			if isHeader(l) {
+				inBlock = strings.TrimSpace(l) == "[[vault]]"
+				matched = false
+				continue
+			}
+			if !inBlock || done {
+				continue
+			}
+			switch keyOf(l) {
+			case "name":
+				matched = stringValueOf(l) == name
+			case "path":
+				if matched {
+					lines[i] = "path = " + tomlString(path)
+					done = true
+				}
+			}
+		}
+		if !done {
+			return nil, fmt.Errorf("볼트 %q 의 path 줄을 못 찾았다", name)
+		}
+		return lines, nil
+	}, func(c *Config) {
+		for i := range c.Vaults {
+			if c.Vaults[i].Name == name {
+				c.Vaults[i].Path = path
+			}
+		}
+	})
+}

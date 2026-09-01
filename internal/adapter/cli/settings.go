@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/priorcase/internal/core/config"
@@ -172,12 +173,22 @@ func collectSettings(cmd *cobra.Command) (settingsOut, error) {
 		byVault[v] = append(byVault[v], d.Prefix)
 		out.Domains = append(out.Domains, domainOut{
 			Prefix: d.Prefix, Folder: d.Folder, Vault: d.Vault,
-			Paths: d.Paths, Repos: d.Repos,
+			Paths: list(d.Paths), Repos: list(d.Repos),
 		})
 	}
 
 	for _, v := range c.Vaults {
-		vo := vaultOut{Name: v.Name, Path: v.Path, Domains: byVault[v.Name]}
+		// **빈 목록은 [] 로 낸다. null 이면 앱이 순회하다 터진다.**
+		//
+		// 2026-09-01 사고: 새 볼트는 아직 아무 프로젝트도 안 쓰므로 이 키가 없고,
+		// Go 의 nil 슬라이스는 JSON null 로 나간다. 앱이 `v.domains.length` 를 읽다
+		// TypeError 를 냈고 그 예외가 렌더를 끊어 **볼트 화면이 통째로 사라졌다.**
+		// 같은 고장이 show --json 의 summary_history 에서 먼저 났는데(검은 화면)
+		// 그 교훈을 여기 안 옮겼다.
+		//
+		// "아직 아무도 안 쓰는 볼트" 는 흔한 정상 상태다 — 볼트를 만든 직후가
+		// 언제나 그렇다. 즉 이 경로는 예외가 아니라 **첫 경험**이다.
+		vo := vaultOut{Name: v.Name, Path: v.Path, Domains: list(byVault[v.Name])}
 		if st, serr := os.Stat(v.Path); serr == nil && st.IsDir() {
 			vo.Exists = true
 			// **볼트에서 곧장 레이아웃을 만든다.**
@@ -348,7 +359,7 @@ func newVaultCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(add, list, newVaultRemoteCmd())
+	cmd.AddCommand(add, list, newVaultRemoteCmd(), newVaultPathCmd())
 	return cmd
 }
 
@@ -357,8 +368,45 @@ func newVaultCmd() *cobra.Command {
 // **앱이 이걸 부른다.** 앱만 받은 사람에게 "터미널에서 git remote add 를 치세요"
 // 라고 할 수는 없다 — 회사 볼트는 만들자마자 회사 리모트에 붙어야 그 결정이
 // 개인 머신에만 남지 않는다 (sync.SetRemote 의 §).
-func newVaultRemoteCmd() *cobra.Command {
+// newVaultPathCmd 는 볼트가 사는 자리를 옮긴다.
+//
+// # 왜 필요한가
+//
+// `vault add` 는 경로를 안 묻고 **기존 볼트 옆**에 만든다. 그 전제는 기본 볼트가
+// 읽을 수 있는 자리에 있다는 것인데, 2026-09-01 에 깨졌다 — 기본 볼트가
+// `~/Documents` 에 있어서 새 볼트도 거기 생겼고, macOS 가 그 폴더를 보호한다.
+// **앱은 권한이 있어 읽지만 터미널의 prior 와 훅은 못 읽는다.** 그러면 그 볼트에는
+// 기록도 회수도 동기화도 안 되는데 앱 화면은 멀쩡해 보인다.
+//
+// 폴더를 옮기려 해도 같은 권한이 막는다. 그래서 설정에서 옮기는 길이 필요하다.
+//
+// **파일은 안 옮긴다.** 새 자리에 볼트를 만들고 내용을 옮기는 것은 사람이 정할
+// 일이다 — 여기서 같이 하면 "설정만 고치고 싶다" 는 경우에 되돌릴 수 없다.
+func newVaultPathCmd() *cobra.Command {
 	return &cobra.Command{
+		Use:   "path <볼트> <경로>",
+		Short: "볼트가 사는 자리를 옮긴다 (설정만 바꾼다)",
+		Long: "설정에서 그 볼트의 경로를 바꾼다. **파일은 안 옮긴다.**\n\n" +
+			"보호된 폴더(macOS 의 ~/Documents 등)에 볼트가 생기면 앱은 읽어도\n" +
+			"터미널의 prior 와 훅은 못 읽는다 — 그때 자리를 옮기는 자리다.",
+		Args:          cobra.ExactArgs(2),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
+				return config.SetVaultPath(src, args[0], args[1])
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "볼트 %s → %s\n", args[0], args[1])
+			return nil
+		},
+	}
+}
+
+func newVaultRemoteCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "remote <볼트> [URL]",
 		Short: "볼트가 동기화할 git 리모트를 보고 정한다 (URL 을 비우면 지금 값만 낸다)",
 		Long: "URL 을 주면 origin 을 그 주소로 정한다. 그 자리가 git 저장소가 아니면 만들어 준다.\n\n" +
@@ -388,6 +436,21 @@ func newVaultRemoteCmd() *cobra.Command {
 				fmt.Fprintf(out, "%s\n", url)
 				return nil
 			}
+			// **저장하기 전에 실제로 닿아 본다.**
+			//
+			// 예전에는 주소를 그대로 박았다. 문법만 맞으면 저장되므로 오타나
+			// 자격증명 문제가 **다음 동기화가 실패할 때까지 안 드러났다** — 그런데
+			// 동기화는 세션 경계에서 조용히 돌고 훅은 무슨 일이 있어도 exit 0 이라,
+			// 그 볼트의 결정이 아무 데도 안 가는 상태가 며칠씩 안 보인다.
+			//
+			// **못 닿으면 저장하지 않는다.** 저장해 두고 경고만 하면 그 경고는
+			// 한 번 스쳐 지나가고, 남는 것은 틀린 주소다. 정말 강행해야 하는
+			// 경우를 위해 --force 를 둔다 (지금 네트워크가 안 될 뿐인 때).
+			if !force {
+				if cerr := sync.CheckRemote(args[1], remoteCheckBudget); cerr != nil {
+					return fmt.Errorf("%w\n\n주소·권한을 확인해라. 지금 네트워크가 안 될 뿐이면 --force 로 그대로 저장한다", cerr)
+				}
+			}
 			if err := sync.SetRemote(v.Path, args[1]); err != nil {
 				return err
 			}
@@ -395,7 +458,18 @@ func newVaultRemoteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false,
+		"닿는지 확인하지 않고 그대로 저장한다 (지금 네트워크가 안 될 뿐일 때)")
+	return cmd
 }
+
+// remoteCheckBudget 은 리모트 접근 확인에 주는 시간이다.
+//
+// **사람이 [저장]을 누르고 기다리는 자리다.** 회사망에서 git 이 매달리면 앱이
+// 통째로 멈춘 것처럼 보이므로 짧게 끊는다. 못 끝내면 "못 닿는다" 로 답하는데,
+// 그건 이 상황에서 사실상 맞는 말이다 — 매번 이만큼 걸리는 리모트라면 동기화도
+// 매번 실패한다.
+const remoteCheckBudget = 12 * time.Second
 
 func newDomainCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -422,7 +496,79 @@ func newDomainCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.AddCommand(bind, newDomainSplitCmd())
+	cmd.AddCommand(bind, newDomainSplitCmd(), newDomainMoveCmd())
+	return cmd
+}
+
+// newDomainMoveCmd 는 도메인의 파일을 **실제로** 다른 볼트로 옮긴다.
+//
+// `domain bind` 는 설정만 바꾼다. 그것만 하면 회수는 새 볼트의 빈 폴더를 보고
+// 그 프로젝트의 결정이 통째로 사라진다 — 2026-09-01 에 editup 63건이 그렇게
+// 안 보이게 됐고, 화면에는 "결정 0건" 이라고만 떴다. 둘은 짝이다.
+func newDomainMoveCmd() *cobra.Command {
+	var apply bool
+	cmd := &cobra.Command{
+		Use:   "move <도메인> <볼트>",
+		Short: "도메인의 파일을 다른 볼트로 옮긴다 (기본은 계획만)",
+		Long: "그 도메인의 폴더를 통째로 다른 볼트로 옮기고 설정도 함께 바꾼다.\n\n" +
+			"**domain bind 는 설정만 바꾼다.** 파일이 안 따라가면 회수는 빈 폴더를 보고\n" +
+			"그 프로젝트의 결정이 통째로 사라진다 — 이 명령이 그 뒤를 잇는다.\n\n" +
+			"파일명도 frontmatter 도 안 바뀐다. 도메인 이름이 그대로이기 때문이다.\n" +
+			"다만 **볼트를 넘는 위키링크는 깨진다** — 옵시디언은 볼트 안에서만 링크를 푼다.\n\n" +
+			"**되돌리기는 git 이다.** 볼트에 커밋하지 않은 변경이 있으면 먼저 정리해라.",
+		Args:          cobra.ExactArgs(2),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			prefix, vaultName := args[0], args[1]
+			c, _, err := loadFrom(cmd)
+			if err != nil {
+				return err
+			}
+			dstVault, err := c.VaultNamed(vaultName)
+			if err != nil {
+				return err
+			}
+			// **설정이 아니라 디스크를 본다.** 이 명령이 고치려는 상태가 정확히
+			// "설정은 바뀌었는데 파일이 안 따라간 것" 이라, 설정으로 원본을 찾으면
+			// 목적지와 같아져서 고치려던 바로 그 상태에서만 안 돈다.
+			srcPath, err := split.FindSource(c, prefix, dstVault.Path)
+			if err != nil {
+				return err
+			}
+			srcVault, err := c.VaultAtPath(srcPath)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			p, err := split.PlanMove(c, store.NewLayoutFor(c, srcVault),
+				store.NewLayoutFor(c, dstVault), prefix)
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(out, "%s: %s\n  → %s\n\n파일 %d개\n", prefix, p.From, p.To, len(p.Moves))
+			if !apply {
+				// **기본은 계획만.** 파일을 옮기는 것은 되돌리기 어렵고, split 도
+				// 같은 규약을 쓴다 — 두 명령이 다르게 굴면 하나는 반드시 오해받는다.
+				fmt.Fprintln(out, "\n계획만 세웠다. 실행하려면 --apply 를 줘라.")
+				return nil
+			}
+			if err := split.ApplyMove(p); err != nil {
+				return err
+			}
+			// **설정도 같이 바꾼다.** 파일만 옮기고 설정이 옛 볼트를 가리키면
+			// 방금 고친 고장의 거울상이 된다.
+			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
+				return config.BindDomain(src, prefix, vaultName)
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "\n옮겼다. %s 는 이제 볼트 %s 에 있다.\n", prefix, vaultName)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&apply, "apply", false, "실제로 옮긴다")
 	return cmd
 }
 
@@ -614,4 +760,25 @@ func expandPath(p string) (string, error) {
 		return os.UserHomeDir()
 	}
 	return filepath.Abs(p)
+}
+
+// list 는 nil 슬라이스를 **빈 슬라이스**로 만든다.
+//
+// # 왜 필요한가
+//
+// Go 의 nil 슬라이스는 JSON `null` 로 나가는데, 그것을 받는 쪽은 배열을 가정하고
+// `.length` 를 읽는다. 그러면 TypeError 가 나고 그 예외가 렌더를 끊는다 —
+// 화면이 통째로 사라지고, 새로고침해도 같은 자리에서 또 터지니 영구적으로 보인다.
+//
+// **두 번 겪었다** (2026-09-01): show --json 의 summary_history 가 검은 화면을,
+// settings --json 의 domains 가 볼트 화면 절반을 지웠다. 매번 그 필드 하나를
+// 고쳤는데, 원인은 필드가 아니라 구조다 — 빈 목록은 예외가 아니라 **가장 흔한
+// 첫 경험**이다. 새 볼트에는 프로젝트가 없고, 새 결정에는 요약 이력이 없다.
+//
+// jsoncontract_test.go 가 출력 전체를 훑어 이 계약을 잠근다.
+func list(ss []string) []string {
+	if ss == nil {
+		return []string{}
+	}
+	return ss
 }

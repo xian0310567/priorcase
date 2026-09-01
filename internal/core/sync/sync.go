@@ -635,3 +635,39 @@ func untrack(vault, pat string, budget time.Duration) error {
 	}
 	return nil
 }
+
+// CheckRemote 는 그 주소에 **실제로 닿는지** 본다.
+//
+// # 왜 문법이 아니라 접근을 보나
+//
+// 2026-09-01: 앱에서 회사 CodeCommit 주소를 넣었을 때 그것이 맞는지 확인할 길이
+// 없었다. `SetRemote` 는 `git remote set-url` 만 하므로 오타여도 저장되고,
+// **틀렸다는 사실은 다음 동기화가 실패할 때까지 안 드러난다.** 그런데 동기화는
+// 세션 경계에서 조용히 돌고 훅은 무슨 일이 있어도 exit 0 이다 — 오타 하나로 그
+// 볼트의 결정이 아무 데도 안 가는 상태가 며칠씩 안 보인다.
+//
+// CodeCommit·사내 git 은 자격증명까지 필요해서 "주소 형식은 맞는데 못 붙는" 경우가
+// 흔하다. 그래서 실제로 물어본다.
+//
+// # 왜 ls-remote 인가
+//
+// 읽기만 하고 아무것도 안 바꾼다. clone 은 무겁고 fetch 는 로컬을 건드린다.
+// 자격증명이 없으면 여기서 바로 실패하므로 인증까지 함께 검증된다
+// (GIT_TERMINAL_PROMPT=0 이라 물어보지 않고 즉시 끝난다).
+//
+// # 빈 주소는 고장이 아니다
+//
+// 리모트가 없는 볼트는 정상이다 — 이 머신에서만 쓰는 볼트다. 그 판정은
+// 부르는 쪽이 한다(공유 볼트인지 아닌지에 따라 다르다, health.checkSharedRemote).
+func CheckRemote(url string, budget time.Duration) error {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil
+	}
+	// **작업 디렉토리가 필요 없다.** ls-remote 는 저장소 밖에서도 돈다 —
+	// 아직 볼트를 만들기 전에도 주소를 검증할 수 있어야 한다.
+	if _, err := run("", budget, "ls-remote", "--heads", url); err != nil {
+		return fmt.Errorf("리모트에 닿을 수 없다 (%s): %w", url, err)
+	}
+	return nil
+}

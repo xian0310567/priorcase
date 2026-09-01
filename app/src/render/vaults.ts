@@ -15,6 +15,20 @@ export interface VaultActions {
  * 고 말하는데 실제로는 잘 가고 있는 상태가 된다. */
 export const DEFAULT_VAULT = "default";
 
+/** arr 은 목록이 아닌 것을 빈 목록으로 읽는다.
+ *
+ * **낡은 판이 `null` 을 낸다.** Go 의 nil 슬라이스는 JSON `null` 로 나가고,
+ * 새 볼트는 아직 아무 프로젝트도 안 쓰므로 정확히 그 모양이 된다. 2026-09-01 에
+ * 볼트를 하나 만들었더니 `v.domains.length` 가 TypeError 를 냈고, 그 예외가
+ * 렌더를 끊어 **볼트 화면이 통째로 사라졌다.**
+ *
+ * CLI 쪽은 `[]` 를 내도록 고쳤다. 그래도 여기가 필요한 이유는 **앱에 번들된
+ * prior 가 낡을 수 있어서**다 — 검은 화면 사고(reader.test.ts)의 원인 ①이
+ * 정확히 그것이었고, properties.ts 가 같은 이유로 같은 방어를 갖고 있다. */
+function arr(v: unknown): string[] {
+  return Array.isArray(v) ? (v as string[]) : [];
+}
+
 /** renderVaults 는 **볼트와 프로젝트 연결**을 다루는 화면이다.
  *
  * 두 덩이다:
@@ -29,15 +43,18 @@ export const DEFAULT_VAULT = "default";
 export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): void {
   root.replaceChildren();
 
+  const vaults = Array.isArray(s.vaults) ? s.vaults : [];
+  const domains = Array.isArray(s.domains) ? s.domains : [];
+
   root.append(el("h3", "section-title", "볼트"));
-  if (s.vaults.length === 0) {
+  if (vaults.length === 0) {
     root.append(el("p", "empty", "볼트가 하나도 없다. 아래에서 만들어라."));
   }
-  for (const v of s.vaults) root.append(vaultCard(v, on));
+  for (const v of vaults) root.append(vaultCard(v, on));
   root.append(addVaultForm(s.vault_parent, on));
 
   root.append(el("h3", "section-title", "프로젝트 → 볼트"));
-  if (s.domains.length === 0) {
+  if (domains.length === 0) {
     root.append(el("p", "empty", "설정에 프로젝트가 없다."));
     return;
   }
@@ -51,11 +68,11 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
   // 그래도 **목록은 남긴다.** 어느 프로젝트가 이 볼트로 오는지는 이 화면의 존재
   // 이유고, 특히 "선언 안 된 프로젝트는 회수에서 통째로 빠진다" 는 고장을 여기서
   // 알아챈다. 고를 것이 없을 뿐이지 알 것이 없는 게 아니다.
-  if (s.vaults.length < 2) {
+  if (vaults.length < 2) {
     const note = el("p", "domain-note",
       `전부 ${DEFAULT_VAULT} 로 간다 — 볼트가 하나뿐이다. 볼트를 더 만들면 프로젝트마다 고를 수 있다.`);
     const chips = el("div", "domain-chips");
-    for (const d of s.domains) {
+    for (const d of domains) {
       const chip = el("span", "domain-chip", d.prefix);
       // 폴더가 접두어와 다를 때만 덧붙인다 — 같으면 같은 낱말을 두 번 보여 준다.
       if (d.folder && d.folder !== d.prefix) chip.title = `폴더: ${d.folder}`;
@@ -65,8 +82,8 @@ export function renderVaults(root: HTMLElement, s: Settings, on: VaultActions): 
     return;
   }
 
-  const names = s.vaults.map((v) => v.name);
-  for (const d of s.domains) {
+  const names = vaults.map((v) => v.name);
+  for (const d of domains) {
     const row = el("div", "domain-row");
     row.append(el("span", "domain-prefix", d.prefix));
 
@@ -118,8 +135,16 @@ function vaultCard(v: Settings["vaults"][number], on: VaultActions): HTMLElement
   head.append(el("span", "vault-name", v.name), el("span", "vault-state", vaultState(v)));
   card.append(head);
 
-  const where = el("div", "vault-field");
-  where.append(el("span", "vault-field-label", "자리"), el("span", "vault-path", v.path));
+  // **라벨을 안 붙인다.** 고정 폭 라벨 열은 한국어에서 반드시 깨진다 —
+  // 58px 로 잡았더니 `git 리모트` 가 넘쳐 입력창 밑으로 깔렸고, 그 바람에
+  // 입력창이 안 늘어나 주소가 잘렸다(2026-09-01 화면). 폭을 넓혀도 다음 라벨에서
+  // 또 깨지므로 열 자체를 없앤다. 경로는 보면 알고, 리모트는 placeholder 가 말한다.
+  const where = el("div", "vault-line");
+  const path = el("span", "vault-path", v.path);
+  // 한 줄로 줄여 그리므로 전체 값은 title 로 남긴다 — 잘린 경로를 확인할 길이
+  // 없으면 "어느 볼트인지" 를 화면에서 못 가린다.
+  path.title = v.path;
+  where.append(path);
   const openBtn = document.createElement("button");
   // **이름을 준다.** 카드 안에는 버튼이 둘(열기·저장)이라 "n번째 버튼" 으로
   // 집으면 시험이 엉뚱한 것을 잡는다 — 실제로 그랬다(2026-09-01): 리모트가
@@ -136,7 +161,7 @@ function vaultCard(v: Settings["vaults"][number], on: VaultActions): HTMLElement
   // **아무 프로젝트도 안 쓰는 볼트는 조용하다.** 볼트는 만들어졌고 기록은 전부
   // 옛 볼트로 계속 간다 — 흔한 실수인데 화면 어디에도 안 나타났다.
   // 경고로 그리지 않는다: 볼트를 막 만든 직후의 정상 상태이기도 하다.
-  if (v.exists && v.domains.length === 0) {
+  if (v.exists && arr(v.domains).length === 0) {
     card.append(el("p", "vault-idle",
       "아무 프로젝트도 이 볼트를 안 쓴다 — 아래에서 엮어야 기록이 여기로 온다"));
   }
@@ -162,14 +187,17 @@ function remoteField(
   v: { name: string; remote: string; exists: boolean },
   on: VaultActions,
 ): HTMLElement {
-  const box = el("div", "vault-remote");
-  box.append(el("label", "vault-remote-label", "git 리모트"));
+  const box = el("div", "vault-remote vault-line");
 
   const input = document.createElement("input");
   input.className = "vault-remote-input";
   input.type = "text";
-  input.value = v.remote ?? "";
-  input.placeholder = "없음 — 이 머신에만 있다";
+  input.value = typeof v.remote === "string" ? v.remote : "";
+  input.placeholder = "git 리모트 주소 — 비우면 이 머신에만 있다";
+  // **눈에 보이는 라벨을 없앴으므로 이름을 여기 둔다.** 스크린리더는 placeholder 를
+  // 이름으로 쓰지 않는다. 볼트 이름을 넣는 이유는 어느 볼트의 칸인지가 사라지면
+  // 회사 결정을 개인 리모트에 밀어 넣는 사고가 가능해지기 때문이다(위 §).
+  input.setAttribute("aria-label", `${v.name} 의 git 리모트`);
   input.spellcheck = false;
   // 자리가 없는 볼트에는 리모트를 못 붙인다. 눌러도 아무 일이 안 나는 것보다
   // 처음부터 못 누르게 하는 편이 낫다 (열기 버튼과 같은 규칙).

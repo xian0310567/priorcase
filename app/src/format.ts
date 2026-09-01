@@ -21,7 +21,10 @@ export function hostState(h: HostInfo): string {
  * 읽히는데, 실제로는 그 볼트로 엮인 도메인의 기록이 통째로 안 써지는 상태다. */
 export function vaultState(v: VaultInfo): string {
   if (!v.exists) return "⚠️ 자리가 없다";
-  const d = v.domains.length;
+  // **목록이 아닌 것을 0으로 읽는다.** 낡은 판은 빈 목록을 `null` 로 낸다
+  // (Go 의 nil 슬라이스). 2026-09-01 에 볼트를 하나 만들었더니 여기가
+  // TypeError 를 냈고, 그 예외가 렌더를 끊어 **볼트 화면이 통째로 사라졌다.**
+  const d = Array.isArray(v.domains) ? v.domains.length : 0;
   return `결정 ${num(v.decisions)}건 · 프로젝트 ${d}개`;
 }
 

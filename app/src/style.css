@@ -149,44 +149,47 @@ body {
 /* 볼트 카드 — **경계가 있어야 한 덩이로 읽힌다.** 예전에는 이름·자리·리모트가
    그냥 흘렀고 바로 뒤에 "새 볼트" 입력이 이어져서 어디까지가 한 볼트인지 안 보였다. */
 .vault-card {
-  border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
-  margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  margin-bottom: 8px;
 }
 .vault-card.broken { border-color: var(--warn); }
 .vault-card.broken .vault-name { color: var(--warn); }
 .vault-card-head {
   display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--gap); margin-bottom: 10px;
+  gap: var(--gap); margin-bottom: 8px;
 }
 .vault-name { font-weight: 600; font-size: var(--fs-md); }
 .vault-state { color: var(--fg-dim); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* 카드 안의 한 줄: 라벨 · 값 · 버튼. 라벨 폭을 맞춰야 값이 세로로 정렬된다 —
-   자리와 리모트가 제각기 시작하면 훑어 읽을 수가 없다. */
-.vault-field {
-  display: grid; grid-template-columns: 58px 1fr auto; gap: 8px;
-  align-items: center; margin-top: 6px;
-}
-.vault-field-label { font-size: var(--fs-sm); color: var(--fg-faint); white-space: nowrap; }
+/* 카드 안의 한 줄: 값 · 버튼.
+   **고정 폭 라벨 열을 쓰지 않는다.** 한국어 라벨은 길이가 제각각이라 어떤 폭을
+   골라도 다음 라벨에서 깨진다 — 58px 로 잡았더니 `git 리모트` 가 넘쳐 입력창
+   밑으로 깔렸다(2026-09-01). flex 는 내용에 맞춰 늘어나므로 그 실패가 없다. */
+.vault-line { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
 .vault-path {
-  font-size: var(--fs-sm); color: var(--fg-dim); word-break: break-all;
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--fg-dim);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 .vault-idle {
   margin: 10px 0 0; font-size: var(--fs-sm); color: var(--fg-faint);
   padding-top: 9px; border-top: 1px dashed var(--line);
 }
-/* 리모트는 볼트 줄 전체를 쓴다 — 주소가 길어서 다른 칸과 나눠 쓰면 다 잘린다. */
-.vault-remote-label { font-size: var(--fs-sm); color: var(--fg-faint); white-space: nowrap; }
-.vault-remote-input { font-size: var(--fs-sm); min-width: 0; }
+/* **min-width:0 이 핵심이다.** input 은 기본 폭을 고집해서, 이것이 없으면
+   flex:1 을 줘도 안 줄고 안 늘어난다 — 주소가 잘려 보이던 진짜 이유다. */
+.vault-remote-input { flex: 1; min-width: 0; font-size: var(--fs-sm); }
 
 /* 새 볼트는 **만드는 행위**라 카드 목록과 갈라 둔다. 같은 흐름에 두면 마지막
    볼트의 일부처럼 읽힌다. */
 .vault-add {
-  display: grid; grid-template-columns: 1fr auto; gap: 8px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line);
 }
-.vault-add-where { grid-column: 1 / -1; font-size: var(--fs-sm); color: var(--fg-faint); word-break: break-all; min-height: 1em; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+/* **폭을 묶는다.** 볼트 이름은 짧은 낱말인데 칸이 화면 끝까지 뻗으면
+   그 화면이 무엇을 묻는지가 흐려진다. */
+.vault-add-name { flex: 1; min-width: 0; max-width: 300px; }
+.vault-add-where { flex-basis: 100%; font-size: var(--fs-sm); color: var(--fg-faint); word-break: break-all; min-height: 1em; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
 
 .domain-row {
   display: grid; grid-template-columns: 1fr auto auto; gap: var(--gap);
@@ -291,7 +294,11 @@ select:disabled { opacity: .5; cursor: wait; }
  *   ⑤ **칸이 둘이다.** 사이드바 + 본문. 목록은 세 번째 칸이 아니라 본문 자리에
  *      뜨는 뷰이고, 항목을 고르면 그 자리가 글로 바뀐다 (browse.ts 의 §).
  */
-body:has(.browse) #app { padding: 0; height: 100vh; }
+/* **공유 골격에 건다.** 예전에는 `body:has(.browse)` 였는데, 설정 화면의 껍데기는
+   `.settings-shell` 이라 안 걸렸다 — `#app` 이 여백을 쥔 채 100vh 짜리 자식을 담아
+   그 초과분이 **바깥 스크롤을 하나 더** 만들었다(2026-09-01 지적, 스크롤 두 개).
+   화면이 늘 때마다 이 선택자를 고쳐야 하는 구조 자체가 고장이었다. */
+body:has(.pane2) #app { padding: 0; height: 100vh; overflow: hidden; }
 /* 두 칸 골격 — **볼트 화면과 설정이 같은 것을 쓴다.** 설정만 다른 골격이면
    다른 앱처럼 보인다 (2026-09-01 지적). `.browse` 는 정체성으로 남는다: 스크롤
    보존이 자기 껍데기를 그 이름으로 찾는다 (main.ts 의 drawBrowseInner). */
@@ -329,7 +336,12 @@ body:has(.browse) #app { padding: 0; height: 100vh; }
 
 /* ② 본문은 넓은 여백 안에 중앙으로 선다. */
 .content { background: var(--bg); }
-.list, .reader, .settings { max-width: 820px; margin: 0 auto; padding: 40px 52px 90px; }
+.list, .reader { max-width: 820px; margin: 0 auto; padding: 40px 52px 90px; }
+
+/* 설정은 **읽는 화면이 아니라 만지는 화면**이라 결정문보다 좁고 촘촘하다.
+   글줄 길이를 위해 820px 을 잡았던 것인데, 여기는 긴 문장이 없고 대신 짧은
+   컨트롤이 여럿이라 그 폭이면 요소끼리 멀어져 한 덩이로 안 읽힌다. */
+.settings { max-width: 620px; margin: 0 auto; padding: 32px 40px 80px; }
 
 /* 설정에서 나가는 문. 사이드바 맨 위에 두어 **어디로 돌아가는지**가 늘 보인다. */
 .side-back {

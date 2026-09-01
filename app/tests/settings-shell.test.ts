@@ -148,3 +148,53 @@ describe("프로젝트 → 볼트", () => {
     expect(card!.textContent, "안 쓰이는 볼트인 것이 안 보인다").toMatch(/아무 프로젝트도|쓰는 프로젝트가 없/);
   });
 });
+
+// ── 낡은 판·이상한 데이터에도 화면이 안 사라진다 ──────────────────────
+//
+// 2026-09-01 사고: 볼트 `회사` 를 만들었더니 **볼트 화면이 통째로 사라졌다.**
+// 새 볼트의 `domains` 가 JSON `null` 로 왔고(Go 의 nil 슬라이스), `v.domains.length`
+// 가 TypeError 를 냈다. 그 예외가 렌더를 끊어 뒤쪽(새 볼트 폼·프로젝트 목록)이
+// 전부 안 그려졌고, 새로고침해도 같은 자리에서 또 터지니 영구적으로 보였다.
+//
+// Go 쪽은 고쳤다. 그래도 여기 방어가 필요한 이유는 **앱에 번들된 prior 가 낡을
+// 수 있어서**다 — 검은 화면 사고의 원인 ①이 정확히 그것이었다. 그리고 설정
+// 화면에는 볼트 화면과 달리 **오류 경계가 없었다.**
+
+const NULLISH = [
+  { name: "default", path: "/v", exists: true, decisions: 3, domains: ["common"], remote: "" },
+  // 낡은 판이 내는 모양 — 빈 목록이 null 로 온다.
+  { name: "회사", path: "/v2", exists: true, decisions: 0, domains: null, remote: null },
+];
+
+describe("망가진 데이터", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  // ★★★ 지적된 고장 그대로.
+  it("domains 가 null 인 볼트가 있어도 화면이 안 사라진다", async () => {
+    await openVaultTab(NULLISH as unknown[]);
+
+    // 두 볼트가 다 보여야 한다.
+    const cards = document.querySelectorAll(".vault-card");
+    expect(cards.length, "볼트 카드가 모자란다").toBe(2);
+    // **그리고 그 뒤가 살아 있어야 한다.** 사라진 것이 정확히 이 둘이었다.
+    expect(document.querySelector(".vault-add"), "새 볼트 폼이 사라졌다").toBeTruthy();
+    expect(document.body.textContent, "프로젝트 섹션이 사라졌다").toContain("프로젝트 → 볼트");
+  });
+
+  // ★★ 설정 화면에도 오류 경계가 있어야 한다.
+  //
+  // 방어를 아무리 넣어도 **다음에 어디서 터질지는 모른다.** 볼트 화면은 그것을
+  // 인정하고 그물을 쳤는데(2026-09-01 검은 화면) 설정 화면은 안 쳤다. 터졌을 때
+  // 최소한 무엇이 터졌는지는 보여야 한다.
+  it("설정을 그리다 터져도 빈 화면이 되지 않는다", async () => {
+    // **방어를 뚫는 입력이어야 한다.** 배열이 아닌 것은 이제 빈 목록으로 읽히므로
+    // 안 터진다 — 그건 방어가 도는 것이지 경계가 도는 것이 아니다. 배열이되
+    // 원소가 없는 값이면 어떤 방어도 안 거치고 속성 읽기에서 터진다.
+    await openVaultTab([null] as unknown as unknown[]);
+    const shown = document.body.textContent ?? "";
+    expect(shown.trim(), "화면이 통째로 비었다").not.toBe("");
+    expect(shown, "무엇이 터졌는지 안 보인다").toMatch(/멈췄|실패|오류/);
+  });
+});

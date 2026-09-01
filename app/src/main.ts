@@ -297,7 +297,30 @@ function start(app: HTMLElement): void {
     }
   }
 
+  /** draw 는 설정 화면이다.
+   *
+   * **렌더가 터져도 빈 화면이 되면 안 된다.** 볼트 화면은 2026-09-01 검은 화면
+   * 사고 뒤에 그물을 쳤는데(drawBrowse) 여기는 안 쳤다. 그래서 같은 날 볼트를
+   * 하나 만들었을 때 — 새 볼트의 `domains` 가 null 로 와서 TypeError 가 났고 —
+   * 그 예외가 렌더를 끊어 **이미 그려진 부분만 남고 뒤가 통째로 사라졌다.**
+   * 사람에게는 "볼트를 만들었더니 화면이 없어졌다" 로 보였고, 새로고침해도
+   * 같은 자리에서 또 터지니 영구적이었다.
+   *
+   * 개별 방어(vaults.ts 의 arr)와 **별개로** 이 그물이 필요하다. 다음에 어디서
+   * 터질지는 모르지만, 터졌을 때 무엇이 터졌는지는 보여야 한다. */
   function draw(q: Queue | null, s: Settings): void {
+    try {
+      drawInner(q, s);
+    } catch (e) {
+      const { body } = shell();
+      renderError(body, {
+        kind: "render",
+        message: `설정을 그리다 멈췄다: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  function drawInner(q: Queue | null, s: Settings): void {
     const { nav, banner, body } = settingsShell();
 
     for (const t of TABS) {
