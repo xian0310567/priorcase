@@ -1,6 +1,7 @@
 package arch_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -217,5 +218,34 @@ func TestReleaseBuildsWindows(t *testing.T) {
 	wf := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "release.yml"))
 	if !strings.Contains(wf, "dist/npm/win32-*") {
 		t.Error("release.yml 의 게시 루프가 win32 패키지를 안 집는다 — 만들고 안 올린다")
+	}
+}
+
+// ★ **앱 빌드가 사이드카를 매번 새로 만들어야 한다.**
+//
+// 2026-09-01 사고: `tauri build` 만 돌려서 번들된 prior 가 낡은 채로 남았고,
+// 그 판이 `show --json` 의 새 키를 안 내서 앱이 **검은 화면**이 됐다. 사람은
+// 원인을 알 길이 없었다 — 앱도 CLI 도 각자는 멀쩡했다.
+//
+// 사이드카는 소스에서 만들어지므로 안 만들면 **조용히 낡는다.** beforeBuildCommand
+// 가 부르는 자리에 끼워 그 창을 없앤다.
+func TestAppBuildRegeneratesSidecar(t *testing.T) {
+	raw := readFile(t, filepath.Join(repoRoot(t), "app", "package.json"))
+	var p struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Scripts["build"], "bundle-prior.sh") {
+		t.Errorf("app 의 build 스크립트가 사이드카를 안 만든다: %q\n"+
+			"  그러면 번들된 prior 가 조용히 낡고, 앱과 판이 갈리는 순간 화면이 죽는다",
+			p.Scripts["build"])
+	}
+	// tauri.conf 의 beforeBuildCommand 가 그 스크립트를 부르는지도 본다 —
+	// package.json 만 고치고 tauri 가 다른 것을 부르면 아무 일도 안 일어난다.
+	conf := readFile(t, filepath.Join(repoRoot(t), "app", "src-tauri", "tauri.conf.json"))
+	if !strings.Contains(conf, `"beforeBuildCommand": "pnpm build"`) {
+		t.Error("tauri 의 beforeBuildCommand 가 pnpm build 가 아니다 — 사이드카 생성이 안 걸린다")
 	}
 }

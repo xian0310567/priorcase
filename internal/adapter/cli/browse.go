@@ -44,6 +44,11 @@ type showOut struct {
 	Supersedes []string `json:"supersedes"`
 	Related    []string `json:"related"`
 	Author     string   `json:"author"`
+	// **속성을 다 낸다.** 앱이 옵시디언처럼 frontmatter 를 표로 보여 주는데,
+	// 일부만 주면 그 화면이 "속성 목록" 이라고 말하면서 거짓말을 한다.
+	Type           string   `json:"type"`
+	SourceSession  string   `json:"source_session"`
+	SummaryHistory []string `json:"summary_history"`
 	// SupersededReason 은 무엇이 이 결정을 뒤집었는지다. 뒤집힌 노트를 읽는
 	// 사람에게 가장 먼저 필요한 한 줄이라 따로 낸다.
 	SupersededReason string `json:"superseded_reason"`
@@ -181,12 +186,17 @@ func newShowCmd() *cobra.Command {
 					noteOut: toNoteOut(l, c, n), Body: string(n.Body),
 					Supersedes: []string(n.Meta.Supersedes), Related: n.Meta.Related,
 					Author: n.Meta.Author, SupersededReason: n.Meta.SupersededReason,
+					Type: n.Meta.Type, SourceSession: n.Meta.SourceSession,
+					SummaryHistory: n.Meta.SummaryHistory,
 				}
 				if o.Supersedes == nil {
 					o.Supersedes = []string{}
 				}
 				if o.Related == nil {
 					o.Related = []string{}
+				}
+				if o.SummaryHistory == nil {
+					o.SummaryHistory = []string{}
 				}
 				if asJSON {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(o)

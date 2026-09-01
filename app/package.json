@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "bash scripts/bundle-prior.sh && tsc --noEmit && vite build",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "sidecar": "bash scripts/bundle-prior.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0",
