@@ -359,7 +359,7 @@ func newVaultCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(add, list, newVaultRemoteCmd(), newVaultPathCmd())
+	cmd.AddCommand(add, list, newVaultRemoteCmd(), newVaultPathCmd(), newVaultRemoveCmd())
 	return cmd
 }
 
@@ -399,6 +399,35 @@ func newVaultPathCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "볼트 %s → %s\n", args[0], args[1])
+			return nil
+		},
+	}
+}
+
+// newVaultRemoveCmd 는 볼트를 설정에서 뺀다.
+//
+// **만드는 문만 있고 무르는 문이 없었다** (2026-09-01). 볼트를 하나 만들어 보고
+// 아니다 싶어 되돌리려는데 길이 없어서, 안 쓰는 볼트가 설정에 영영 남았다.
+// 그 볼트는 doctor 가 계속 검사하고 sync 가 계속 훑는다 — 되돌릴 수 없는 도구는
+// 실험을 안 하게 만든다.
+func newVaultRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <볼트>",
+		Short: "볼트를 설정에서 뺀다 (폴더는 안 지운다)",
+		Long: "설정에서 그 볼트를 뺀다. **폴더와 파일은 그대로 둔다** —\n" +
+			"사람이 보고 정할 일이고, 잘못 뺐으면 다시 더하면 그만이다.\n\n" +
+			"그 볼트를 쓰는 프로젝트가 있으면 거부한다 — 먼저 prior domain move 로 옮겨라.",
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
+				return config.RemoveVault(src, args[0])
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"볼트 %s 를 설정에서 뺐다 — 폴더는 그대로 있다\n", args[0])
 			return nil
 		},
 	}
@@ -571,8 +600,15 @@ func newDomainMoveCmd() *cobra.Command {
 			}
 			// **설정도 같이 바꾼다.** 파일만 옮기고 설정이 옛 볼트를 가리키면
 			// 방금 고친 고장의 거울상이 된다.
+			// **기본 볼트로 되돌릴 때는 빈 값을 쓴다.** 규약이 그렇다
+			// (`domain bind` 는 볼트를 비우면 기본으로 되돌린다). 이름을 박아 두면
+			// 설정에 뜻 없는 줄이 남고, 나중에 기본 볼트 이름이 바뀌면 어긋난다.
+			bound := vaultName
+			if bound == config.DefaultVaultName {
+				bound = ""
+			}
 			if err := applyEdit(cmd, func(src []byte) ([]byte, error) {
-				return config.BindDomain(src, prefix, vaultName)
+				return config.BindDomain(src, prefix, bound)
 			}); err != nil {
 				return err
 			}

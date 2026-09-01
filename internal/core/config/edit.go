@@ -557,3 +557,93 @@ func SetVaultPath(src []byte, name, path string) ([]byte, error) {
 		}
 	})
 }
+
+// RemoveVault 는 볼트를 설정에서 뺀다.
+//
+// # 왜 필요한가
+//
+// 2026-09-01: 회사 볼트를 만들어 도메인 하나를 옮겼다가 되돌렸다. 그런데 **뺄 길이
+// 없었다** — 만드는 문만 있고 무르는 문이 없었다. 안 쓰는 볼트가 설정에 남으면
+// doctor 가 계속 검사하고 sync 가 계속 훑는다. 실험을 되돌릴 수 없는 도구는
+// 실험을 안 하게 만든다.
+//
+// # 파일은 안 지운다
+//
+// 설정에서만 뺀다. 볼트에 둔 것을 지우지 않는다는 규칙은 여기도 같다 — 폴더는
+// 남으므로 사람이 보고 정할 수 있고, 잘못 뺐으면 다시 더하면 그만이다.
+//
+// # 쓰는 도메인이 있으면 거부한다
+//
+// 그냥 빼면 그 프로젝트의 기록이 갈 곳을 잃는데 **그게 조용하다** — 회수는 0건을
+// 내고 화면은 멀쩡해 보인다. 먼저 도메인을 옮기라고 말한다.
+func RemoveVault(src []byte, name string) ([]byte, error) {
+	name = strings.TrimSpace(name)
+	if name == DefaultVaultName {
+		return nil, fmt.Errorf("기본 볼트(%s)는 뺄 수 없다 — 빠지면 어느 도메인도 쓸 자리가 없다", name)
+	}
+	cur, err := parseBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("지금 설정을 읽을 수 없어 고칠 수 없다: %w", err)
+	}
+	found := false
+	for _, v := range cur.Vaults {
+		if v.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("볼트 %q 가 설정에 없다", name)
+	}
+	var users []string
+	for _, d := range cur.Domain {
+		if d.Vault == name {
+			users = append(users, d.Prefix)
+		}
+	}
+	if len(users) > 0 {
+		return nil, fmt.Errorf("%s 를 쓰는 프로젝트가 있다 (%s) — 먼저 prior domain move 로 옮겨라",
+			name, strings.Join(users, ", "))
+	}
+
+	return edit(src, func(lines []string) ([]string, error) {
+		// `[[vault]]` 블록을 통째로 걷어낸다. 블록은 다음 헤더 전까지다.
+		out := make([]string, 0, len(lines))
+		for i := 0; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) != "[[vault]]" {
+				out = append(out, lines[i])
+				continue
+			}
+			// 이 블록이 그 볼트인지 먼저 본다.
+			end := len(lines)
+			mine := false
+			for j := i + 1; j < len(lines); j++ {
+				if isHeader(lines[j]) {
+					end = j
+					break
+				}
+				if keyOf(lines[j]) == "name" && stringValueOf(lines[j]) == name {
+					mine = true
+				}
+			}
+			if !mine {
+				out = append(out, lines[i])
+				continue
+			}
+			// 블록과 **바로 앞의 빈 줄**을 같이 뺀다 — 안 그러면 빈 줄이 쌓인다.
+			for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+				out = out[:len(out)-1]
+			}
+			i = end - 1
+		}
+		return out, nil
+	}, func(c *Config) {
+		var keep []Vault
+		for _, v := range c.Vaults {
+			if v.Name != name {
+				keep = append(keep, v)
+			}
+		}
+		c.Vaults = keep
+	})
+}
