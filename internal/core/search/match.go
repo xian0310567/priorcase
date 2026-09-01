@@ -17,10 +17,24 @@ import (
 // 그래서 토큰이 ASCII 로만 이뤄졌으면 낱말 경계를 요구하고, CJK 글자를 하나라도
 // 포함하면 부분 매칭을 허용한다.
 func matches(text, keyword string) bool {
+	return matchesIn(text, keyword, hasWideScript(keyword))
+}
+
+// matchesIn 은 넓은 문자 판정을 **미리 재 둔** 낱말로 본다.
+//
+// `hasWideScript` 는 낱말에만 달렸는데 노트마다 다시 계산되고 있었다. 실볼트
+// 실측(2026-09-01): 노트 614건 · 질의어 35개 · Recall 610회 = 1,300만 번이고,
+// 매번 룬을 풀어 유니코드 표를 네 번 찾는다. 동의어 형제를 노트 루프 밖으로
+// 뺀 것과 같은 종류다(hitsSiblings 의 §).
+//
+// **판정은 반드시 그 낱말의 것이어야 한다.** 다른 낱말의 것을 들고 들어가면
+// 한글이 낱말 경계 규칙으로 걸리거나 그 반대가 되는데, 둘 다 에러가 아니라
+// "결과가 조금 달라짐" 으로만 나타난다 (matchhoist_test.go 가 잡는다).
+func matchesIn(text, keyword string, wide bool) bool {
 	if keyword == "" {
 		return false
 	}
-	if hasWideScript(keyword) {
+	if wide {
 		return strings.Contains(text, keyword)
 	}
 	return containsWord(text, keyword)

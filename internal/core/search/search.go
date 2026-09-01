@@ -745,6 +745,7 @@ func rareThreshold(pool int) int {
 type noteScan struct {
 	note     store.Note
 	headLen  int
+	body     string // 이미 접어 둔 본문. 게이트를 넘은 뒤에야 훑는다 (scoreAll 2차)
 	headHit  []bool // keywords 와 같은 길이
 	headHits int
 	synHits  int
@@ -763,8 +764,11 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 	// ── 1차: 히트를 기록하면서 문서빈도를 센다 ──────────────────────
 	// **형제 낱말은 질의어마다 한 번만 푼다** (hitsSiblings 의 §).
 	sibs := make([][]string, len(keywords))
+	// **넓은 문자 판정도 낱말당 한 번만 한다** (matchesIn 의 §).
+	wide := make([]bool, len(keywords))
 	for i, k := range keywords {
 		sibs[i] = syn.siblings(k)
+		wide[i] = hasWideScript(k)
 	}
 
 	scans := make([]noteScan, 0, len(notes))
@@ -801,7 +805,7 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 			// **정확히 맞은 것이 우선이고, 한 질의어는 한 번만 센다.**
 			// 형제까지 따로 세면 표를 크게 쓴 낱말이 점수를 독식한다 (synonym.go).
 			switch {
-			case matches(head, k):
+			case matchesIn(head, k, wide[i]):
 				sc.headHit[i] = true
 				sc.headHits++
 				df[i]++
@@ -812,20 +816,7 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		if sc.headHits+sc.synHits == 0 {
 			continue // head 히트가 없으면 어떤 게이트도 못 넘는다 — 들고 있을 이유가 없다
 		}
-		// **본문은 살아남은 노트에서만 훑는다.**
-		//
-		// 예전에는 위 루프 안에서 head 와 같이 봤는데, 바로 다음 줄이 head 히트
-		// 0인 노트를 통째로 버리므로 **그 노트들의 본문 훑기가 전부 버려졌다.**
-		// 살아남는 것은 대개 볼트의 몇 %라 그만큼이 낭비다.
-		//
-		// 실측(2026-08-31, 결정 558건 · 본문 합계 1.7MB): `prior queue` 가
-		// 16.6초 → 13.0초. 점수는 한 점도 안 바뀐다 — 버릴 노트의 bodyHits 는
-		// 어차피 아무 데도 안 쓰였다.
-		for _, k := range keywords {
-			if matches(body, k) {
-				sc.bodyHits++
-			}
-		}
+		sc.body = body
 		scans = append(scans, sc)
 	}
 
@@ -852,6 +843,26 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		}
 		if gate < need {
 			continue
+		}
+
+		// **본문은 게이트를 넘은 노트에서만 훑는다.**
+		//
+		// bodyHits 는 아래 점수 식에만 쓰이고, 그 식은 여기 도달한 노트만 계산한다.
+		// 그래서 게이트에서 떨어진 노트의 본문 훑기는 **결과에 한 점도 기여하지
+		// 않으면서** 볼트에서 가장 긴 문자열들을 훑는다.
+		//
+		// 이 자리는 두 번 좁혀졌다. 처음에는 head 루프 안에 있어서 head 히트 0인
+		// 노트까지 훑었고(2026-08-31, `prior queue` 16.6→13.0초), 그것을 head
+		// 게이트 뒤로 옮긴 뒤에도 **희소도 게이트 앞**에 남아 있었다. 희소도
+		// 게이트가 훨씬 강한 필터다 — 흔한 낱말만 걸린 노트를 여기서 다 떨군다.
+		//
+		// 실측(2026-09-01, 결정 610건 · 본문 합계 1.7MB): `retro.AllDue` 가
+		// 610번의 Recall 로 6.6초를 쓰고 있었고 그중 3.55초가 이 루프였다.
+		// 점수는 안 바뀐다 (bodygate_test.go 가 양쪽 끝을 잡는다).
+		for i, k := range keywords {
+			if matchesIn(sc.body, k, wide[i]) {
+				sc.bodyHits++
+			}
 		}
 
 		score := headScore(sc.headHits, rareHits, sc.synHits, sc.headLen) + weightBody*sc.bodyHits
