@@ -37,6 +37,10 @@ func newReviewCmd() *cobra.Command {
 	// **덧붙인다. 덮어쓰지 않는다.** capture 가 대상 없는 related 를 빼고 알려 줄 때
 	// 다시 걸 문이 여기다 (capture/relatedcheck.go).
 	f.StringSliceVar(&r.Related, "related", nil, "관련 문서를 덧붙인다 — [[stem]] 또는 stem (반복 가능)")
+	// **태그는 반대로 통째로 간다** (ReviewRequest.Tags 의 §). doctor 의 회수 어휘
+	// 검사가 잡는 것이 헛도는 태그라, 고치는 일이 대개 빼는 것이기 때문이다.
+	f.StringSliceVar(&r.Tags, "tags", nil,
+		"태그를 통째로 간다 — 쉼표로 나눈다 (decision 표식은 남는다)")
 	// **review 는 --supersedes 없이 번복 이유를 남길 수 있는 유일한 경로다.**
 	// 대체할 새 결정이 있으면 사유는 뒤집히는 옛 노트에 붙지만, 측정으로 가정이 깨져
 	// 그냥 그만두는 번복이 실제로 더 흔하다 — 그때 사유가 붙을 곳은 이 노트 자신뿐이고,

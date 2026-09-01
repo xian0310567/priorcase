@@ -37,6 +37,21 @@ type ReviewRequest struct {
 	// 않는다. 지우려면 파일을 고치면 된다(그게 더 드물고 더 신중한 일이다).
 	Related []string
 
+	// Tags 는 태그를 **통째로 갈아 끼운다.** nil 이면 변경 없음이고, 빈 슬라이스는
+	// "전부 지운다" 다.
+	//
+	// # 왜 덧붙이기가 아니라 교체인가
+	//
+	// Related 는 덧붙인다 — 관계는 쌓이는 것이라 지우는 일이 드물다. 태그는
+	// 반대다. `prior doctor` 의 회수 어휘 검사가 잡는 것이 **헛도는 태그**이고
+	// (제목·요약에 이미 있어 회수에 아무것도 안 더하는 것), 그걸 고치는 일은
+	// 대개 **빼는 것**이다. 덧붙이기만 되면 그 검사를 영영 못 만족시킨다.
+	//
+	// 그 검사는 지금 "파일의 tags 를 직접 고쳐라 — prior review 로는 태그를
+	// 못 고친다" 고 안내한다. 손 편집을 시키는 안내인데, 그 손이 frontmatter 를
+	// 깨는 것이 우리가 막으려는 일이다.
+	Tags []string
+
 	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. 없으면 변경 없음.
 	//
 	// 이 자리가 없어서 잃던 것: supersede() 는 옛 노트에 status="superseded" 와
@@ -119,6 +134,24 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 
 	// related 를 덧붙인다. 대상이 없는 것은 빼고 호출부에 알린다 (relatedcheck.go).
 	var dropped []DroppedLink
+	if r.Tags != nil {
+		// **보일러플레이트는 지키고 나머지를 간다.** `decision` 은 capture 가 모든
+		// 노트에 붙이는 표식이라 사람이 지울 것이 아니고, 지우면 그 노트가
+		// 결정 목록에서 빠진다.
+		next := make([]string, 0, len(r.Tags)+1)
+		for _, t := range n.Meta.Tags {
+			if strings.EqualFold(strings.TrimSpace(t), "decision") {
+				next = append(next, t)
+			}
+		}
+		for _, t := range r.Tags {
+			if t = strings.TrimSpace(t); t != "" && !containsFold(next, t) {
+				next = append(next, t)
+			}
+		}
+		n.Meta.Tags = next
+	}
+
 	if len(r.Related) > 0 {
 		add, drop, rerr := resolveRelated(l, r.Related)
 		if rerr != nil {
@@ -295,4 +328,13 @@ func refuseFutureNote(n store.Note) error {
 		"이 결정은 더 새 판(schema %d)으로 쓰였다. 지금 prior 는 판 %d 까지 안다 — "+
 			"고치면 망가뜨릴 수 있어 멈춘다. prior 를 올려라",
 		n.Meta.Schema, schema.Current)
+}
+
+func containsFold(ss []string, s string) bool {
+	for _, x := range ss {
+		if strings.EqualFold(strings.TrimSpace(x), s) {
+			return true
+		}
+	}
+	return false
 }

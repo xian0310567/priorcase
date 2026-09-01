@@ -69,7 +69,7 @@ func checkVocabulary(r *Report, notes []store.Note) {
 		fmt.Sprintf("%d/%d건의 태그가 제목·요약에 이미 있는 낱말뿐이라 회수에 아무것도 더하지 않는다 — %s%s",
 			len(dead), tagged, strings.Join(names, " · "), more),
 		"그 노트의 tags 에 **동의어와 상위어**를 넣어라 (다시 찾을 때 쓸 낱말이다). "+
-			"파일의 tags 를 직접 고쳐라 — prior review 로는 태그를 못 고친다")
+			"prior review <stem> --tags '낱말,낱말' 로 갈아라 (앱의 속성 패널에서도 된다)")
 }
 
 // checkSynonyms 는 **동의어 표**의 상태를 말한다 (search/synonym.go).

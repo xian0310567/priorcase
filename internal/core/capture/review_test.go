@@ -192,3 +192,85 @@ func TestReviewAcceptsRetractionWithReason(t *testing.T) {
 		t.Errorf("status = %q, want retracted", n.Meta.Status)
 	}
 }
+
+// ★ **태그는 통째로 간다.** Related 와 반대다.
+//
+// doctor 의 회수 어휘 검사가 잡는 것은 **헛도는 태그**(제목·요약에 이미 있어 회수에
+// 아무것도 안 더하는 것)이고, 그걸 고치는 일은 대개 **빼는 것**이다. 덧붙이기만
+// 되면 그 검사를 영영 만족시킬 수 없다. 그 검사는 예전에 "파일의 tags 를 직접
+// 고쳐라" 고 안내했는데, 그 손 편집이 frontmatter 를 깨는 것이 이 도구가 막으려는
+// 일이었다 (2026-09-01).
+func TestReviewReplacesTags(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	const stem = "alpha-결정-저장엔진-2026-08-01"
+
+	if _, err := Review(l, ReviewRequest{Stem: stem, Tags: []string{"영속성", "새태그"}}); err != nil {
+		t.Fatal(err)
+	}
+	n := noteByStem(t, l, stem)
+	// **decision 표식은 남는다** — capture 가 모든 노트에 붙이고, 지우면 그 노트가
+	// 결정 목록에서 통째로 빠진다.
+	if !hasTag(n.Meta.Tags, "decision") {
+		t.Errorf("decision 표식이 사라졌다: %v", n.Meta.Tags)
+	}
+	for _, want := range []string{"영속성", "새태그"} {
+		if !hasTag(n.Meta.Tags, want) {
+			t.Errorf("태그 %q 가 없다: %v", want, n.Meta.Tags)
+		}
+	}
+	// 갈아 끼우기이므로 예전 태그는 사라져야 한다.
+	if hasTag(n.Meta.Tags, "저장엔진") {
+		t.Errorf("덧붙이기가 됐다 — 옛 태그가 남았다: %v", n.Meta.Tags)
+	}
+}
+
+func TestReviewNilTagsLeavesThemAlone(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	const stem = "alpha-결정-저장엔진-2026-08-01"
+	before := noteByStem(t, l, stem).Meta.Tags
+	if _, err := Review(l, ReviewRequest{Stem: stem, Outcome: "good"}); err != nil {
+		t.Fatal(err)
+	}
+	after := noteByStem(t, l, stem).Meta.Tags
+	if len(before) != len(after) {
+		t.Errorf("태그를 안 줬는데 바뀌었다: %v → %v", before, after)
+	}
+}
+
+// 빈 슬라이스는 "전부 지운다" 다 — nil(변경 없음)과 달라야 한다.
+func TestReviewEmptyTagsClearsButKeepsMarker(t *testing.T) {
+	l, _ := fixtureLayoutConfig(t)
+	const stem = "alpha-결정-저장엔진-2026-08-01"
+	if _, err := Review(l, ReviewRequest{Stem: stem, Tags: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	got := noteByStem(t, l, stem).Meta.Tags
+	if len(got) != 1 || !hasTag(got, "decision") {
+		t.Errorf("태그가 %v — decision 하나만 남아야 한다", got)
+	}
+}
+
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// noteByStem 은 볼트에서 그 노트를 다시 읽는다 — 디스크에 실제로 쓰였는지 본다.
+func noteByStem(t *testing.T, l *store.Layout, stem string) store.Note {
+	t.Helper()
+	notes, _, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if n.Stem == stem {
+			return n
+		}
+	}
+	t.Fatalf("그런 노트가 없다: %s", stem)
+	return store.Note{}
+}
