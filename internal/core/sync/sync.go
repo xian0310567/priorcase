@@ -59,6 +59,17 @@ func pull(vault string, budget time.Duration) Result {
 	if s := precheck(vault, budget); s != "" {
 		return Result{Skipped: s}
 	}
+	// **커밋이 없으면 가져올 자리가 없다.**
+	//
+	// 인덱스에 올린 것을 rebase 로 얹을 바닥이 없어서 git 이 이렇게 죽는다:
+	// `fatal: Updating an unborn branch with changes added to the index.`
+	// 새 볼트의 첫 동기화가 정확히 그 상태다(2026-09-01 회사 볼트). 실패로 다루면
+	// 첫 동기화가 언제나 빨간불이고, 정작 해야 할 push 까지 같이 의심받는다.
+	//
+	// 먼저 밀고 나면 커밋이 생기므로 그다음부터는 정상으로 돈다.
+	if unbornRepo(vault, budget) {
+		return Result{Skipped: "아직 커밋이 없다 — 먼저 밀어야 한다"}
+	}
 	if _, err := run(vault, budget, "pull", "--rebase", "--autostash"); err != nil {
 		// **반쯤 진행된 rebase 를 남기지 않는다.**
 		//
@@ -156,7 +167,16 @@ func push(vault, message string, budget time.Duration) Result {
 	}
 	// **커밋할 것이 없어도 push 는 한다.** 지난번에 커밋은 됐는데 push 가 실패해
 	// 밀리지 않은 커밋이 남아 있을 수 있다 — 그게 정확히 이 도구가 막아야 할 상태다.
-	if _, err := run(vault, budget, "push"); err != nil {
+	// **upstream 이 없으면 세우면서 민다.**
+	//
+	// 갓 만든 저장소의 브랜치에는 upstream 이 없어서 맨 `git push` 가 죽는다
+	// (`has no upstream branch`). 새 볼트의 첫 push 가 정확히 그 상태다 —
+	// 이미 쓰던 볼트로는 영영 재현되지 않는 길이다(2026-09-01 회사 볼트).
+	args := []string{"push"}
+	if _, uerr := run(vault, budget, "rev-parse", "--abbrev-ref", "@{u}"); uerr != nil {
+		args = append(args, "--set-upstream", "origin", "HEAD")
+	}
+	if _, err := run(vault, budget, args...); err != nil {
 		return Result{Files: n, Err: fmt.Errorf("push 실패: %w", err)}
 	}
 	return Result{Pushed: true, Files: n}
@@ -364,6 +384,9 @@ func All(c *config.Config, o Options, doPull, doPush bool, message string) []Vau
 			vr.Results = append(vr.Results, pull(v.Path, o.Timeout))
 		}
 		if doPush {
+			// **밀기 전에 신원을 챙긴다.** 없으면 커밋이 `Author identity unknown`
+			// 으로 죽는데, 훅은 exit 0 이라 그 실패가 조용하다 (EnsureIdentity 의 §).
+			EnsureIdentity(c, v.Path, o.Timeout)
 			// **공유 볼트는 작업 로그를 빼고 민다.** 밀기 직전이어야 한다 —
 			// 개인 볼트로 쓰다 공유로 돌리는 것이 흔한 경로라, 이미 추적 중인
 			// 파일을 떼어 내는 일까지 여기서 한다 (excludeWorklogs 의 §).
@@ -701,4 +724,72 @@ func RemoveRemote(vault string) error {
 		return fmt.Errorf("리모트를 뗄 수 없다: %w", err)
 	}
 	return nil
+}
+
+// ── 새 볼트의 첫 동기화 ────────────────────────────────────────────────
+//
+// 커밋이 하나도 없는 저장소에서만 나는 고장이 둘 있었다(2026-09-01). 이미 쓰던
+// 볼트로는 영영 재현되지 않는데, 그 상태가 곧 **모든 새 볼트의 첫 경험**이다.
+
+// unborn 은 커밋이 하나도 없는 저장소인지다.
+func unbornRepo(vault string, budget time.Duration) bool {
+	_, err := run(vault, budget, "rev-parse", "--verify", "HEAD")
+	return err != nil
+}
+
+// EnsureIdentity 는 볼트에 커밋 신원이 없으면 **다른 볼트에서 물려준다.**
+//
+// # 고치려는 고장
+//
+// 전역 git 에 `user.email` 이 없는 사람이 흔하다 — 2026-09-01 사업주 머신이
+// 그랬다(name 만 있었다). 이미 쓰던 볼트는 **로컬 설정**을 갖고 있어서 우연히
+// 커밋이 됐고, 그래서 이 고장이 새 볼트에서만 났다:
+//
+//	commit 실패: fatal: Author identity unknown
+//
+// 훅은 무슨 일이 있어도 exit 0 이라 이 실패는 조용하다. 결정 63건이 백업 없이
+// 로컬에만 있었고, 사람이 손으로 `prior sync` 를 칠 때까지 몰랐다.
+//
+// # 왜 지어내지 않는가
+//
+// `priorcase@localhost` 같은 값을 박으면 원장에 두 사람이 있는 것처럼 보인다.
+// 사업주는 이미 어떤 신원으로 커밋하고 있으므로 **그것을 물려받는 것**이 맞다.
+// 물려줄 곳이 없으면 아무것도 안 한다 — 그때는 git 이 내는 안내가 정답이다.
+//
+// # 이미 있으면 안 건드린다
+//
+// 사람이 볼트마다 다른 신원을 일부러 쓸 수 있다(회사 메일과 개인 메일).
+// budget 을 받는 이유: 이 함수도 git 을 여러 번 부른다. 기본 상한을 쓰면 느린
+// 저장소에서 부르는 쪽의 예산을 통째로 넘긴다 — TestAllRespectsBudget 이 잡았다.
+func EnsureIdentity(c *config.Config, vault string, budget time.Duration) {
+	if c == nil || hasIdentity(vault, budget) {
+		return
+	}
+	for _, v := range c.Vaults {
+		if v.Path == vault {
+			continue
+		}
+		email := gitConfig(v.Path, "user.email", budget)
+		name := gitConfig(v.Path, "user.name", budget)
+		if email == "" || name == "" {
+			continue
+		}
+		_, _ = run(vault, budget, "config", "user.email", email)
+		_, _ = run(vault, budget, "config", "user.name", name)
+		return
+	}
+}
+
+// hasIdentity 는 그 저장소에서 커밋할 수 있는지다. 전역·시스템 설정까지 친다 —
+// 그것으로 되면 우리가 손댈 이유가 없다.
+func hasIdentity(vault string, budget time.Duration) bool {
+	return gitConfig(vault, "user.email", budget) != "" && gitConfig(vault, "user.name", budget) != ""
+}
+
+func gitConfig(vault, key string, budget time.Duration) string {
+	out, err := run(vault, budget, "config", "--get", key)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
