@@ -81,6 +81,7 @@ func Vault(c *config.Config, l *store.Layout) *Report {
 	checkDomainFolders(r, c, l)
 	content(r, c, l)
 	checkSync(r, c)
+	checkSharedRemote(r, c)
 	checkBuildDrift(r, c, sync.ThisBuild())
 	return r
 }
@@ -339,7 +340,13 @@ func checkSync(r *Report, c *config.Config) {
 
 // stampDir 는 동기화 도장이 사는 자리다. 못 구하면 빈 문자열이고
 // ReadStamp 이 조용히 "없다" 로 답한다 — 도장이 없는 것은 고장이 아니다.
-func stampDir() string {
+//
+// **변수인 이유: 시험이 갈아 끼울 수 있어야 한다.** 이것이 진짜 홈을 읽는 동안
+// 이 패키지의 동기화 시험은 **그 기계에 마침 무엇이 남아 있느냐**에 따라 통과와
+// 실패가 갈렸다. 2026-09-01 실제로 그렇게 깨졌다 — 다른 볼트를 대상으로 돌린
+// 동기화가 남긴 실패 도장을, 자기 임시 볼트만 보는 줄 알았던 시험이 읽었다.
+// 그런 시험은 신호를 잃는다(config 의 userHome 과 같은 이유로 같은 모양을 쓴다).
+var stampDir = func() string {
 	d, err := xdgpath.StateDir()
 	if err != nil {
 		return ""
@@ -843,4 +850,48 @@ func staleIndexFile(c *config.Config, l *store.Layout) string {
 		}
 	}
 	return ""
+}
+
+// checkSharedRemote 는 **공유 볼트에 리모트가 있는지** 본다.
+//
+// # 왜 따로 있나
+//
+// `checkSync` 는 리모트가 없는 볼트를 그냥 건너뛴다("이 머신에서만 쓴다").
+// 개인 볼트에서는 그것이 맞다 — 리모트 없는 볼트는 정상이고, 매번 경고하면
+// 혼자 쓰는 사람이 그 줄을 무시하는 법을 배운다.
+//
+// 공유 볼트에서는 정반대다. 리모트가 없으면 **그 사람의 결정이 아무에게도 안
+// 간다.** 본인 화면에는 다 잘 보이므로 알아챌 방법이 없다 — 이 패키지가 존재하는
+// 이유의 교과서적인 사례다.
+//
+// Warn 이 아니라 Fail 인 이유: 동작하는데 손해가 있는 것이 아니라, 그 볼트의
+// 목적 자체가 이루어지지 않고 있다(Level 주석의 "동작하지 않는다").
+func checkSharedRemote(r *Report, c *config.Config) {
+	if c == nil {
+		return
+	}
+	var bad []string
+	shared := 0
+	for _, v := range c.Vaults {
+		if !v.Shared {
+			continue
+		}
+		shared++
+		if !sync.Status(v.Path).HasRemote {
+			bad = append(bad, v.Name)
+		}
+	}
+	// **공유 볼트가 없으면 아무 말도 안 한다.** 아직 안 쓰는 기능을 켜라고
+	// 조르는 것은 이 패키지의 일이 아니다.
+	if shared == 0 {
+		return
+	}
+	if len(bad) == 0 {
+		r.add("공유 볼트", OK, fmt.Sprintf("%d개 · 전부 리모트가 있다", shared), "")
+		return
+	}
+	r.add("공유 볼트", Fail,
+		fmt.Sprintf("리모트가 없다: %s — 여기 쓴 결정은 아무에게도 안 간다",
+			strings.Join(clip(bad), ", ")),
+		"앱의 볼트 화면에서 git 리모트를 넣어라 (prior vault remote <이름> <주소>)")
 }

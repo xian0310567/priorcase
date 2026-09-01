@@ -458,6 +458,13 @@ func TestOrphanSupersededNoteIsWarned(t *testing.T) {
 // 훅은 실패해도 대화를 막지 않는다(설계). 그 대가로 회사망에서 push 가 일주일간
 // 막혀 있어도 아무도 모른다 — 이 프로젝트가 계속 경계해 온 "조용한 무동작" 이다.
 func TestUnpushedWorkIsWarned(t *testing.T) {
+	// **진짜 홈을 안 읽는다.** 이 시험은 자기 임시 볼트만 본다고 생각하기 쉬운데,
+	// checkSync 는 동기화 도장을 XDG 상태 디렉토리에서 읽는다. 그래서 이 기계에
+	// 마침 실패 도장이 남아 있으면 여기가 깨진다 — 2026-09-01 실제로 그랬다.
+	orig := stampDir
+	stampDir = func() string { return t.TempDir() }
+	t.Cleanup(func() { stampDir = orig })
+
 	c := testutil.VaultConfig(t)
 	v := c.DefaultVaultPath()
 	g := func(args ...string) {

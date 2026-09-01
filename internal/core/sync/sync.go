@@ -364,6 +364,17 @@ func All(c *config.Config, o Options, doPull, doPush bool, message string) []Vau
 			vr.Results = append(vr.Results, pull(v.Path, o.Timeout))
 		}
 		if doPush {
+			// **공유 볼트는 작업 로그를 빼고 민다.** 밀기 직전이어야 한다 —
+			// 개인 볼트로 쓰다 공유로 돌리는 것이 흔한 경로라, 이미 추적 중인
+			// 파일을 떼어 내는 일까지 여기서 한다 (excludeWorklogs 의 §).
+			//
+			// 실패해도 동기화를 막지 않는다. 막으면 결정까지 못 가는데, 그건
+			// 작업 로그가 한 번 더 섞이는 것보다 나쁘다. 대신 결과에 남긴다.
+			if v.Shared {
+				if err := excludeWorklogs(v.Path, c, o.Timeout); err != nil {
+					vr.Results = append(vr.Results, Result{Err: err})
+				}
+			}
 			// **밀기 직전에 도장을 남긴다.** 그래야 같은 커밋에 실려 저쪽이 본다.
 			// 실패해도 동기화를 막지 않는다 — 도장은 곁다리다.
 			if o.Stamp.Host != "" {
@@ -514,4 +525,113 @@ func hasConflictMarkers(b []byte) bool {
 		}
 	}
 	return false
+}
+
+// ── 공유 볼트: 작업 로그를 동기화에서 뺀다 ──────────────────────────
+
+// ignoreHeader 는 우리가 넣은 구획의 표식이다. 두 번 넣지 않으려고 이것을 찾는다.
+const ignoreHeader = "# priorcase: 공유 볼트라 작업 로그는 동기화하지 않는다"
+
+// excludeWorklogs 는 공유 볼트에서 작업 로그를 git 밖으로 내보낸다.
+//
+// # 왜 파일을 안 지우나
+//
+// **git 에서만 뺀다.** 파일은 제자리에 그대로 남아 회수·rollup·doctor 가 전부
+// 하던 대로 돈다 — 작업 로그는 여전히 내 기록이고, 안 보이면 그건 손실이다.
+// 볼트에 둔 것을 지우지 않는다는 규칙은 여기도 같다.
+//
+// # 왜 .gitignore 에 적나
+//
+// pathspec 으로 add 에서만 빼면 **왜 그 파일이 안 올라가는지 git 도구로는 알 수
+// 없다.** 나중에 누가 `git status` 를 보고 "왜 안 뜨지" 로 한참 헤맨다.
+// 파일에 이유를 적어 두면 그 물음에 파일이 직접 답한다.
+//
+// # 왜 이미 추적 중인 것도 떼나
+//
+// .gitignore 는 **추적 중인 파일에는 안 걸린다.** 개인 볼트로 쓰다 공유로 돌리는
+// 것이 흔한 경로인데(사업주가 지금 그 길이다), 새로 만든 것만 막으면 옛 파일은
+// 계속 동기화되어 충돌이 그대로 남는다.
+func excludeWorklogs(vault string, c *config.Config, budget time.Duration) error {
+	pat := worklogGlob(c)
+	if pat == "" {
+		return nil // 작업 로그 규약이 없다 — 뺄 것도 없다
+	}
+	if err := ensureIgnored(vault, pat); err != nil {
+		return err
+	}
+	return untrack(vault, pat, budget)
+}
+
+// worklogGlob 은 `99-{project}-작업-로그.md` 를 `99-*-작업-로그.md` 로 바꾼다.
+//
+// 프로젝트 이름을 하나씩 나열하지 않는 이유: 도메인은 늘어나는데 .gitignore 는
+// 그때 안 고쳐진다. 늘어난 프로젝트의 로그만 조용히 새어 나가는 것이 정확히
+// 이 프로젝트가 경계하는 실패다.
+func worklogGlob(c *config.Config) string {
+	t := strings.TrimSpace(c.Naming.Worklog)
+	if t == "" || !strings.Contains(t, "{project}") {
+		return ""
+	}
+	return strings.ReplaceAll(t, "{project}", "*")
+}
+
+// ensureIgnored 는 .gitignore 에 패턴을 **한 번만** 넣는다.
+//
+// 동기화는 세션마다 도므로 멱등이 아니면 그 파일이 곧 같은 줄 수백 개가 된다.
+func ensureIgnored(vault, pat string) error {
+	p := filepath.Join(vault, ".gitignore")
+	raw, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf(".gitignore 를 읽을 수 없다: %w", err)
+	}
+	cur := string(raw)
+	if strings.Contains(cur, ignoreHeader) {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(cur)
+	if cur != "" && !strings.HasSuffix(cur, "\n") {
+		b.WriteString("\n")
+	}
+	if cur != "" {
+		b.WriteString("\n")
+	}
+	b.WriteString(ignoreHeader + "\n")
+	b.WriteString("# 프로젝트당 파일 하나에 여럿이 같은 자리에 붙여 충돌이 일상이 된다.\n")
+	b.WriteString("# 파일은 그대로 있고 회수도 계속 읽는다 — 리모트로만 안 간다.\n")
+	b.WriteString(pat + "\n")
+	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf(".gitignore 를 쓸 수 없다: %w", err)
+	}
+	return nil
+}
+
+// untrack 은 이미 추적 중인 작업 로그를 인덱스에서만 뺀다 (`--cached`).
+//
+// 맞는 파일이 없으면 git 이 실패하는데 그건 고장이 아니라 **정상**이다 —
+// 처음부터 공유였던 볼트가 그렇다.
+func untrack(vault, pat string, budget time.Duration) error {
+	// **앞에 `*` 를 붙인다.** 작업 로그는 프로젝트 폴더 안에 있는데
+	// (`priorcase/99-priorcase-작업-로그.md`) git pathspec 의 glob 은 그냥 두면
+	// 최상위만 본다. `.gitignore` 는 슬래시 없는 패턴을 모든 깊이에서 맞추므로
+	// 그쪽과 뜻이 갈리는데, 그 차이가 조용해서 "무시는 되는데 추적은 계속되는"
+	// 상태를 만든다. pathspec 의 `*` 는 `/` 를 넘으므로 이걸로 뜻이 맞는다.
+	out, err := run(vault, budget, "ls-files", "-z", "--", "*"+pat)
+	if err != nil {
+		return fmt.Errorf("추적 목록을 읽을 수 없다: %w", err)
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if strings.TrimSpace(p) != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "--cached", "-q", "--"}, paths...)
+	if _, err := run(vault, budget, args...); err != nil {
+		return fmt.Errorf("작업 로그를 git 에서 떼지 못했다: %w", err)
+	}
+	return nil
 }
