@@ -353,20 +353,37 @@ pub async fn review_note(
 /// 치라고 할 수 없고, 회사 볼트는 만들자마자 회사 리모트에 붙어야 그 결정이
 /// 개인 머신에만 남지 않는다.
 ///
-/// URL 검증은 안 한다 — CodeCommit·GitHub·사내 GitLab 이 전부 모양이 달라서,
-/// 우리가 아는 모양만 받으면 멀쩡한 주소를 거절한다 (CLI 쪽 §).
+/// 주소 **모양**은 검증하지 않는다 — CodeCommit·GitHub·사내 GitLab 이 전부 달라서,
+/// 우리가 아는 모양만 받으면 멀쩡한 주소를 거절한다. 대신 CLI 가 `git ls-remote` 로
+/// **실제로 닿는지** 본다 (2026-09-01).
+///
+/// # 빈 값은 떼기다
+///
+/// CLI 는 빈 URL 을 거부한다 — 실수로 빈 값이 새면 origin 이 빈 문자열로 박혀
+/// 동기화가 조용히 죽기 때문이다. 그래서 여기서 **떼기로 옮겨 준다.** 이 변환이
+/// 없으면 앱에서 리모트를 지울 때 "빈 URL 이다" 로 실패하는데, 사람이 한 일은
+/// 칸을 비우고 [지우기]를 누른 것뿐이라 그 오류를 이해할 수 없다.
 #[tauri::command]
 pub async fn set_vault_remote(name: String, url: String) -> Result<(), CmdError> {
     off_main(move || {
-        run(
-            &prior_bin(),
-            &["vault", "remote", &name, &url],
-            WRITE_TIMEOUT,
-        )
-        .map(|_| ())
-        .map_err(to_cmd_error)
+        run(&prior_bin(), &remote_args(&name, &url), WRITE_TIMEOUT)
+            .map(|_| ())
+            .map_err(to_cmd_error)
     })
     .await
+}
+
+/// remote_args 는 [저장]/[지우기] 를 CLI 인자로 옮긴다.
+///
+/// 따로 뺀 이유는 **시험할 수 있어야 하기 때문**이다. 이 변환이 없으면 앱에서
+/// 리모트를 지울 때 "빈 URL 이다" 로 실패하는데, 진짜 프로세스를 띄우는 자리에
+/// 묻어 두면 그 고장을 시험이 못 잡는다.
+fn remote_args<'a>(name: &'a str, url: &'a str) -> Vec<&'a str> {
+    if url.trim().is_empty() {
+        vec!["vault", "remote", name, "--remove"]
+    } else {
+        vec!["vault", "remote", name, url]
+    }
 }
 
 /// bind_domain 은 프로젝트가 쓸 볼트를 정한다. vault 가 비면 기본 볼트로 되돌린다.
@@ -509,6 +526,31 @@ mod tests {
         .map(|e| to_cmd_error(e).kind)
         .collect();
         assert_eq!(kinds, vec!["not_found", "failed", "timeout", "io"]);
+    }
+
+    // ★★ **빈 칸은 떼기다.** CLI 는 빈 URL 을 거부하므로(실수로 origin 이 빈 값으로
+    //     박히는 것을 막는다) 여기서 옮겨 주지 않으면 앱에서 리모트를 못 지운다.
+    //     사람이 한 일은 칸을 비우고 [지우기]를 누른 것뿐이라 그 오류를 이해할 수 없다.
+    #[test]
+    fn 빈_주소는_떼기로_간다() {
+        assert_eq!(
+            remote_args("회사", ""),
+            vec!["vault", "remote", "회사", "--remove"]
+        );
+        // 공백만 친 것도 빈 것이다 — 사람은 지운 줄 안다.
+        assert_eq!(
+            remote_args("회사", "   "),
+            vec!["vault", "remote", "회사", "--remove"]
+        );
+    }
+
+    #[test]
+    fn 주소가_있으면_그대로_넘긴다() {
+        let url = "https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/x";
+        assert_eq!(
+            remote_args("회사", url),
+            vec!["vault", "remote", "회사", url]
+        );
     }
 
     #[test]

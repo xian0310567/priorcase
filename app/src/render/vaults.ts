@@ -208,7 +208,15 @@ function remoteField(
   save.textContent = "저장";
   const sync = () => {
     const next = input.value.trim();
-    save.disabled = !v.exists || next === "" || next === (v.remote ?? "");
+    const cur = typeof v.remote === "string" ? v.remote : "";
+    // **비우고 저장하면 뗀다.** 예전에는 빈 값을 막았는데, CLI 도 빈 URL 을
+    // 거부하므로 둘이 합쳐져 **오타로 넣은 주소를 영영 못 지우는** 상태가 됐다
+    // (2026-09-01). 각각은 "실수로 origin 이 빈 값으로 박히는 것" 을 막으려는
+    // 옳은 방어였는데, 뗄 길을 아무도 안 만들었다.
+    save.disabled = !v.exists || next === cur;
+    // **무엇을 할지 말한다.** 지우는 것과 저장하는 것은 다른 일이고, 버튼이
+    // 같은 낱말이면 사람은 그것을 저장으로 읽는다.
+    save.textContent = next === "" ? "지우기" : "저장";
   };
   input.addEventListener("input", sync);
   save.addEventListener("click", () => on.remote(v.name, input.value.trim()));

@@ -405,7 +405,7 @@ func newVaultPathCmd() *cobra.Command {
 }
 
 func newVaultRemoteCmd() *cobra.Command {
-	var force bool
+	var force, remove bool
 	cmd := &cobra.Command{
 		Use:   "remote <볼트> [URL]",
 		Short: "볼트가 동기화할 git 리모트를 보고 정한다 (URL 을 비우면 지금 값만 낸다)",
@@ -424,6 +424,15 @@ func newVaultRemoteCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			// **떼는 것은 따로 명시한다.** 빈 URL 을 지우기로 해석하면 실수로
+			// 새어 들어간 빈 값이 동기화를 조용히 끊는다 (SetRemote 의 §).
+			if remove {
+				if err := sync.RemoveRemote(v.Path); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "볼트 %s 의 리모트를 뗐다 — 이제 이 머신에만 있다\n", v.Name)
+				return nil
+			}
 			if len(args) == 1 {
 				url, rerr := sync.Remote(v.Path)
 				if rerr != nil {
@@ -460,6 +469,9 @@ func newVaultRemoteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false,
 		"닿는지 확인하지 않고 그대로 저장한다 (지금 네트워크가 안 될 뿐일 때)")
+	cmd.Flags().BoolVar(&remove, "remove", false,
+		"리모트를 뗀다 — 볼트와 이력은 그대로 두고 동기화만 끊는다")
+	cmd.MarkFlagsMutuallyExclusive("force", "remove")
 	return cmd
 }
 

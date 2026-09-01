@@ -671,3 +671,34 @@ func CheckRemote(url string, budget time.Duration) error {
 	}
 	return nil
 }
+
+// RemoveRemote 는 볼트에서 origin 을 뗀다.
+//
+// # 왜 SetRemote 에 빈 값을 안 넣나
+//
+// `SetRemote` 는 빈 URL 을 거부한다 — 실수로 빈 값이 새어 들어가면 origin 이
+// 빈 문자열로 박혀서 동기화가 조용히 죽기 때문이다. 그 방어는 옳다.
+//
+// 그런데 앱도 빈 값 저장을 막다 보니, 둘이 합쳐져 **오타로 넣은 주소를 영영 못
+// 지우는** 상태가 됐다(2026-09-01). 그래서 지우는 것은 **따로 명시하는 동작**으로
+// 낸다 — 빈 값이 실수로 새는 길은 그대로 막아 둔 채로.
+//
+// # 볼트는 그대로 둔다
+//
+// 리모트를 떼는 것은 동기화를 끊는 일이지 기록을 버리는 일이 아니다. 커밋 이력도
+// 파일도 남는다 — 그래야 다시 붙일 수 있다.
+//
+// **없는 것을 떼는 것은 고장이 아니다.** 이미 원하는 상태다.
+func RemoveRemote(vault string) error {
+	url, err := Remote(vault)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(url) == "" {
+		return nil
+	}
+	if _, err := run(vault, timeout, "remote", "remove", "origin"); err != nil {
+		return fmt.Errorf("리모트를 뗄 수 없다: %w", err)
+	}
+	return nil
+}

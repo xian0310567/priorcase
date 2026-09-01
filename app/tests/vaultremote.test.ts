@@ -63,19 +63,23 @@ describe("볼트 리모트", () => {
     ]);
   });
 
-  it("안 바뀌었거나 비었으면 저장 버튼이 죽어 있다", () => {
+  it("안 바뀌었으면 저장 버튼이 죽어 있다", () => {
     const { root } = screen([vault({ name: "work", remote: "https://a.example/x.git" })]);
     expect(saveOf(root, 0).disabled).toBe(true); // 그대로다
 
     const input = inputs(root)[0];
-    input.value = "   ";
-    input.dispatchEvent(new Event("input"));
-    expect(saveOf(root, 0).disabled).toBe(true); // 빈 값이다
-
     input.value = "https://b.example/y.git";
     input.dispatchEvent(new Event("input"));
     expect(saveOf(root, 0).disabled).toBe(false);
   });
+
+  // **빈 값이 origin 에 박히는 것**을 막는 계약은 그대로다 — 다만 자리가 옮겨졌다.
+  // 예전에는 "빈 칸이면 버튼이 죽는다" 로 막았는데, 그러면 오타로 넣은 주소를
+  // 영영 못 지운다(2026-09-01). 지금은 빈 칸을 **떼기**로 명시하고, 실수로 새는
+  // 길은 아래 두 자리에서 막는다:
+  //   · 원래 리모트가 없으면 여전히 버튼이 죽는다 ("리모트 떼기" describe)
+  //   · 버튼 문구가 `지우기` 로 바뀌어 저장으로 오해할 수 없다
+  //   · CLI 는 빈 URL 을 여전히 거부하고, 떼기는 --remove 로만 간다 (sync 패키지)
 
   it("자리가 없는 볼트에는 못 붙인다 — 눌러도 아무 일이 안 나는 버튼을 두지 않는다", () => {
     const { root } = screen([vault({ name: "gone", exists: false })]);
@@ -136,5 +140,50 @@ describe("라벨 없는 리모트 칸", () => {
   it("★ 고정 폭 라벨 열은 없앤다 — 다음 라벨에서 또 깨진다", () => {
     const { root } = screen([vault({})]);
     expect(root.querySelector(".vault-field-label"), "고정 폭 라벨이 남아 있다").toBeNull();
+  });
+});
+
+// ── 리모트를 떼는 길 ──────────────────────────────────────────────────
+//
+// 2026-09-01 사업주 지적("처음 설치한 사람은 저게 없을 거 아니냐")에서 나왔다.
+// 리모트가 **없는** 상태는 이미 정상으로 다룬다 — sync 는 조용히 건너뛰고 doctor 는
+// "이 머신에서만 쓴다" 로 초록을 낸다.
+//
+// 막혀 있던 것은 그 반대였다: **한 번 넣은 리모트를 뺄 수 없다.** 여기서 빈 값
+// 저장을 막고 CLI 도 빈 URL 을 거부하는데, 각각은 "실수로 origin 이 빈 값으로
+// 박히는 것" 을 막으려는 옳은 방어다. 합쳐지니 **오타로 넣은 주소를 영영 못 지우는**
+// 상태가 됐다.
+
+describe("리모트 떼기", () => {
+  it("★ 리모트가 있으면 비우고 저장할 수 있다", () => {
+    const { root } = screen([vault({ remote: "https://github.com/me/v.git" })]);
+    const input = inputs(root)[0];
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    expect(saveOf(root, 0).disabled, "지울 방법이 없다").toBe(false);
+  });
+
+  it("★★ 버튼이 무엇을 할지 말한다 — 지우는 것과 저장하는 것은 다른 일이다", () => {
+    const { root } = screen([vault({ remote: "https://github.com/me/v.git" })]);
+    const input = inputs(root)[0];
+    const btn = saveOf(root, 0);
+    expect(btn.textContent).toBe("저장");
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    expect(btn.textContent, "빈 칸인데 여전히 저장이라고 한다").toBe("지우기");
+  });
+
+  it("★ 원래 없던 볼트에서는 지울 것이 없다 — 버튼이 죽어 있다", () => {
+    const { root } = screen([vault({ remote: "" })]);
+    expect(saveOf(root, 0).disabled).toBe(true);
+  });
+
+  it("★ 빈 값으로 부르면 빈 문자열을 넘긴다 — 부르는 쪽이 떼기로 옮긴다", () => {
+    const { root, calls } = screen([vault({ name: "회사", remote: "https://x/y.git" })]);
+    const input = inputs(root)[0];
+    input.value = "  ";
+    input.dispatchEvent(new Event("input"));
+    saveOf(root, 0).click();
+    expect(calls).toEqual([["회사", ""]]);
   });
 });
