@@ -117,6 +117,7 @@ func content(r *Report, c *config.Config, l *store.Layout) {
 	checkVocabulary(r, notes)
 	checkSynonyms(r, l)
 	checkRules(r, l)
+	checkRollup(r, l, time.Now())
 }
 
 // RecentDecisions 는 최근 days 일 안에 날짜가 찍힌 결정 수다.

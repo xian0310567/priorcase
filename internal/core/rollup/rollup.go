@@ -49,6 +49,60 @@ type Week struct {
 // Todo 는 지금 요약해야 하는 주인지 알려 준다.
 func (w Week) Todo() bool { return !w.Done && !w.Current && !w.Short }
 
+// Behind 는 now 가 속한 주에서 이 주가 몇 주 뒤에 있는지다.
+//
+// # 왜 이게 필요한가
+//
+// `Todo` 는 "요약해야 하는가" 만 답한다. 그런데 **밀렸다고 말하려면 얼마나
+// 밀렸는지를 알아야 한다** — 주가 끝나자마자 경고를 띄우면 매주 뜨고, 매주 뜨는
+// 경고는 읽히지 않는다. 부르는 쪽(health.checkRollup)이 여기서 문턱을 잡는다.
+//
+// # 왜 문자열 비교로는 안 되는가
+//
+// ISO 주 번호는 해를 넘을 때 이어지지 않는다. 2026 년은 **W53 이 있어서**
+// `2026-W53` 다음이 `2027-W01` 이고, 문자열이나 숫자 뺄셈으로는 그 둘이 이웃인
+// 것을 알 수 없다. 그래서 주 문자열을 실제 월요일로 되돌려 뺀다.
+//
+// 못 읽는 문자열과 미래의 주는 **0** 이다. 반대로 하면 로그의 깨진 한 줄이
+// doctor 를 영영 노랗게 만드는데, 그 경고에는 고칠 방법이 없다.
+func (w Week) Behind(now time.Time) int {
+	start, ok := weekStart(w.Week)
+	if !ok {
+		return 0
+	}
+	cur, ok := weekStart(isoWeek(now))
+	if !ok {
+		return 0
+	}
+	d := int(cur.Sub(start) / (7 * 24 * time.Hour))
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// weekStart 는 `YYYY-Www` 의 월요일이다 (UTC).
+//
+// ISO 8601 은 **1월 4일이 언제나 1주차에 든다**고 정의한다. 거기서 그 주의
+// 월요일로 되짚고 주 수만큼 더하면 어느 해에나 맞는다 — 1월 1일에서 세면
+// 그 날이 몇 주차인지가 해마다 달라 틀린다.
+//
+// UTC 로 고정하는 이유: 여기서 나온 시각은 빼기에만 쓰이고, 서머타임이 있는
+// 로컬 존에서는 두 월요일의 차가 7일에서 한 시간 어긋나 정수 나눗셈이 깎인다.
+func weekStart(wk string) (time.Time, bool) {
+	var y, w int
+	if n, err := fmt.Sscanf(wk, "%d-W%d", &y, &w); n != 2 || err != nil {
+		return time.Time{}, false
+	}
+	if w < 1 || w > 53 {
+		return time.Time{}, false
+	}
+	jan4 := time.Date(y, time.January, 4, 0, 0, 0, 0, time.UTC)
+	// Weekday 는 일요일이 0 이고 ISO 는 월요일이 1일이다.
+	off := (int(jan4.Weekday()) + 6) % 7
+	return jan4.AddDate(0, 0, -off+(w-1)*7), true
+}
+
 // isoWeek 는 시각을 `YYYY-Www` 로 만든다.
 func isoWeek(t time.Time) string {
 	y, w := t.ISOWeek()
