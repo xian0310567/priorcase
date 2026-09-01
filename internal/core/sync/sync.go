@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,9 +60,52 @@ func pull(vault string, budget time.Duration) Result {
 		return Result{Skipped: s}
 	}
 	if _, err := run(vault, budget, "pull", "--rebase", "--autostash"); err != nil {
+		// **반쯤 진행된 rebase 를 남기지 않는다.**
+		//
+		// 2026-09-01 실측: 공유 볼트에서 두 사람이 같은 작업 로그에 적으면
+		// 충돌하는데, 그때 볼트가 rebase 중단 상태로 남았다. 그 상태는
+		// **detached HEAD** 라 그 뒤로 pull 도 push 도 안 되고, 훅은 무슨 일이
+		// 있어도 exit 0 이라 사람은 계속 잘 되는 줄 안다 — 기록이 로컬에만 쌓인다.
+		//
+		// abort 는 autostash 도 함께 되돌려 준다. 그래서 내가 쓰던 것을 안 잃는다.
+		if aerr := abortRebase(vault, budget); aerr != nil {
+			return Result{Err: fmt.Errorf("pull 실패, 되돌리기도 실패했다 — 볼트를 손으로 봐야 한다: %w (되돌리기: %v)", err, aerr)}
+		}
 		return Result{Err: fmt.Errorf("pull 실패: %w", err)}
 	}
 	return Result{Pulled: true}
+}
+
+// abortRebase 는 진행 중인 rebase 를 되돌린다. 진행 중이 아니면 아무것도 안 한다
+// (네트워크 실패처럼 rebase 에 들어가지도 못한 경우가 흔하다).
+func abortRebase(vault string, budget time.Duration) error {
+	if !rebaseInProgress(vault, budget) {
+		return nil
+	}
+	_, err := run(vault, budget, "rebase", "--abort")
+	return err
+}
+
+// rebaseInProgress 는 git 에게 직접 묻는다. `.git` 은 디렉토리가 아니라 파일일
+// 수 있어서(worktree·submodule) 경로를 손으로 조립하면 틀린다.
+func rebaseInProgress(vault string, budget time.Duration) bool {
+	dir, err := run(vault, budget, "rev-parse", "--git-path", "rebase-merge")
+	if err == nil && exists(vault, strings.TrimSpace(dir)) {
+		return true
+	}
+	dir, err = run(vault, budget, "rev-parse", "--git-path", "rebase-apply")
+	return err == nil && exists(vault, strings.TrimSpace(dir))
+}
+
+func exists(vault, p string) bool {
+	if p == "" {
+		return false
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(vault, p)
+	}
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // Push 는 로컬 변경을 커밋해 리모트로 보낸다.
@@ -81,6 +125,21 @@ func Push(vault, message string) Result { return push(vault, message, timeout) }
 func push(vault, message string, budget time.Duration) Result {
 	if s := precheck(vault, budget); s != "" {
 		return Result{Skipped: s}
+	}
+	// **충돌 마커가 든 파일은 절대 안 담는다.**
+	//
+	// `add -A` 는 의도된 결정이지만(위 §) 그 대가로 무엇이든 담긴다. 충돌을
+	// 손으로 풀다 만 파일이 그대로 커밋되면 한 사람의 충돌이 **팀 전원의 볼트로
+	// 퍼진다.** 게다가 그 파일은 회수 대상이라, 이후 회수가 `<<<<<<<` 가 든
+	// 텍스트를 과거 결정이라며 내놓는다.
+	//
+	// add 보다 **먼저** 본다. 담은 뒤에 막으면 커밋만 안 될 뿐 다음 세션이 그대로
+	// 밀어내서, 한 번 늦출 뿐 결과가 같다.
+	if bad, err := conflicted(vault, budget); err != nil {
+		return Result{Err: err}
+	} else if len(bad) > 0 {
+		return Result{Err: fmt.Errorf("충돌이 안 풀린 파일이 있어 밀지 않는다 — 손으로 고쳐라: %s",
+			strings.Join(bad, ", "))}
 	}
 	if _, err := run(vault, budget, "add", "-A"); err != nil {
 		return Result{Err: fmt.Errorf("add 실패: %w", err)}
@@ -381,4 +440,78 @@ func SetRemote(vault, url string) error {
 		return fmt.Errorf("리모트를 붙일 수 없다: %w (%s)", err, strings.TrimSpace(out))
 	}
 	return nil
+}
+
+// conflicted 는 작업 트리에서 **충돌이 안 풀린 파일**을 찾는다.
+//
+// # 무엇을 마커로 보는가
+//
+// 줄 **첫머리**의 `<<<<<<< ` 와 `>>>>>>> ` 둘 다 있을 때만 충돌로 본다.
+//
+// `=======` 는 안 본다 — 마크다운에서 그것은 제목 밑줄(setext)이라 볼트에
+// 정당하게 존재한다. 첫머리로 한정하는 이유도 같다: 이 저장소의 결정문이 실제로
+// git 충돌을 설명하며 그 문자열을 인용하고, 들여쓴 코드 예시로도 적는다.
+// 인용을 고장이라 부르면 그 경고는 곧 무시당한다.
+//
+// # 왜 git 에게 안 묻는가
+//
+// `git diff --check` 는 마커를 잡지만 **staged 여부에 따라 안 보는 구간이 생긴다.**
+// 여기는 add 보다 먼저 도는 자리라 그 구간이 정확히 우리가 봐야 할 곳이다.
+// `ls-files -u` 는 rebase 를 abort 한 뒤 사람이 손으로 남긴 마커를 못 잡는다 —
+// 그때 인덱스는 이미 깨끗하기 때문이다.
+func conflicted(vault string, budget time.Duration) ([]string, error) {
+	out, err := run(vault, budget, "status", "--porcelain", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("변경 확인 실패: %w", err)
+	}
+	var bad []string
+	for _, rel := range porcelainPaths(out) {
+		b, rerr := os.ReadFile(filepath.Join(vault, rel))
+		if rerr != nil {
+			continue // 지워진 것이거나 못 읽는 것 — 마커가 있을 수 없다
+		}
+		if hasConflictMarkers(b) {
+			bad = append(bad, rel)
+		}
+	}
+	sort.Strings(bad)
+	return bad, nil
+}
+
+// porcelainPaths 는 `status --porcelain -z` 에서 경로만 뽑는다.
+//
+// **-z 를 쓰는 이유**: 기본 출력은 한글·공백이 든 파일명을 따옴표로 감싸고
+// 이스케이프한다. 이 볼트의 파일명은 거의 전부 한글이라 그 형식을 되돌리다
+// 틀리면 검사가 조용히 아무것도 안 보게 된다.
+//
+// 이름이 바뀐 항목(`R`)은 레코드를 둘 낸다 — 새 이름은 상태 두 글자를 달고 오고
+// **옛 이름은 경로만** 온다. 그래서 옛 이름 쪽은 앞 세 글자가 잘려 엉뚱한 경로가
+// 되는데, 읽기가 실패해 조용히 넘어간다. 검사가 봐야 하는 것은 새 이름 쪽이고
+// 그쪽은 온전하다.
+func porcelainPaths(out string) []string {
+	var paths []string
+	for _, rec := range strings.Split(out, "\x00") {
+		// 형식: XY + 공백 + 경로. 상태 두 글자와 구분 공백을 뗀다.
+		if len(rec) < 4 {
+			continue
+		}
+		paths = append(paths, rec[3:])
+	}
+	return paths
+}
+
+func hasConflictMarkers(b []byte) bool {
+	var open, close bool
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.HasPrefix(line, "<<<<<<< "):
+			open = true
+		case strings.HasPrefix(line, ">>>>>>> "):
+			close = true
+		}
+		if open && close {
+			return true
+		}
+	}
+	return false
 }
