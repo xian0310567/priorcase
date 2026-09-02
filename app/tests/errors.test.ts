@@ -19,11 +19,15 @@ const { badgeText } = await import("../src/main");
  *
  * **JSON 을 시험에 베껴 넣지 않는다.** 베끼면 픽스처와 시험이 각자 진화하고,
  * 어긋나도 아무도 모른다 — 그러면 손으로 확인할 때 쓰는 픽스처가 시험이
- * 지키는 것과 다른 물건이 된다. */
+ * 지키는 것과 다른 물건이 된다.
+ *
+ * **`bash` 를 명시적으로 태운다.** 스크립트를 직접 spawn 하면 윈도우에서
+ * `spawnSync … EFTYPE` 로 죽는다 — 윈도우는 shebang 을 모르고 `.sh` 를 실행
+ * 파일로 안 친다. 2026-09-02 v0.5.0 릴리스에서 이것 때문에 윈도우 앱 빌드가
+ * 통째로 실패했고(8건), 맥·리눅스에서만 돌던 동안에는 안 드러났다. */
 function fixture(name: string, args: string[] = []): string {
-  return execFileSync(join(__dirname, "..", "fixtures", `fake-prior-${name}.sh`), args, {
-    encoding: "utf8",
-  });
+  const script = join(__dirname, "..", "fixtures", `fake-prior-${name}.sh`);
+  return execFileSync("bash", [script, ...args], { encoding: "utf8" });
 }
 
 let root: HTMLElement;
