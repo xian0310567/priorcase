@@ -101,6 +101,42 @@ func TestPackScriptDeclaresOsAndCpu(t *testing.T) {
 	}
 }
 
+// ★ **런처의 "지원 목록" 은 손으로 적으면 안 된다.**
+//
+// 목록과 `optionalDependencies` 는 같아야 하는데, 손으로 적으면 갈린다. 2026-09-02
+// v0.5.0 이 그 판이었다 — 트러스티드 퍼블리싱이 새 패키지 이름을 못 만들어 win32 둘을
+// 게시하지 못했는데, 하드코딩된 목록은 여전히 win32 를 "지원" 이라고 적고 있었다.
+// 그대로 나갔으면 윈도우 사용자에게 **없는 패키지를 다시 받으라는** 안내가 갔다.
+//
+// 포장 스크립트가 실제로 포장한 것만 optionalDependencies 에 넣으므로, 런처는 그것을
+// 읽어야 한다. 목록을 문자열로 박아 두면 이 검사가 잡는다.
+func TestLauncherDerivesSupportedListFromDeps(t *testing.T) {
+	body := readFile(t, filepath.Join(repoRoot(t), "npm", "priorcase", "bin", "prior.js"))
+	if !strings.Contains(body, "optionalDependencies") {
+		t.Error("런처가 optionalDependencies 를 안 읽는다 — 지원 목록이 손으로 적혀 있을 수 있다")
+	}
+	// 목록을 문자열로 박아 두면 게시한 것과 갈린다.
+	if strings.Contains(body, "darwin-arm64, darwin-x64") {
+		t.Error("지원 목록이 하드코딩돼 있다 — 게시한 플랫폼과 갈린다")
+	}
+}
+
+// **건너뛴 플랫폼은 조용히 사라지면 안 된다.** 빠진 플랫폼은 그 사용자에게만 보이는
+// 고장이 되고, 릴리스 로그에 한 줄도 없으면 아무도 되돌릴 시점을 모른다.
+func TestPackScriptAnnouncesSkippedPlatforms(t *testing.T) {
+	body := readFile(t, filepath.Join(repoRoot(t), "scripts", "npm-pack.sh"))
+	if !strings.Contains(body, "PRIORCASE_SKIP_PLATFORMS") {
+		t.Skip("건너뛰기 스위치가 없다 — 전 플랫폼을 항상 낸다면 이 검사는 의미가 없다")
+	}
+	if !strings.Contains(body, "건너뛴 플랫폼") {
+		t.Error("건너뛴 플랫폼을 알리지 않는다 — 조용한 누락이 된다")
+	}
+	// 포장한 것만 선언해야 한다. 소스 키를 그대로 베끼면 없는 패키지가 남는다.
+	if !strings.Contains(body, "packed=") {
+		t.Error("런처 optionalDependencies 를 실제 포장 결과에서 만들지 않는다")
+	}
+}
+
 // 런처는 자기 플랫폼 바이너리가 없을 때 **조용히 넘어가면 안 된다.**
 func TestLauncherFailsLoudlyWithoutBinary(t *testing.T) {
 	body := readFile(t, filepath.Join(repoRoot(t), "npm", "priorcase", "bin", "prior.js"))

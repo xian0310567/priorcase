@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 릴리스 산출물로 npm 패키지 7개를 만든다 (런처 1 + 플랫폼 6).
+# 릴리스 산출물로 npm 패키지를 만든다 (런처 1 + 플랫폼 N).
 #
 # goreleaser 는 npm 게시를 기본 지원하지 않는다. 그래서 dist/ 의 tar.gz 를 풀어
 # 플랫폼 패키지에 넣고, 버전을 태그로 맞춘다. 게시는 릴리스 워크플로가 한다.
@@ -25,6 +25,35 @@ declare -a TARGETS=(
   "windows amd64 x64   win32"
   "windows arm64 arm64 win32"
 )
+
+# PRIORCASE_SKIP_PLATFORMS 는 **이번 포장에서만** 뺄 npm os 이름들이다 (공백 구분).
+#
+# # 왜 있나 (2026-09-02)
+#
+# npm 트러스티드 퍼블리싱은 **이미 존재하는 패키지에만** 설정할 수 있다. 그래서 새
+# 플랫폼을 추가하면 그 패키지 이름의 첫 게시를 사람이 브라우저 인증으로 해야 하고,
+# 그 전까지 릴리스 워크플로가 404 로 죽는다 — v0.5.0 이 정확히 그렇게 절반만 나갔다
+# (플랫폼 4개는 게시됐는데 win32 둘이 404 라 런처까지 못 나갔다).
+#
+# 이 스위치는 그때 **나머지를 먼저 내보내기 위한 것**이다. 소스 package.json 은
+# 여섯 플랫폼을 그대로 선언하고 arch 불변식 테스트도 그대로 여섯을 지킨다 — 의도는
+# 안 바뀌었고 게시만 미룬다.
+#
+# **되돌리는 법: 릴리스 워크플로에서 이 환경변수를 지운다.** 한 줄이다.
+declare -a SKIPPED=()
+if [ -n "${PRIORCASE_SKIP_PLATFORMS:-}" ]; then
+  declare -a KEPT=()
+  for t in "${TARGETS[@]}"; do
+    read -r _ _ _ npmos <<<"$t"
+    skip=""
+    for s in ${PRIORCASE_SKIP_PLATFORMS}; do [ "$npmos" = "$s" ] && skip=1; done
+    if [ -n "$skip" ]; then SKIPPED+=("$t"); else KEPT+=("$t"); fi
+  done
+  TARGETS=("${KEPT[@]}")
+  # **조용히 빼지 않는다.** 빠진 플랫폼은 그 사용자에게만 안 보이는 고장이 된다.
+  echo "건너뛴 플랫폼: ${PRIORCASE_SKIP_PLATFORMS} (${#SKIPPED[@]}개 타깃)" >&2
+  [ "${#TARGETS[@]}" -gt 0 ] || { echo "전부 건너뛰면 배포할 것이 없다" >&2; exit 1; }
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -71,12 +100,21 @@ launcher="$OUT/priorcase"
 mkdir -p "$launcher"
 cp -R "$ROOT/npm/priorcase/bin" "$launcher/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.md" "$ROOT/README.md" "$launcher/"
-python3 - "$ROOT/npm/priorcase/package.json" "$launcher/package.json" "$VERSION" <<'PY'
+# **실제로 포장한 것만 선언한다.** 소스의 키를 그대로 베끼면, 건너뛴 플랫폼이
+# optionalDependencies 에 남아 npm 이 없는 패키지를 받으려다 실패한다 — optional 이라
+# 설치는 성공하고 실행만 안 되는, 사용자가 원인을 짐작 못 하는 종류다.
+packed=$(printf '%s\n' "${TARGETS[@]}" | awk '{print "priorcase-" $4 "-" $3}' | sort -u | paste -sd, -)
+python3 - "$ROOT/npm/priorcase/package.json" "$launcher/package.json" "$VERSION" "$packed" <<'PY'
 import json, sys
-src, dst, ver = sys.argv[1], sys.argv[2], sys.argv[3]
+src, dst, ver, packed = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 p = json.load(open(src))
 p["version"] = ver
-p["optionalDependencies"] = {k: ver for k in p["optionalDependencies"]}
+names = [n for n in packed.split(",") if n]
+unknown = [n for n in names if n not in p["optionalDependencies"]]
+if unknown:
+    # 포장한 이름이 소스에 없다 = 표와 선언이 어긋났다. 게시 전에 죽는 편이 낫다.
+    sys.exit(f"포장한 패키지가 소스 optionalDependencies 에 없다: {unknown}")
+p["optionalDependencies"] = {n: ver for n in names}
 json.dump(p, open(dst, "w"), indent=2, ensure_ascii=False)
 open(dst, "a").write("\n")
 PY
@@ -110,4 +148,4 @@ else
   echo "판 확인 건너뜀 — 호스트(${host_goos}/${host_goarch})와 같은 플랫폼 산출물이 없다" >&2
 fi
 
-echo "npm 패키지 7개: $OUT"
+echo "npm 패키지 $(( ${#TARGETS[@]} + 1 ))개 (런처 1 + 플랫폼 ${#TARGETS[@]}): $OUT"

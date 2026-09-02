@@ -45,12 +45,31 @@ function binaryPath() {
   }
 }
 
+// **지원 목록을 손으로 적지 않는다.** 이 목록은 `optionalDependencies` 와 같아야
+// 하는데, 손으로 적으면 갈린다 — 실제로 v0.5.0 에서 win32 를 게시하지 못한 채
+// 목록에는 남아 있어서, 윈도우 사용자에게 "지원한다, `--include=optional` 로 다시
+// 받아라" 라고 **없는 패키지를 가리키는** 안내가 나갈 뻔했다.
+//
+// 포장 스크립트가 실제로 게시한 것만 optionalDependencies 에 넣으므로(npm-pack.sh 의 §),
+// 여기서 그것을 읽으면 안내가 언제나 사실이다.
+function supportedTargets() {
+  try {
+    const deps = require("../package.json").optionalDependencies || {};
+    return Object.keys(deps)
+      .map((n) => n.replace(/^priorcase-/, ""))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 const bin = binaryPath();
 if (!bin) {
   const target = `${process.platform}-${process.arch}`;
+  const supported = supportedTargets();
   process.stderr.write(
     `priorcase: no binary for ${target}.\n` +
-      `  Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64, win32-x64.\n` +
+      (supported.length ? `  Supported: ${supported.join(", ")}.\n` : "") +
       `  If your platform is listed, the optional dependency did not install —\n` +
       `  try: npm install --include=optional priorcase\n`
   );
