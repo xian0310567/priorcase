@@ -114,3 +114,47 @@ func TestFallbackClusterSkipsDeclaredPrefix(t *testing.T) {
 		}
 	}
 }
+
+// ★★ **제안하는 이름이 조사에 잘리면 안 된다.**
+//
+// 2026-09-02 실볼트에서 물렸다. `젠틀파이`(회사 이름)가 common/ 에 9건 쌓였는데
+// doctor 가 제안한 이름은 `젠틀파` 였고, `prior domain split 젠틀파` 를 그대로
+// 실행하면 결정 9건이 `젠틀파-결정-…` 으로 개명된다 — **회사 이름 오타가 파일명에
+// 영구히 박힌다.**
+//
+// 원인은 군집 키를 그대로 이름으로 쓴 것이다. 키는 `search.ExtractKeywords` 가 준
+// 검색용 토큰이라 한국어 조사가 떨어져 있다(`젠틀파이` → `이`를 조사로 보고 뗀다).
+// keywords.go 의 원형 복구 가드는 2글자 미만일 때만 도는데 `젠틀파`는 3글자라
+// 빠져나간다 — 그 주석이 예로 든 `파이(→파)` 가 복합어 안에서 일어난 판이다.
+//
+// **세는 것은 그대로 토큰으로 한다.** 매칭 동작을 바꾸면 임계값 실측(5)이 무너진다.
+// 이름만 본문에 실제로 나타난 표기로 고른다.
+func TestFallbackClusterProposesSurfaceFormNotStrippedToken(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	l := store.NewLayout(c)
+	for i, s := range []string{
+		"젠틀파이 사내 VPN 인증서 한 장을 전 직원이 공유한다",
+		"젠틀파이 지라는 에픽 스토리 태스크 3단계로만 쓴다",
+		"젠틀파이 서버는 매일 21시 prune 이 돈다",
+		"젠틀파이 제품화가 두 번 실패했고 구축운영 순환이 매출 모델이다",
+		"젠틀파이 인수 기준일은 문서를 쓴 날이 아니다",
+	} {
+		writeFallback(t, l, "common-결정-사례"+string(rune('가'+i))+"-2026-08-2"+string(rune('0'+i)), "common", s)
+	}
+
+	got := clusters(t, c, l)
+	var found *FallbackCluster
+	for i := range got {
+		if got[i].Count >= 5 {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("군집을 못 찾았다: %+v", got)
+	}
+	if found.Name() != "젠틀파이" {
+		t.Errorf("제안 이름이 %q — 조사가 떨어져 나갔다. 본문 표기 %q 를 써야 한다",
+			found.Name(), "젠틀파이")
+	}
+}
