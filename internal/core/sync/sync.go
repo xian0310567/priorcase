@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -750,11 +751,29 @@ func unbornRepo(vault string, budget time.Duration) bool {
 // 훅은 무슨 일이 있어도 exit 0 이라 이 실패는 조용하다. 결정 63건이 백업 없이
 // 로컬에만 있었고, 사람이 손으로 `prior sync` 를 칠 때까지 몰랐다.
 //
-// # 왜 지어내지 않는가
+// # 물려받는 것이 먼저다
 //
 // `priorcase@localhost` 같은 값을 박으면 원장에 두 사람이 있는 것처럼 보인다.
 // 사업주는 이미 어떤 신원으로 커밋하고 있으므로 **그것을 물려받는 것**이 맞다.
-// 물려줄 곳이 없으면 아무것도 안 한다 — 그때는 git 이 내는 안내가 정답이다.
+//
+// # 물려줄 곳이 없을 때 (2026-09-02 번복)
+//
+// 예전에는 **아무것도 안 했다.** 주석에 "그때는 git 이 내는 안내가 정답이다" 라고
+// 적혀 있었는데, **그 안내가 아무에게도 안 닿는다** — 훅은 무슨 일이 있어도 exit 0
+// 이고 stderr 는 사용자에게 안 보인다. 이 함수가 고치려던 고장(결정 63건이 백업 없이
+// 로컬에만 있었다)이 볼트를 하나만 가진 사람에게는 그대로 남아 있었다. 앱만 받은
+// 사람의 첫 볼트가 정확히 그 모양이다.
+//
+// 아무도 못 알아챈 이유는 테스트가 macOS 에서만 돌았기 때문이다. git 은 설정을 못
+// 찾으면 OS 계정에서 신원을 지어내는데(GECOS), 우분투 CI 러너는 전체 이름이 없어
+// 추론에 실패한다. 그래서 개발 머신에서는 언제나 초록이고 CI 에서만 빨갰다.
+//
+// 그래서 마지막 수단으로 **OS 계정**을 쓴다. 이건 지어내는 것이 아니다 — git 이
+// 스스로 하는 것과 같은 값이고, 그 머신을 쓰는 실제 사람이다. `priorcase@localhost`
+// 를 기각한 이유(원장에 사람 아닌 이름이 남는다)에도 걸리지 않는다.
+//
+// **저장소 로컬에만 쓴다.** 전역을 건드리면 남의 프로젝트 커밋까지 이름이 바뀐다.
+// 사람이 나중에 제대로 된 신원을 넣으면 hasIdentity 가 참이 되어 여기 오지 않는다.
 //
 // # 이미 있으면 안 건드린다
 //
@@ -778,6 +797,45 @@ func EnsureIdentity(c *config.Config, vault string, budget time.Duration) {
 		_, _ = run(vault, budget, "config", "user.name", name)
 		return
 	}
+	// 물려줄 볼트가 없다. OS 계정으로 간다 (이 함수 주석의 § 참고).
+	name, email := osIdentity()
+	_, _ = run(vault, budget, "config", "user.email", email)
+	_, _ = run(vault, budget, "config", "user.name", name)
+}
+
+// osIdentity 는 이 머신을 쓰는 사람의 이름과 메일을 OS 계정에서 만든다.
+//
+// git 이 설정 없이 커밋할 때 쓰는 것과 같은 값이다 — 전체 이름이 있으면 그것,
+// 없으면 계정명, 메일은 `계정명@호스트명`.
+//
+// **어느 단계도 실패로 두지 않는다.** 여기서 빈 값을 돌려주면 호출부가 신원을 못 심고,
+// 그러면 이 함수를 만든 이유(조용한 백업 실패)가 그대로 돌아온다.
+func osIdentity() (name, email string) {
+	account := ""
+	if u, err := user.Current(); err == nil {
+		account, name = u.Username, strings.TrimSpace(u.Name)
+	}
+	if account == "" {
+		account = os.Getenv("USER")
+	}
+	if account == "" {
+		account = os.Getenv("USERNAME") // 윈도우
+	}
+	if account == "" {
+		account = "priorcase"
+	}
+	// 윈도우 계정명은 `DOMAIN\user` 로 온다. 메일에 백슬래시가 들어가면 안 된다.
+	if i := strings.LastIndexAny(account, `\/`); i >= 0 {
+		account = account[i+1:]
+	}
+	if name == "" {
+		name = account
+	}
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "localhost"
+	}
+	return name, account + "@" + host
 }
 
 // hasIdentity 는 그 저장소에서 커밋할 수 있는지다. 전역·시스템 설정까지 친다 —

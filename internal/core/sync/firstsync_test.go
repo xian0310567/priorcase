@@ -54,18 +54,63 @@ func TestPullSkipsUnbornBranch(t *testing.T) {
 // 전역 git 에 user.email 이 없는 사람이 흔하다(사업주 머신이 그랬다 — name 만 있었다).
 // 이미 쓰던 볼트는 로컬 설정을 갖고 있어서 우연히 됐고, 그래서 이 고장이 새 볼트에서만
 // 났다. 앱만 받은 사람에게 "터미널에서 git config 를 치세요" 는 길이 아니다.
-func TestPushWorksWithoutGlobalIdentity(t *testing.T) {
+//
+// # 이 테스트는 한 번 거짓말을 했다 (2026-09-02)
+//
+// 예전 판은 `Push` 가 "Author identity" 로 안 죽는지만 봤다. **그건 macOS 에서
+// 언제나 통과한다** — git 이 설정을 못 찾으면 OS 계정에서 신원을 지어내기 때문이다:
+//
+//	GIT_CONFIG_GLOBAL=/nonexistent git commit
+//	→ Lee Jeonghan <eonghan@Leeui-MacBookPro.local>     (GECOS 에서 추론)
+//
+// 우분투 CI 러너는 GECOS 에 전체 이름이 없어 추론이 안 되고 그대로 죽는다. 즉 개발
+// 머신에서만 초록이고 CI 에서만 빨간, **고장을 가려 주는 테스트**였다.
+//
+// 그래서 판정을 바꿨다: 커밋이 됐는지가 아니라 **EnsureIdentity 가 그 저장소에 신원을
+// 실제로 심었는지**를 본다. 이건 OS 가 무엇을 지어내든 결과가 같다.
+func TestEnsureIdentityWritesOneWhenNoVaultCanDonate(t *testing.T) {
 	fresh := unborn(t)
-	// 이 저장소에 신원이 없다. 전역도 못 쓰게 막는다.
+	// 이 저장소에 신원이 없다. 전역·시스템도 못 쓰게 막는다.
 	t.Setenv("GIT_CONFIG_GLOBAL", t.TempDir()+"/nonexistent")
 	t.Setenv("GIT_CONFIG_SYSTEM", t.TempDir()+"/nonexistent")
 
+	// 볼트가 하나뿐이라 **물려줄 곳이 없다.** 앱만 받은 사람의 첫 볼트가 이 모양이다.
 	c := &config.Config{Vaults: []config.Vault{{Name: "회사", Path: fresh}}}
 	EnsureIdentity(c, fresh, time.Second)
 
+	// 저장소 **로컬** 설정에 심어야 한다. 전역을 건드리면 남의 프로젝트까지 바뀐다.
+	name := gitConfig(fresh, "user.name", time.Second)
+	email := gitConfig(fresh, "user.email", time.Second)
+	if name == "" || email == "" {
+		t.Fatalf("물려줄 곳이 없을 때 신원을 안 심었다 — 이 사람의 볼트는 영영 백업되지 않는다 (name=%q email=%q)", name, email)
+	}
+	if !strings.Contains(email, "@") {
+		t.Errorf("메일 모양이 아니다: %q", email)
+	}
+
 	r := Push(fresh, "첫 커밋")
 	if r.Err != nil && strings.Contains(r.Err.Error(), "Author identity") {
-		t.Fatalf("신원이 없어 커밋을 못 했다: %v", r.Err)
+		t.Fatalf("신원을 심었는데도 커밋을 못 했다: %v", r.Err)
+	}
+}
+
+// **물려받을 수 있으면 지어내지 않는다.** 사업주가 이미 쓰는 신원이 있으면 그것이
+// 정답이고, OS 계정 폴백은 그 뒤의 마지막 수단이다.
+func TestEnsureIdentityPrefersDonorOverOSAccount(t *testing.T) {
+	fresh := unborn(t)
+	donor := t.TempDir()
+	git(t, donor, "init", "-b", "main", ".")
+	git(t, donor, "config", "user.name", "이정한")
+	git(t, donor, "config", "user.email", "jeonghan@example.com")
+	t.Setenv("GIT_CONFIG_GLOBAL", t.TempDir()+"/nonexistent")
+	t.Setenv("GIT_CONFIG_SYSTEM", t.TempDir()+"/nonexistent")
+
+	c := &config.Config{Vaults: []config.Vault{
+		{Name: "개인", Path: donor}, {Name: "회사", Path: fresh}}}
+	EnsureIdentity(c, fresh, time.Second)
+
+	if got := gitConfig(fresh, "user.email", time.Second); got != "jeonghan@example.com" {
+		t.Errorf("다른 볼트의 신원을 안 물려받았다: %q", got)
 	}
 }
 
