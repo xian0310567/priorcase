@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xian0310567/priorcase/internal/core/i18n"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
@@ -12,6 +13,57 @@ import (
 // recentN 은 세션 진입에 이름까지 적는 결정 수다. 이 블록은 세션당 한 번 실리고
 // 갱신되지 않으므로, 길어지면 그 자체가 소음이 된다.
 const recentN = 5
+
+// ── 세션 진입 예산 ────────────────────────────────────────────────────
+//
+// **자리 수가 아니라 글자 수로 잡는다.** 요약 길이가 제각각이라 건수 상한은 조용히
+// 드리프트한다 — 같은 "5건" 이 어떤 볼트에서는 400자이고 어떤 볼트에서는 2,000자다.
+// 회수 점수가 head 길이를 BM25 로 정규화하는 것과 같은 이유다(search.go 의 §).
+//
+// # 실측 (2026-09-02, 실볼트 결정 651건 · 규칙 11건)
+//
+//	SessionStart 현행   1,602자 = 고정 계약부 545 + 최근 결정 5건 1,057 (66%)
+//	규칙 11건 요약 합계  1,103자 (중앙 88자 · 최대 184)
+//
+// 그래서 **콜드스타트 교체는 예산 중립이다** — 최근 결정 5건이 나가고 규칙이 들어온다.
+const (
+	// **웜스타트에는 상한을 두지 않는다.** 상수를 하나 선언해 놓고 그 경로에서
+	// 강제하지 않으면 다음 사람이 지켜지는 줄 안다 — 실제로 웜스타트 실측이
+	// 1,830자로 여기 적으려던 1,800을 이미 넘는다(미확인 구간 알림이 붙을 때다).
+	//
+	// 자를 근거도 없다. 최근 결정 5건은 자리별 상대값이 1.00·1.00·0.81·0.88·0.75 로
+	// 꼬리가 안 죽었고, 뒤에 붙는 것들(판 갈림 경고·미확인 구간)은 **있을 때만 붙는
+	// 사건**이라 자르면 안 되는 것들이다. 그래서 예산은 콜드스타트에만 있다.
+
+	// coldBudget 은 **콜드스타트에만** 주는 상한이다.
+	//
+	// # 왜 이 자리에만 예산이 있고, 왜 이 값인가
+	//
+	// 셋 다 실측이다.
+	//
+	//  1. 콜드스타트가 내주는 자리(최근 결정 5건)는 **관련도가 0으로 측정됐다** —
+	//     cosbot 에서 5건 중 0건이 그 프로젝트와 관련 있었다. 경쟁 상대가 없다.
+	//  2. 콜드스타트에는 **UserPromptSubmit 회수가 받쳐 주지 못한다.** 걸릴 어휘가
+	//     아직 볼트에 없어서다. 볼트의 교차 프로젝트 지식이 들어올 유일한 통로다.
+	//  3. **드물다.** 14일에 새 작업 디렉토리 19개다. 누적 비용이 작다.
+	//
+	// # 왜 2,400인가
+	//
+	// 1,800 으로 뒀더니 **이 기능을 만든 이유인 규칙이 정확히 잘렸다** — 실볼트에서
+	// 규칙 11건 중 10건이 실리고 `규칙-브라우저가-필요하면-orca-CLI…`(184자, 가장 긴
+	// 것)가 떨어졌다. 그 규칙 하나가 안 실려서 cosbot 사고가 났는데 고치려고 만든
+	// 블록이 그것부터 버린 것이다. 2,400 이면 실볼트 11건(1,817자)이 다 들어가고
+	// 중앙 88자 기준 여섯 건쯤 여유가 있다.
+	coldBudget = 2400
+
+	// coldReserve 는 규칙 뒤에 오는 것들(판 갈림 경고·미확인 구간)을 위해 남기는 몫이다.
+	//
+	// **규칙 예산을 상수로 박으면 안 된다.** 고정 계약부는 언어와 갈래(제외 구역·
+	// 도메인 없음)에 따라 길이가 다르고, 경고는 있을 때만 붙는다. 상수로 두면 어떤
+	// 조합에서 총량이 조용히 넘는데, 그게 정확히 첫 구현에서 났다(1,872자).
+	// 그래서 규칙이 쓸 자리는 **그 시점에 남은 것**으로 계산한다.
+	coldReserve = 250
+)
 
 // sessionStart 는 MCP 의 initialize.instructions 에 해당한다. 같은 일을 하는 두 경로가
 // 있는 것이라 **내용도 같은 성격이어야 한다** — 결정 덤프가 아니라 행동 계약이다.
@@ -72,6 +124,16 @@ func (o Options) sessionStart() error {
 				"everything deferred that way has been lost so far. **Record the rationale and the rejected options, not just the conclusion.**\n"))
 	}
 
+	// **콜드스타트에는 최근 결정 대신 규칙 본문을 싣는다** (coldRules 의 §).
+	//
+	// 실은 것이 있으면 아래 두 블록을 다 건너뛴다 — 안내문은 규칙을 실제로 준
+	// 자리에서 중복이고, 최근 결정은 이 갈래에서 관련도가 0으로 실측된 자리다.
+	cold := !excluded && o.Config.DomainForCwdDeclared(o.Input.Cwd) == ""
+	shipped := false
+	if cold {
+		shipped = o.coldRules(&b, lang)
+	}
+
 	// **`[규칙]` 줄은 배경이 아니다.**
 	//
 	// 실측(2026-08-27): 주입된 노트를 어시스턴트가 이후에 언급한 것이 4.4%였다.
@@ -81,7 +143,7 @@ func (o Options) sessionStart() error {
 	//
 	// 규칙이 없는 볼트에는 안 싣는다. 이 블록은 세션당 한 번 실리고 갱신되지
 	// 않으므로 쓸 것이 없는 안내는 그 자체가 소음이다 — 발견 표면은 doctor 다.
-	if !excluded {
+	if !excluded && !shipped {
 		if rules, _, rerr := o.Layout.ListRules(); rerr == nil && len(rules) > 0 {
 			fmt.Fprintf(&b, lang.T(
 				"\n**회수가 `[규칙]` 로 주는 %d건은 프로젝트 밖의 판단 기준이다.** 도메인이 없어\n"+
@@ -94,7 +156,7 @@ func (o Options) sessionStart() error {
 		}
 	}
 
-	if len(notes) > 0 {
+	if !shipped && len(notes) > 0 {
 		fmt.Fprintf(&b, lang.T(
 			"\n### 최근 결정 (전체 %d건)\n\n",
 			"\n### Recent decisions (%d total)\n\n"), len(notes))
@@ -144,6 +206,115 @@ func (o Options) sessionStart() error {
 
 	fmt.Fprint(o.Out, b.String())
 	return nil
+}
+
+// coldRules 는 **볼트 이력이 없는 프로젝트**에 규칙 본문을 싣는다.
+// 실은 것이 있으면 true 를 준다 — 그때는 호출부가 최근 결정을 생략한다.
+//
+// # 고치려는 고장 (2026-09-02 실측)
+//
+// 새 프로젝트 `~/project/cosbot` 에서 "지라·슬랙·구글챗에서 내용을 확인해줘" 라고
+// 물었더니 어시스턴트가 **"지라·슬랙·구글챗 MCP 도구가 이 세션에 붙어 있지
+// 않습니다"** 라고 답했다. 볼트에는 "orca 브라우저로 접근한다" 가 결정 8건으로
+// 들어 있었는데도 그랬다. 훅은 정상 작동했다 — 회수가 orca 결정을 **9위·18위·20위·
+// 49위**로 물어왔고 주입 슬롯 3칸에 못 들었을 뿐이다.
+//
+// 그때 SessionStart 가 실은 것: 고정 계약부 545자 + 최근 결정 5건 1,057자.
+// 그 5건은 EWS·식약처·novels·VPN 이었다 — **cosbot 관련 0건.** 그리고 규칙은
+// "회수가 `[규칙]` 로 주는 11건은 지켜야 하는 제약이다" 라고 **설명만 하고 안 줬다.**
+//
+// # 왜 랭킹으로는 못 고치는가
+//
+// 이력이 있는 프로젝트는 UserPromptSubmit 회수가 받쳐 준다. 콜드스타트는 받쳐 주는
+// 것이 없다 — **걸릴 어휘 자체가 아직 볼트에 없다.** 점수식을 아무리 고쳐도 없는
+// 노트를 못 꺼낸다. 실측한 콜드스타트 빈도는 14일에 새 작업 디렉토리 19개다.
+//
+// # 왜 최근 결정을 내주는가
+//
+// **최신성은 관련성과 무관하다.** 위 실측이 그것이다(5건 중 0건 관련). 반면 규칙은
+// 도메인이 없어 **정의상 어느 프로젝트에서나 유효하다** — 콜드스타트에 실을 자격이
+// 있는 것은 그것뿐이다. 이력이 있는 프로젝트는 건드리지 않는다: 최근 결정 5건이
+// 자리별로 고르게 값을 한다는 실측(상대값 1.00·1.00·0.81·0.88·0.75)이 있고,
+// 거기서는 UPS 가 규칙 슬롯 2칸을 이미 주므로 또 실으면 중복이다.
+//
+// # 왜 짧은 것부터인가
+//
+// 최신순은 위에서 값이 0으로 실측됐으므로 못 쓴다. 짧은 것부터면 같은 예산에 더
+// 많이 실린다.
+//
+// **다만 이 순서는 옳다고 증명된 것이 아니다.** 예산을 1,800 으로 뒀을 때 실볼트에서
+// 잘린 한 건이 하필 `규칙-브라우저가-필요하면-orca-CLI…`(184자, 가장 긴 것)였다 —
+// 이 블록을 만든 이유가 바로 그 규칙이 안 실려서였는데 그것부터 버렸다. 길이는
+// 중요도의 대리 지표가 아니고, 여기서는 **가장 구체적인 규칙이 가장 길었다.**
+//
+// 지금은 coldBudget 을 키워 실볼트 전건이 들어가므로 이 순서가 실제로 무엇을 버리는
+// 일이 없다. 규칙이 예산을 넘길 만큼 늘면 그때는 순서가 아니라 **규칙 집합을 증류해야
+// 한다는 신호**다 — 규칙은 여러 결정에서 뽑아낸 것이라 수십 건이 되는 것 자체가
+// 이상하다. '자주 걸린 것 우선' 이 답일 수 있으나 규칙 계층이 도입된 지 얼마 안 돼
+// 표본이 없다. 규칙별 주입·사용 카운터가 쌓이면 그때 갈아탄다.
+func (o Options) coldRules(b *strings.Builder, lang i18n.Lang) bool {
+	rules, _, err := o.Layout.ListRules()
+	if err != nil || len(rules) == 0 {
+		return false
+	}
+	live := rules[:0:0]
+	for _, r := range rules {
+		// 뒤집힌 규칙은 안 싣는다. 이 블록은 세션당 한 번 실리고 갱신되지 않아
+		// 오래 산다 — brief 가 같은 이유로 같은 필터를 쓴다.
+		if r.Meta.Status == store.StatusSuperseded || r.Meta.Status == store.StatusRetracted {
+			continue
+		}
+		if strings.TrimSpace(r.Meta.Summary) == "" {
+			continue
+		}
+		live = append(live, r)
+	}
+	if len(live) == 0 {
+		return false
+	}
+	sort.SliceStable(live, func(i, j int) bool {
+		return len([]rune(live[i].Meta.Summary)) < len([]rune(live[j].Meta.Summary))
+	})
+
+	// **남은 자리로 계산한다** (coldReserve 의 §). 머리글과 꼬리글도 예산 안이다.
+	head := lang.T(
+		"\n### 이 프로젝트에는 볼트 이력이 없다 — 어디서나 걸리는 규칙 %d건\n"+
+			"아래는 참고가 아니라 **지켜야 하는 제약**이다. 도메인이 없어 어느 프로젝트에서나 걸린다.\n\n",
+		"\n### This project has no vault history — %d rules that apply everywhere\n"+
+			"These are **constraints, not background**. They carry no domain, so they hold in every project.\n\n")
+	room := coldBudget - coldReserve - len([]rune(b.String())) - len([]rune(head))
+	if room <= 0 {
+		return false
+	}
+
+	var body strings.Builder
+	shown := 0
+	for _, r := range live {
+		line := "- " + strings.TrimSpace(r.Meta.Summary) + "\n"
+		if len([]rune(body.String()))+len([]rune(line)) > room {
+			break
+		}
+		body.WriteString(line)
+		shown++
+	}
+	if shown == 0 {
+		return false
+	}
+
+	fmt.Fprintf(b, head, shown)
+	b.WriteString(body.String())
+	// **잘랐으면 잘랐다고 말한다.** 조용히 자르면 "규칙이 이게 전부" 로 읽힌다.
+	if shown < len(live) {
+		fmt.Fprintf(b, lang.T(
+			"\n… 그 밖 %d건. 전부 보려면 `prior recall <주제>` 나 `%s/` 를 열어라.\n",
+			"\n… and %d more. See them with `prior recall <topic>` or open `%s/`.\n"),
+			len(live)-shown, o.Layout.RulesDirRel())
+	} else {
+		b.WriteString(lang.T(
+			"\n이 프로젝트의 결정이 쌓이면 여기는 최근 결정으로 바뀐다 — 지금 더 파려면 `prior recall <주제>`.\n",
+			"\nOnce this project accumulates decisions, this block becomes recent decisions — to dig now, run `prior recall <topic>`.\n"))
+	}
+	return true
 }
 
 // recent 는 날짜 내림차순 상위 recentN 건을 준다.
