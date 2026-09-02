@@ -392,17 +392,30 @@ func (o Options) pendingBlock() string {
 // 사업주가 그대로 지적했다: "네가 수동으로 도메인을 분리하는건 의미가 없지 않나?"
 // 맞는 말이고, 고칠 자리는 **자동화 수준이 아니라 채널**이었다.
 //
-// # 왜 옮기는 것까지 자동으로 하지 않는가
+// # 탐지기가 주는 이름은 추측이다
 //
-// **이름은 기계가 정할 수 없다.** 탐지기가 아는 것은 "이 낱말이 폴백에만 5건 이상
-// 있고 밖에는 없다" 까지다. 그 프로젝트를 사람이 뭐라고 부르는지는 모른다 — 실제로
-// 오늘 `젠틀파이` 를 `젠틀파` 로 제안했고(한국어 조사가 떨어졌다), 그대로 옮겼으면
-// 회사 이름 오타가 파일명 9개와 볼트 전체의 위키링크에 박혔다.
+// 탐지기가 아는 것은 "이 낱말이 폴백에만 5건 이상 있고 밖에는 없다" 까지다. 이름은
+// 낱말 빈도로 고른 것이라 틀릴 수 있다 — 오늘 `젠틀파이` 를 `젠틀파` 로 제안했다
+// (한국어 조사가 떨어졌다). 그대로 옮겼으면 회사 이름 오타가 파일명 9개와 볼트
+// 전체의 위키링크에 박혔고, 개명은 여러 머신으로 동기화된다.
 //
-// 개명은 여러 머신으로 동기화되고 되돌리려면 git 을 거슬러야 한다. 그래서
-// **찾는 것과 들이미는 것은 자동, 이름을 정하고 옮기는 것은 승인**으로 가른다.
-// 세션 진입에 한 줄이 뜨면 에이전트가 그 자리에서 물어볼 수 있으므로, 사람이
-// 기억해서 쳐야 하는 명령은 사라진다 — 그게 사업주가 원한 자동이다.
+// # 그렇다고 사람에게 묻지는 않는다 (2026-09-02, 같은 날 번복)
+//
+// 처음에는 "에이전트가 사용자에게 물어라" 로 썼다. 사업주가 그 자리에서 뒤집었다 —
+// "이게 뭐 tool 같이 정적인 서비스 위에서 동작하는것도 아니고 알아서 판단할 수 있는
+// ai agent 위에서 동작하는건데 그건 host 에게 맡기면 안돼?"
+//
+// 맞다. 이름이 어색한지는 **노트를 읽으면 아는 것**이고, 그 판정은 낱말 빈도
+// 휴리스틱보다 호스트가 낫다. `젠틀파` 가 `젠틀파이` 의 절단이라는 것은 결정 아홉 건의
+// 요약을 읽으면 즉시 보인다. 사람을 부르는 것은 판단을 맡기는 것이 아니라 떠넘기는 것이다.
+//
+// 이 프로젝트가 이미 그렇게 정해 뒀다 — novels 결정(2026-08-23)이 "사업주가 자리에
+// 없으면 멈추는 질문은 올리지 않는다" 이고, 사람 몫은 에이전트가 **못 하는 것**
+// (로그인·인증·결제·명의)뿐이라고 적었다. 도메인 이름 짓기는 그 목록에 없다.
+//
+// 그래서 자동의 경계는 여기다: **찾기·들이밀기·이름 판정·옮기기까지 호스트가 한다.**
+// 안전장치는 승인이 아니라 ① 계획을 먼저 보고(기본이 dry-run) ② git 이 되돌리고
+// ③ 무엇을 어떤 이름으로 옮겼는지 말하는 것이다.
 //
 // # 왜 예산을 안 먹는가
 //
@@ -422,17 +435,25 @@ func (o Options) fallbackBlock(notes []store.Note) string {
 	for _, x := range cl {
 		// **Name() 이다, Token 이 아니다** (health.FallbackCluster.Name 의 §).
 		fmt.Fprintf(&b, lang.T(
-			"\n⚠️ **`%s` 결정 %d건이 폴백 도메인 `%s` 에만 쌓여 있다** — 도메인이 없는 프로젝트다.\n"+
+			"\n⚠️ **결정 %d건이 폴백 도메인 `%s` 에만 쌓여 있다** — 도메인이 없는 프로젝트다.\n"+
 				"그 결정들은 자기 프로젝트에서 회수될 때 가점을 못 받고 남의 폴더에 산다.\n"+
-				"**사용자에게 옮길지 물어라.** 계획만 보려면 `prior domain split %s`,\n"+
-				"실제로 옮기려면 `--apply` 다. 이름이 어색하면 `--as <이름>` 으로 고쳐라 —\n"+
-				"기계는 낱말 빈도로 고를 뿐이라 그 프로젝트를 뭐라고 부르는지는 모른다.\n",
-			"\n⚠️ **`%s` — %d decisions sit only in the fallback domain `%s`** — a project with no domain.\n"+
-				"Those decisions lose their own-domain boost on recall and live in someone else's folder.\n"+
-				"**Ask the user whether to move them.** `prior domain split %s` shows the plan;\n"+
-				"`--apply` performs it. Override the name with `--as <name>` if it reads wrong —\n"+
-				"the detector picks by word frequency and does not know what you call the project.\n"),
-			x.Name(), x.Count, o.Config.DefaultDomain, x.Name())
+				"**네가 정리해라. 사용자에게 묻지 마라** — 이름을 고르는 것은 노트를 읽으면 되는\n"+
+				"판단이고, 되돌리기는 git 이다.\n"+
+				"1. `prior domain split %s` 로 계획을 본다 (옮기지 않는다)\n"+
+				"2. 목록에 뜬 노트를 읽고 **이름이 맞는지 네가 판정한다.** `%s` 는 낱말 빈도로\n"+
+				"   고른 추측이라 조사가 붙거나 잘렸을 수 있다 — 어색하면 `--as <이름>` 으로 바꿔라\n"+
+				"3. `--apply` 로 옮기고, 무엇을 어떤 이름으로 옮겼는지 한 줄로 알린다\n"+
+				"사용자가 다른 일을 하는 중이면 그 일부터 끝내고 해라.\n",
+			"\n⚠️ **%d decisions sit only in the fallback domain `%s`** — a project with no domain.\n"+
+				"They lose their own-domain boost on recall and live in someone else's folder.\n"+
+				"**Handle it yourself. Do not ask the user** — picking the name is a judgement you can\n"+
+				"make by reading the notes, and git is the undo.\n"+
+				"1. `prior domain split %s` shows the plan (moves nothing)\n"+
+				"2. Read the listed notes and **decide whether the name is right.** `%s` is a guess from\n"+
+				"   word frequency and may be truncated or carry a particle — override with `--as <name>`\n"+
+				"3. `--apply` to move, then say in one line what moved and under which name\n"+
+				"If the user is mid-task, finish that first.\n"),
+			x.Count, o.Config.DefaultDomain, x.Name(), x.Name())
 	}
 	return b.String()
 }

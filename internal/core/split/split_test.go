@@ -229,3 +229,51 @@ func TestVaultNamedRejectsUnknown(t *testing.T) {
 		t.Error("모르는 볼트 이름인데 에러가 안 났다 — 회사 결정이 개인 볼트에 쌓인다")
 	}
 }
+
+// ★★ **`related` 가 대괄호 없이 쓰여 있어도 고쳐야 한다.**
+//
+// 2026-09-02 실볼트에서 물렸다. `젠틀파이` 9건을 옮긴 뒤 doctor 가 끊어진 링크 4개를
+// 냈는데, 원인은 그 노트들의 frontmatter 가 이렇게 쓰여 있던 것이다:
+//
+//	related: ["common-결정-EWS는-…", "common-결정-코스봇-인프라는-…"]
+//
+// `[[ ]]` 가 없다. `wikiLink` 정규식은 대괄호만 잡으므로 이 값들은 손대지 않았고,
+// 대상이 개명되면서 그대로 끊겼다. **옮기는 행위가 링크를 깨뜨린 것이다.**
+//
+// apply.go 의 주석은 "frontmatter 의 related 도 `\"[[stem]]\"` 문자열이라 모양이
+// 같다" 고 적었는데, 그 전제가 볼트 전체에 성립하지 않았다 — `store.parseLink` 는
+// 맨 값도 링크로 읽어 주기 때문에(모양이 나빠도 버리지 않는다) 그렇게 쓰인 노트가
+// 실제로 생긴다.
+func TestApplyRewritesBareRelatedValues(t *testing.T) {
+	c, l := setup(t)
+	old := "common-결정-twincrew-라우터-2026-08-28"
+	write(t, l, old, "common", "twincrew 라우터", "본문")
+
+	// 대괄호 **없이** 가리키는 노트. 옮기는 대상 밖(beta)에 둔다.
+	p := filepath.Join(l.Vault(), "beta", "decisions", "beta-결정-맨링크-2026-08-28.md")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fm := "---\ntype: decision\ndate: 2026-08-28\ndomain: [beta]\n" +
+		"summary: \"맨 값으로 가리킨다\"\nstatus: active\n" +
+		"related: [\"" + old + "\"]\ntags: [decision]\n---\n\n본문\n"
+	if err := os.WriteFile(p, []byte(fm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := build(t, c, l, "twincrew", "")
+	if err := Apply(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), old) {
+		t.Errorf("대괄호 없는 related 가 옛 stem 을 가리킨 채 남았다 — 옮기는 행위가 링크를 깨뜨린다:\n%s", got)
+	}
+	if !strings.Contains(string(got), "twincrew-결정-라우터-2026-08-28") {
+		t.Errorf("새 stem 으로 안 바뀌었다:\n%s", got)
+	}
+}

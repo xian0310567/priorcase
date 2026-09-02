@@ -15,8 +15,25 @@ import (
 // wikiLink 는 `[[대상]]`·`[[대상|별칭]]`·`[[대상#절]]` 을 잡는다.
 //
 // **본문과 frontmatter 를 같은 정규식으로 훑는다.** frontmatter 의 related 도
-// `"[[stem]]"` 문자열이라 모양이 같고, 두 벌로 나누면 한쪽만 고치는 사고가 난다.
+// 보통 `"[[stem]]"` 문자열이라 모양이 같고, 두 벌로 나누면 한쪽만 고치는 사고가 난다.
 var wikiLink = regexp.MustCompile(`\[\[([^\]\[|#]+)((?:[|#][^\]\[]*)?)\]\]`)
+
+// bareLinkLine 은 `related:`·`supersedes:` 줄이다. **대괄호 없이 쓰인 값**을 잡으려고 있다.
+//
+// # 왜 필요한가 (2026-09-02 실볼트)
+//
+// 위 주석은 "related 도 `[[stem]]` 이라 모양이 같다" 고 전제했는데 **볼트 전체에
+// 성립하지 않는다.** 이렇게 쓰인 노트가 실제로 있다:
+//
+//	related: ["common-결정-EWS는-…", "common-결정-코스봇-인프라는-…"]
+//
+// `store.parseLink` 가 맨 값도 링크로 읽어 주기 때문에(모양이 나빠도 버리지 않는다)
+// 이런 노트가 생기고, doctor 는 그것을 링크로 센다. 그런데 개명 때는 대괄호만 고쳐서
+// **옮기는 행위가 링크를 깨뜨렸다** — `젠틀파이` 9건을 옮긴 뒤 끊어진 링크 4개가 났다.
+var bareLinkLine = regexp.MustCompile(`(?m)^(related|supersedes):.*$`)
+
+// quotedValue 는 그 줄 안의 `"..."` 값 하나다.
+var quotedValue = regexp.MustCompile(`"([^"]*)"`)
 
 // skipDirs 는 볼트 안에서 안 훑는 자리다 (health/bodylinks.go 와 같다).
 var skipDirs = map[string]bool{
@@ -65,6 +82,12 @@ func scanRelinksIn(vault string, renames map[string]string, seen map[string]bool
 	return out
 }
 
+// countLinks 는 고칠 링크 수를 센다.
+//
+// **rewriteLinks 와 같은 것을 세야 한다.** 여기서 안 세면 그 문서는 Relinks 에
+// 안 들어가고, 그러면 rewriteLinks 가 아예 안 불린다 — 고칠 수 있는데 손도 안 대는
+// 상태가 된다. 2026-09-02 에 대괄호 없는 값을 rewriteLinks 에만 넣고 여기를 안
+// 고쳐서 그 판이 났다.
 func countLinks(s string, renames map[string]string) int {
 	n := 0
 	for _, m := range wikiLink.FindAllStringSubmatch(s, -1) {
@@ -72,12 +95,23 @@ func countLinks(s string, renames map[string]string) int {
 			n++
 		}
 	}
+	for _, line := range bareLinkLine.FindAllString(s, -1) {
+		for _, q := range quotedValue.FindAllStringSubmatch(line, -1) {
+			v := strings.TrimSpace(q[1])
+			if strings.Contains(v, "[[") {
+				continue // 위에서 이미 셌다
+			}
+			if _, ok := renames[v]; ok {
+				n++
+			}
+		}
+	}
 	return n
 }
 
 // rewriteLinks 는 옮겨진 stem 을 가리키는 링크를 고친다. 별칭·절 앵커는 보존한다.
 func rewriteLinks(s string, renames map[string]string) string {
-	return wikiLink.ReplaceAllStringFunc(s, func(raw string) string {
+	out := wikiLink.ReplaceAllStringFunc(s, func(raw string) string {
 		m := wikiLink.FindStringSubmatch(raw)
 		if m == nil {
 			return raw
@@ -87,6 +121,26 @@ func rewriteLinks(s string, renames map[string]string) string {
 			return raw
 		}
 		return "[[" + to + m[2] + "]]"
+	})
+	return rewriteBareLinks(out, renames)
+}
+
+// rewriteBareLinks 는 `related:`·`supersedes:` 줄의 **대괄호 없는** 값을 고친다
+// (bareLinkLine 의 §). 대괄호가 있는 값은 위에서 이미 고쳤으므로 여기서는 안 걸린다.
+func rewriteBareLinks(s string, renames map[string]string) string {
+	return bareLinkLine.ReplaceAllStringFunc(s, func(line string) string {
+		return quotedValue.ReplaceAllStringFunc(line, func(q string) string {
+			v := strings.TrimSpace(strings.Trim(q, `"`))
+			// 대괄호가 붙은 값은 wikiLink 가 이미 처리했다. 두 번 고치지 않는다.
+			if strings.Contains(v, "[[") {
+				return q
+			}
+			to, ok := renames[v]
+			if !ok {
+				return q
+			}
+			return `"` + to + `"`
+		})
 	})
 }
 
