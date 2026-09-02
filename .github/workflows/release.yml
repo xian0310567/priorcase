@@ -207,7 +207,16 @@ jobs:
         run: |
           set -euo pipefail
           npm --version
-          for d in dist/npm/darwin-* dist/npm/linux-* dist/npm/win32-*; do
+          # **플랫폼 이름을 여기 적지 않는다.** 예전에는 `darwin-* linux-* win32-*` 를
+          # 나열했는데, win32 를 건너뛴 판에서 그 글롭이 **아무것도 안 맞자 문자열 그대로**
+          # npm 에 넘어갔다 — `ENOENT … dist/npm/win32-*/package.json` 으로 v0.5.1 게시가
+          # 런처 직전에 끊겼다. 셸 기본값이 그렇다: 안 맞은 글롭은 리터럴이 된다.
+          #
+          # 실제로 만들어진 디렉토리만 돈다. 포장 스크립트가 무엇을 냈든 따라간다.
+          shopt -s nullglob
+          for d in dist/npm/*/; do
+            [ "$(basename "$d")" = "priorcase" ] && continue   # 런처는 맨 뒤에
+            [ -f "$d/package.json" ] || { echo "건너뜀(패키지가 아니다): $d"; continue; }
             echo "게시: $d"
             npm publish "$d" --access public
           done
