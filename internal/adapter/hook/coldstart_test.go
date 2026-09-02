@@ -174,3 +174,70 @@ func TestSessionStartColdWithoutRulesFallsBackToRecent(t *testing.T) {
 		t.Errorf("규칙이 없으면 최근 결정으로 돌아가야 한다:\n%s", r.out)
 	}
 }
+
+// ── 폴백 적체를 세션 진입에서 알린다 ──────────────────────────────────
+//
+// # 왜 doctor 로는 안 되는가 (2026-09-02 실측)
+//
+// 폴백 적체 탐지는 2026-08-31 에 들어갔는데 **호출처가 `prior doctor` 하나뿐이고,
+// doctor 는 업무 중에 한 번도 안 돈다.** 트랜스크립트 전수로 셌더니 실행 116회가
+// 전부 priorcase 저장소 안이었고 editup·novels·cosbot 같은 실제 작업에서는 0회다.
+//
+// 아무도 안 보는 자리에 있는 탐지는 없는 것과 같다. 사업주가 이걸 그대로 지적했다 —
+// "네가 수동으로 도메인을 분리하는건 의미가 없지 않나?"
+//
+// # 왜 자동으로 옮기지는 않는가
+//
+// **이름은 기계가 정할 수 없다.** 탐지기는 "이 낱말이 폴백에만 5건 이상 있다" 까지만
+// 알고, 그 프로젝트를 사람이 뭐라고 부르는지는 모른다 — 오늘 실제로 `젠틀파이` 를
+// `젠틀파` 로 제안했고(조사 절단), 그대로 옮겼으면 회사 이름 오타가 파일명 9개에
+// 박혔다. 개명은 볼트 전체의 위키링크까지 건드리고 여러 머신으로 동기화된다.
+//
+// 그래서 **찾는 것과 들이미는 것은 자동, 이름을 정하고 옮기는 것은 승인**이다.
+// 세션 진입에 한 줄이 뜨면 에이전트가 그 자리에서 물어볼 수 있으므로, 사람이
+// 기억해서 쳐야 하는 명령은 사라진다.
+func TestSessionStartSurfacesFallbackCluster(t *testing.T) {
+	c := cfg(t)
+	l := store.NewLayout(c)
+	// common/ 에만 다섯 건 — 임계값(5)을 넘긴다. 밖에는 이 낱말이 없어야 한다.
+	for i, s := range []string{
+		"트윈크루 배포 파이프라인을 젠킨스에서 옮긴다",
+		"트윈크루 인증 토큰 만료를 서버에서 갱신한다",
+		"트윈크루 로그 적재 경로를 바꾼다",
+		"트윈크루 스키마 마이그레이션 순서를 고정한다",
+		"트윈크루 알림 채널을 하나로 합친다",
+	} {
+		writeCommonNote(t, l, "common-결정-트윈"+string(rune('가'+i))+"-2026-08-2"+string(rune('0'+i)), s)
+	}
+
+	r := runHook(t, c, t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+
+	if !strings.Contains(r.out, "트윈크루") {
+		t.Errorf("폴백에 갇힌 프로젝트를 세션 진입에서 안 알린다:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "prior domain split") {
+		t.Errorf("옮기는 방법을 안 알려준다:\n%s", r.out)
+	}
+}
+
+// **쌓인 것이 없으면 한 줄도 안 쓴다.** 이 블록은 매 세션 실리므로, 할 일이 없을 때
+// 조용하지 않으면 그 자체가 예산이 되고 며칠이면 안 읽힌다.
+func TestSessionStartSaysNothingWithoutFallbackCluster(t *testing.T) {
+	r := runHook(t, cfg(t), t.TempDir(), EventSessionStart, Input{Cwd: "/tmp/proj/alpha"})
+	if strings.Contains(r.out, "prior domain split") {
+		t.Errorf("쌓인 것이 없는데 도메인 분리를 권한다:\n%s", r.out)
+	}
+}
+
+func writeCommonNote(t *testing.T, l *store.Layout, stem, summary string) {
+	t.Helper()
+	p := filepath.Join(l.Vault(), "common", "decisions", stem+".md")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ntype: decision\ndate: 2026-08-28\ndomain: [common]\n" +
+		"summary: \"" + summary + "\"\nstatus: active\ntags: [decision]\n---\n\n본문\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

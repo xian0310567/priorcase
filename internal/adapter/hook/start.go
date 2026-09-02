@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/core/i18n"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/daemon"
@@ -202,6 +203,7 @@ func (o Options) sessionStart() error {
 			"\n⚠️ %s missing from recall — could not be read. `prior doctor` explains why.\n"),
 			lang.Count(broken, "건", "decision note", "decision notes"))
 	}
+	b.WriteString(o.fallbackBlock(notes))
 	b.WriteString(o.pendingBlock())
 
 	fmt.Fprint(o.Out, b.String())
@@ -374,6 +376,63 @@ func (o Options) pendingBlock() string {
 			"  - %s %s · 발화 %d · 시그널 %s\n",
 			"  - %s %s · %d turns · signals %s\n"),
 			p.When(), d, p.Turns, strings.Join(p.Signals, "·"))
+	}
+	return b.String()
+}
+
+// fallbackBlock 은 **폴백 도메인에 갇힌 프로젝트**를 세션 진입에서 알린다.
+//
+// # 왜 doctor 로는 안 되는가 (2026-09-02 실측)
+//
+// 이 탐지는 2026-08-31 에 들어갔는데 호출처가 `prior doctor` 하나뿐이었다. 그리고
+// **doctor 는 업무 중에 안 돈다** — 트랜스크립트 전수로 세니 실행 116회가 전부
+// priorcase 저장소 안이었고 editup·novels·cosbot 같은 실제 작업에서는 0회다.
+// 아무도 안 여는 방에 붙인 화재경보기였다.
+//
+// 사업주가 그대로 지적했다: "네가 수동으로 도메인을 분리하는건 의미가 없지 않나?"
+// 맞는 말이고, 고칠 자리는 **자동화 수준이 아니라 채널**이었다.
+//
+// # 왜 옮기는 것까지 자동으로 하지 않는가
+//
+// **이름은 기계가 정할 수 없다.** 탐지기가 아는 것은 "이 낱말이 폴백에만 5건 이상
+// 있고 밖에는 없다" 까지다. 그 프로젝트를 사람이 뭐라고 부르는지는 모른다 — 실제로
+// 오늘 `젠틀파이` 를 `젠틀파` 로 제안했고(한국어 조사가 떨어졌다), 그대로 옮겼으면
+// 회사 이름 오타가 파일명 9개와 볼트 전체의 위키링크에 박혔다.
+//
+// 개명은 여러 머신으로 동기화되고 되돌리려면 git 을 거슬러야 한다. 그래서
+// **찾는 것과 들이미는 것은 자동, 이름을 정하고 옮기는 것은 승인**으로 가른다.
+// 세션 진입에 한 줄이 뜨면 에이전트가 그 자리에서 물어볼 수 있으므로, 사람이
+// 기억해서 쳐야 하는 명령은 사라진다 — 그게 사업주가 원한 자동이다.
+//
+// # 왜 예산을 안 먹는가
+//
+// **쌓인 것이 없으면 한 줄도 안 쓴다.** 실볼트 656건에서 지금 걸리는 군집은 1개고,
+// 임계값 실측(안에 5건 이상·밖에 0건)의 오탐이 0이다. 계산은 45ms 로, 이 훅이 이미
+// 하는 git pull(초 단위) 옆에서 무시할 수 있다.
+func (o Options) fallbackBlock(notes []store.Note) string {
+	if o.Config == nil || o.Layout == nil || len(notes) == 0 {
+		return ""
+	}
+	cl := health.FallbackClusters(o.Config, o.Layout, notes)
+	if len(cl) == 0 {
+		return ""
+	}
+	lang := o.Layout.Lang()
+	var b strings.Builder
+	for _, x := range cl {
+		// **Name() 이다, Token 이 아니다** (health.FallbackCluster.Name 의 §).
+		fmt.Fprintf(&b, lang.T(
+			"\n⚠️ **`%s` 결정 %d건이 폴백 도메인 `%s` 에만 쌓여 있다** — 도메인이 없는 프로젝트다.\n"+
+				"그 결정들은 자기 프로젝트에서 회수될 때 가점을 못 받고 남의 폴더에 산다.\n"+
+				"**사용자에게 옮길지 물어라.** 계획만 보려면 `prior domain split %s`,\n"+
+				"실제로 옮기려면 `--apply` 다. 이름이 어색하면 `--as <이름>` 으로 고쳐라 —\n"+
+				"기계는 낱말 빈도로 고를 뿐이라 그 프로젝트를 뭐라고 부르는지는 모른다.\n",
+			"\n⚠️ **`%s` — %d decisions sit only in the fallback domain `%s`** — a project with no domain.\n"+
+				"Those decisions lose their own-domain boost on recall and live in someone else's folder.\n"+
+				"**Ask the user whether to move them.** `prior domain split %s` shows the plan;\n"+
+				"`--apply` performs it. Override the name with `--as <name>` if it reads wrong —\n"+
+				"the detector picks by word frequency and does not know what you call the project.\n"),
+			x.Name(), x.Count, o.Config.DefaultDomain, x.Name())
 	}
 	return b.String()
 }
