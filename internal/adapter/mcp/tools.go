@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -236,6 +237,19 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 	// 편승 — capture 시점이 곧 결정 시점이라 과거 결정이 가장 정확하게 닿는 순간이다.
 	if inject := search.RenderInject(s.l, res.Related); inject != "" {
 		b.WriteString("\n" + inject)
+		// **보여 주는 데서 끝내지 않는다** (cli/capture.go 의 linkNudge § 참고).
+		// 볼트 결정 668건 중 291건(43.6%)이 고아이고 링크 작성률이 떨어지는 중인데
+		// (2026-08 53.8% → 2026-09 29.8%), 원인이 정확히 "후보를 보여 주고 아무 일도
+		// 시키지 않는 것" 이었다. 걸 수단은 이미 있었다.
+		if len(a.Related) == 0 {
+			stem := strings.TrimSuffix(filepath.Base(res.Path), ".md")
+			b.WriteString(s.l.Lang().T(
+				"\n**위 후보를 읽고 진짜 관련 있는 것만 걸어라.** 회수가 낱말로 고른 것이라 그냥 스친 것이 섞여 있다.\n"+
+					"관련 없으면 안 걸어도 된다 — 틀린 링크는 안 건 것보다 나쁘다.\n",
+				"\n**Read the candidates above and link only the ones that truly relate.** Recall picked them by words, so some merely brushed past.\n"+
+					"Skip it if none relate — a wrong link is worse than no link.\n"))
+			fmt.Fprintf(&b, "  priorcase_review(stem=\"%s\", related=[…])\n", stem)
+		}
 	}
 	// "관련 결정이 없다" 와 "찾아보지 못했다" 는 다른 사실이다.
 	if res.RelatedErr != nil {

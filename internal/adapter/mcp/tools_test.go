@@ -373,3 +373,37 @@ func TestInitializeCarriesPendingFromDaemon(t *testing.T) {
 		t.Errorf("세션 진입에 미확인 구간이 안 실렸다:\n%s", ins)
 	}
 }
+
+// ★ **MCP 쪽이 더 중요하다.** 에이전트가 실제로 기록하는 경로가 여기다.
+//
+// capture 는 관련 과거 결정을 찾아 놓고 보여 주기만 했다. 그 결과 볼트 결정 668건 중
+// 291건(43.6%)이 고아가 됐고 링크 작성률이 2026-08 53.8% → 2026-09 29.8% 로 떨어졌다.
+// 걸 수단(`prior review --related`)은 있었는데 **그것을 쓰라는 말이 없었다.**
+func TestCaptureTellsAgentToLink(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	cs := connectWith(t, c)
+	out := text(t, call(t, cs, "priorcase_capture", map[string]any{
+		"domain": "alpha", "slug": "저장엔진재검토",
+		"summary": "저장 엔진을 다시 본다", "date": "2026-08-07",
+	}))
+	if !strings.Contains(out, "related") {
+		t.Errorf("링크를 걸라는 말이 없다:\n%s", out)
+	}
+	if !strings.Contains(out, "alpha-결정-저장엔진재검토-2026-08-07") {
+		t.Errorf("어느 노트에 걸어야 하는지 안 알려준다:\n%s", out)
+	}
+}
+
+// 이미 걸었으면 조용하다. 매번 뜨는 안내는 며칠이면 안 읽힌다.
+func TestCaptureStaysQuietWhenRelatedGiven(t *testing.T) {
+	c := testutil.VaultConfig(t)
+	cs := connectWith(t, c)
+	out := text(t, call(t, cs, "priorcase_capture", map[string]any{
+		"domain": "alpha", "slug": "저장엔진재검토",
+		"summary": "저장 엔진을 다시 본다", "date": "2026-08-07",
+		"related": []any{"alpha-결정-저장엔진-2026-08-01"},
+	}))
+	if strings.Contains(out, "읽고 진짜 관련") {
+		t.Errorf("이미 related 를 넘겼는데 링크를 걸라고 한다:\n%s", out)
+	}
+}

@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/xian0310567/priorcase/internal/core/capture"
+	"github.com/xian0310567/priorcase/internal/core/search"
+	"github.com/xian0310567/priorcase/internal/core/store"
 )
 
 func newCaptureCmd() *cobra.Command {
@@ -59,6 +63,7 @@ func newCaptureCmd() *cobra.Command {
 				for _, h := range res.Related {
 					fmt.Fprintf(out, "  - %s %s\n", h.Note.Meta.Date, h.Note.Meta.Summary)
 				}
+				fmt.Fprint(out, linkNudge(l, res.Path, r.Related, res.Related))
 			}
 			return nil
 		},
@@ -84,4 +89,47 @@ func newCaptureCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("slug")
 	_ = cmd.MarkFlagRequired("summary")
 	return cmd
+}
+
+// linkNudge 는 **후보를 보여 준 그 자리에서 링크를 걸라고** 시킨다.
+//
+// # 고치려는 고장 (2026-09-02 실측)
+//
+// 볼트 결정 668건 중 **291건(43.6%)이 고아**고, 링크 작성률이 **떨어지고 있다**:
+// 2026-08 53.8% → 2026-09 29.8%.
+//
+// 원인은 이 자리였다. capture 는 관련 과거 결정을 **이미 찾는다**. 그런데 화면에
+// 출력만 하고 아무 일도 시키지 않았다 — 채우려면 `--related` 를 손으로 넣어야 하는데,
+// 후보를 본 그 순간에 무엇을 하라는 말이 없으니 아무도 안 넣는다. 이 프로젝트가
+// 오늘 하루 종일 만난 패턴과 같다: **계산해 놓고 적용하지 않는다.**
+//
+// 수단은 이미 있었다 — `prior review <stem> --related` 가 기존 값을 지우지 않고
+// 덧붙인다. 없던 것은 그것을 쓰라는 말 한 줄이다.
+//
+// # 왜 자동으로 안 박는가
+//
+// 회수 품질이 중간이다 — 2026-09-02 실측으로 사람이 이어 둔 노트를 어휘 회수가
+// 상위3에 넣는 것이 32.3%다. 자동으로 박으면 **틀린 링크가 굳고**, 그건 나중에
+// 링크를 회수에 쓰기 시작할 때 그대로 오염이 된다. 후보를 주고 호스트가 판정한다.
+//
+// # 왜 링크를 늘려야 하는가
+//
+// 지금 `related` 는 회수가 안 읽는다. 그래도 늘려야 하는 이유가 둘이다.
+// ① 옵시디언에서 사람이 따라가는 길이고 ② 링크 이웃 확장을 켜려면 밀도가 필요하다 —
+// 실측으로 이웃의 81.6%가 1표라 순서를 매길 신호가 없었고, 그 원인이 평균 차수 2.2다.
+func linkNudge(l *store.Layout, path string, asked []string, found []search.Hit) string {
+	// **이미 걸었으면 조용하다.** 매번 뜨는 안내는 며칠이면 안 읽힌다.
+	if len(asked) > 0 || len(found) == 0 {
+		return ""
+	}
+	stem := strings.TrimSuffix(filepath.Base(path), ".md")
+	var b strings.Builder
+	b.WriteString(l.Lang().T(
+		"\n**위 후보를 읽고 진짜 관련 있는 것만 걸어라.** 회수가 낱말로 고른 것이라 그냥 스친 것이 섞여 있다.\n",
+		"\n**Read the candidates above and link only the ones that truly relate.** Recall picked them by words, so some merely brushed past.\n"))
+	fmt.Fprintf(&b, "  prior review %s --related <stem>\n", stem)
+	b.WriteString(l.Lang().T(
+		"관련 없으면 안 걸어도 된다 — 틀린 링크는 안 건 것보다 나쁘다.\n",
+		"Skip it if none relate — a wrong link is worse than no link.\n"))
+	return b.String()
 }

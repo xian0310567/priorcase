@@ -140,3 +140,74 @@ func TestCaptureCmdRevealsSkippedNotes(t *testing.T) {
 		t.Errorf("경고가 %d번 나왔다, want 1:\n%s", n, warn)
 	}
 }
+
+// ── 기록 뒤에 링크를 걸게 만든다 ──────────────────────────────────────
+//
+// # 고치려는 고장 (2026-09-02 실측)
+//
+// 볼트 결정 668건 중 **291건(43.6%)이 고아**다 — 어느 노트와도 안 이어져 있다.
+// 그리고 링크 작성률이 **떨어지고 있다**: 2026-08 53.8% → 2026-09 29.8%.
+//
+// 원인은 이 자리다. `capture` 는 관련 과거 결정을 **이미 찾는다**(요약+슬러그로
+// 회수 top-3). 그런데 **화면에 출력만 하고 아무 일도 시키지 않는다.** `related` 를
+// 채우려면 사람이 `--related` 를 손으로 넣어야 하는데, 후보를 본 그 순간에
+// 무엇을 하라는 말이 없으니 아무도 안 넣는다.
+//
+// 고칠 수단은 이미 있었다 — `prior review <stem> --related` 가 기존 값을 지우지 않고
+// 덧붙인다. 없던 것은 **그것을 쓰라는 말 한 줄**이다.
+//
+// # 왜 자동으로 안 박는가
+//
+// 회수 품질이 중간이다(2026-09-02 실측: 사람이 이어 둔 노트를 어휘 회수가 상위3에
+// 넣는 것이 32.3%). 자동으로 박으면 틀린 링크가 굳고, 그건 나중에 링크를 회수에
+// 쓰기 시작할 때 그대로 오염이 된다. **후보를 주고 호스트가 판정한다.**
+func TestCaptureTellsHostToLinkWhenRelatedEmpty(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetArgs([]string{
+		"capture", "--config", cfgPath,
+		"--domain", "alpha", "--slug", "저장 엔진 재검토",
+		"--summary", "저장 엔진을 다시 본다", "--date", "2026-08-07",
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	// 무엇을 하라는 말이 있어야 한다. 후보 목록만으로는 아무도 안 움직였다.
+	if !strings.Contains(got, "prior review") || !strings.Contains(got, "--related") {
+		t.Errorf("링크를 거는 방법을 안 알려준다:\n%s", got)
+	}
+	// **그 노트의 stem 이 명령에 박혀 있어야 한다.** 사람이 조립하게 두면 안 한다.
+	if !strings.Contains(got, "alpha-결정-저장-엔진-재검토-2026-08-07") {
+		t.Errorf("명령에 방금 쓴 노트의 stem 이 없다:\n%s", got)
+	}
+	// 후보를 판정하라고 해야 한다 — 자동으로 박는 것이 아니다.
+	if !strings.Contains(got, "읽고") {
+		t.Errorf("후보를 판정하라는 말이 없다:\n%s", got)
+	}
+}
+
+// **이미 걸었으면 잔소리하지 않는다.** 매번 뜨는 안내는 며칠이면 안 읽힌다.
+func TestCaptureStaysQuietWhenRelatedGiven(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetArgs([]string{
+		"capture", "--config", cfgPath,
+		"--domain", "alpha", "--slug", "저장 엔진 재검토",
+		"--summary", "저장 엔진을 다시 본다", "--date", "2026-08-07",
+		"--related", "alpha-결정-저장엔진-2026-08-01",
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); strings.Contains(got, "prior review") {
+		t.Errorf("이미 related 를 걸었는데 링크를 걸라고 한다:\n%s", got)
+	}
+}
