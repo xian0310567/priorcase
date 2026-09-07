@@ -45,13 +45,15 @@ import (
 // 결정 본문을 싣지 않는 이유: 볼트가 543건이고 주제와 무관한 것을 미리 실으면
 // 그게 컨텍스트를 먹는다. 그 선별이 회수가 하는 일이고, 여기서 대신할 수 없다.
 func newBriefCmd() *cobra.Command {
-	var out string
+	var out, install string
 	cmd := &cobra.Command{
 		Use:   "brief",
 		Short: "훅이 없는 호스트에 깔 지침을 낸다 (규칙 + 이 프로젝트의 실행 절차)",
 		Long: "훅 API 가 없는 에이전트 호스트에서는 회수 자동 주입이 아예 없다.\n" +
 			"그 호스트가 읽는 지침 파일에 넣을 내용을 만든다.\n\n" +
-			"기본은 표준출력이다. --out 으로 파일에 쓴다.",
+			"기본은 표준출력이다.\n" +
+			"  --install <파일>  그 파일의 priorcase 구간만 갈아 끼운다 (**AGENTS.md 에는 이쪽을 써라**)\n" +
+			"  --out <파일>      파일을 통째로 그 내용으로 만든다",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -66,6 +68,9 @@ func newBriefCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if install != "" {
+				return installBrief(cmd, install, body)
+			}
 			if out == "" {
 				fmt.Fprint(cmd.OutOrStdout(), body)
 				return nil
@@ -77,8 +82,44 @@ func newBriefCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&out, "out", "", "이 경로에 쓴다 (기본: 표준출력)")
+	cmd.Flags().StringVar(&out, "out", "",
+		"이 경로를 **통째로** 이 내용으로 만든다 — 기존 파일이 있으면 사라진다")
+	cmd.Flags().StringVar(&install, "install", "",
+		"이 파일의 priorcase 구간만 갈아 끼운다 (없으면 끝에 붙인다). AGENTS.md·CLAUDE.md 용이다")
 	return cmd
+}
+
+// installBrief 는 사용자의 지침 파일에 **우리 구간만** 넣는다 (store.SpliceBlock 의 §).
+//
+// **--out 과 다른 명령이다.** --out 은 파일을 통째로 만드는 것이고 이쪽은 남의
+// 문서에 끼워 넣는 것이다. AGENTS.md 를 --out 으로 겨누면 그 문서가 사라진다 —
+// 그래서 도움말이 이쪽을 가리킨다.
+func installBrief(cmd *cobra.Command, path, body string) error {
+	old := ""
+	if b, err := os.ReadFile(path); err == nil {
+		old = string(b)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("%s 를 읽을 수 없다: %w", path, err)
+	}
+	next, changed, err := store.SpliceBlock(old, body)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		// **안 바뀌었으면 안 쓴다.** 매번 "썼다" 라고 하면 사람이 무엇이 바뀐
+		// 줄 알고, 파일 mtime 이 움직여 git 이 그 문서를 계속 건드린 것처럼 보인다.
+		fmt.Fprintf(cmd.ErrOrStderr(), "이미 최신이다: %s\n", path)
+		return nil
+	}
+	if err := store.WriteFileAtomic(path, []byte(next), 0o644); err != nil {
+		return err
+	}
+	verb := "구간을 갈아 끼웠다"
+	if !store.HasBlock(old) {
+		verb = "구간을 붙였다"
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", verb, path)
+	return nil
 }
 
 func renderBrief(l *store.Layout, domain string) (string, error) {
