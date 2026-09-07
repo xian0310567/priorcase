@@ -155,3 +155,55 @@ func TestLauncherFailsLoudlyWithoutBinary(t *testing.T) {
 }
 
 var _ = os.Getenv
+
+// ★★★ **repository 가 없으면 npm 게시가 통째로 막힌다.**
+//
+// 트러스티드 퍼블리싱(OIDC)이 붙이는 provenance 는 "이 패키지는 이 저장소에서
+// 나왔다" 를 증명한다. 그런데 package.json 이 그 저장소를 안 적으면 npm 이 대조할
+// 것이 없다. 2026-09-07 v0.6.0 게시에서 처음 막혔다 — 그때까지 없어도 나갔으니
+// 레지스트리 쪽이 조인 것이다:
+//
+//	npm error 422 - Error verifying sigstore provenance bundle:
+//	package.json: "repository.url" is "", expected to match
+//	"https://github.com/xian0310567/priorcase" from provenance
+//
+// **첫 패키지에서 죽으므로 하나도 안 나간다.** 그리고 태그는 이미 밀린 뒤라
+// 그 판은 GitHub 릴리스만 있고 npm 에는 없는 상태로 남는다.
+//
+// 런처와 플랫폼 패키지 **양쪽**을 본다 — 플랫폼 쪽은 npm-pack.sh 가 만들므로
+// 그 스크립트의 템플릿을 검사한다.
+func TestNpmPackagesDeclareRepository(t *testing.T) {
+	const want = "github.com/xian0310567/priorcase"
+	root := repoRoot(t)
+
+	var launcher struct {
+		Repository struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t,
+		filepath.Join(root, "npm", "priorcase", "package.json"))), &launcher); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(launcher.Repository.URL, want) {
+		t.Errorf("런처 package.json 의 repository.url 이 %q — %q 를 담아야 한다. "+
+			"없으면 npm 이 provenance 를 검증하지 못해 게시가 422 로 막힌다",
+			launcher.Repository.URL, want)
+	}
+
+	// 플랫폼 패키지는 스크립트가 만든다. 템플릿에 있는지 본다.
+	pack := readFile(t, filepath.Join(root, "scripts", "npm-pack.sh"))
+	i := strings.Index(pack, `"name": "priorcase-${npmos}-${npmarch}"`)
+	if i < 0 {
+		t.Fatal("npm-pack.sh 에서 플랫폼 package.json 템플릿을 못 찾았다 — 이 시험을 고쳐라")
+	}
+	j := strings.Index(pack[i:], "JSON")
+	if j < 0 {
+		t.Fatal("템플릿의 끝을 못 찾았다 — 이 시험을 고쳐라")
+	}
+	if tmpl := pack[i : i+j]; !strings.Contains(tmpl, want) {
+		t.Errorf("npm-pack.sh 의 플랫폼 package.json 템플릿에 repository 가 없다 — "+
+			"%q 를 담아야 게시가 된다", want)
+	}
+}

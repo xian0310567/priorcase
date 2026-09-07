@@ -81,12 +81,29 @@ for t in "${TARGETS[@]}"; do
 
   # os·cpu 를 적어 두면 npm 이 **다른 플랫폼에는 아예 안 받는다.** 이게 없으면
   # 사용자가 4개를 전부 받아 디스크를 4배 쓴다.
+  #
+  # ★ **repository 는 트러스티드 퍼블리싱의 필수 항목이다 (2026-09-07).**
+  #
+  # 없어도 오래 나갔는데 v0.6.0 게시에서 처음 막혔다 — npm 이 provenance 검증을
+  # 조였다:
+  #
+  #	npm error 422 - Error verifying sigstore provenance bundle:
+  #	package.json: "repository.url" is "", expected to match
+  #	"https://github.com/xian0310567/priorcase" from provenance
+  #
+  # OIDC 로 서명한 provenance 는 "이 패키지는 이 저장소에서 나왔다" 를 증명하는데,
+  # package.json 이 그 저장소를 안 적으면 대조할 것이 없다. **첫 패키지에서 죽으므로
+  # 하나도 안 나간다** — 반쪽 배포는 아니지만 배포 자체가 통째로 막힌다.
   cat > "$pkgdir/package.json" <<JSON
 {
   "name": "priorcase-${npmos}-${npmarch}",
   "version": "${VERSION}",
   "description": "priorcase binary for ${npmos}-${npmarch}",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xian0310567/priorcase.git"
+  },
   "os": ["${npmos}"],
   "cpu": ["${npmarch}"],
   "files": ["bin/", "LICENSE", "THIRD-PARTY-NOTICES.md"]

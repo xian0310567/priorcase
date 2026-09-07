@@ -11,6 +11,10 @@
     "obsidian"
   ],
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xian0310567/priorcase.git"
+  },
   "bin": {
     "prior": "bin/prior.js"
   },
