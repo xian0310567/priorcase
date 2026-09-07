@@ -20,6 +20,9 @@ func fixture() []string {
 		`{"type":"assistant","isSidechain":false,"cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"2026-08-07T01:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"임베디드 DB 로 하겠다"}]}}`,
 		// isMeta — 회수 훅이 주입한 컨텍스트다. 사람이 한 말이 아니다.
 		`{"type":"user","isMeta":true,"isSidechain":false,"cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"2026-08-07T01:00:05.000Z","message":{"role":"user","content":"[과거 결정 참조]\n- 2026-08-01 저장 엔진을 임베디드 DB 로 고른다"}}`,
+		// isCompactSummary — 압축이 만든 요약이다. `type: "user"` 로 오지만 사람이
+		// 친 말이 아니고, isMeta 도 promptSource 도 안 붙는다 (record 의 §).
+		`{"type":"user","isCompactSummary":true,"isSidechain":false,"cwd":"/tmp/proj/alpha","sessionId":"S1","timestamp":"2026-08-07T01:00:06.000Z","message":{"role":"user","content":"This session is being continued from a previous conversation. 저장 엔진을 임베디드 DB 로 정했다"}}`,
 		`{"type":"system","subtype":"hook","sessionId":"S1","hookAdditionalContext":"결정 결정 결정"}`,
 		`{"type":"attachment","sessionId":"S1","attachment":{}}`,
 		`{"type":"file-history-snapshot","messageId":"m1","snapshot":{}}`,
@@ -99,6 +102,22 @@ func TestMetaRecordsAreExcluded(t *testing.T) {
 	for _, tn := range turns {
 		if strings.Contains(tn.Text, "과거 결정 참조") {
 			t.Fatalf("isMeta 로 주입된 회수 결과가 Turn 으로 들어왔다: %q", tn.Text)
+		}
+	}
+}
+
+// ★ **압축 요약도 대화가 아니다.**
+//
+// 이걸 사람 발화로 세면 세 자리에서 조용히 틀린다 (record.IsCompactSummary 의 §).
+// 가장 아픈 것은 판별기 발췌다 — 요약문에는 그 세션에서 내린 결정이 전부 나열돼
+// 있어서, 그걸 사용자의 말로 보여 주면 판별기가 "여기서 결정이 났다" 고 볼 이유가
+// 넘친다.
+func TestCompactSummaryIsExcluded(t *testing.T) {
+	body := strings.Join(fixture(), "\n") + "\n"
+	turns, _, _, _ := parse(t, body)
+	for _, tn := range turns {
+		if strings.Contains(tn.Text, "This session is being continued") {
+			t.Fatalf("압축 요약이 Turn 으로 들어왔다: %q", tn.Text)
 		}
 	}
 }

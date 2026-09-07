@@ -21,6 +21,25 @@ import (
 type record struct {
 	Type   string `json:"type"`
 	IsMeta bool   `json:"isMeta"`
+	// IsCompactSummary 는 **압축이 만든 요약**이다. 사람이 친 말이 아니다.
+	//
+	// 압축이 일어나면 호스트가 그때까지의 대화 요약을 `type: "user"` 레코드로 넣고
+	// 새 컨텍스트를 그것으로 시작한다. `isMeta` 도 `promptSource` 도 안 붙어서
+	// 위의 두 가드를 그대로 통과했다 — 실측으로 이 기계의 트랜스크립트 1,492개에
+	// 7건 있고, 전부 `"This session is being continued from a previous
+	// conversation…"` 으로 시작하는 수천 자짜리 요약이다.
+	//
+	// 세 자리에서 조용히 틀린다. ① 턴 수 셈이 이걸 사람 발화 하나로 센다.
+	// ② 판별기 발췌에 **요약문이 사용자의 말로** 실린다 — 그 안에는 이미 내린
+	// 결정이 전부 나열돼 있어서 판별기가 "여기서 결정이 났다" 고 볼 이유가
+	// 넘친다. ③ 회수 평가에서 이걸 프롬프트로 잡으면 4,000자짜리 요약을 질의로
+	// 쓰게 되어 측정이 통째로 낙관으로 기운다.
+	//
+	// `isMeta` 와 같은 가드다. 실제로 이 필드가 붙기 전(옛 호스트 판)에 쓰인
+	// 기록은 못 거른다 — 그건 텍스트 앵커로 걸러야 하는데, 정상 대화가 그 문장을
+	// 인용할 수 있어 `IsHarnessText` 의 "맨 앞만 본다" 규칙과 충돌한다. 지금
+	// 실측에서는 이 플래그가 7건 전부에 붙어 있으므로 플래그로 충분하다.
+	IsCompactSummary bool `json:"isCompactSummary"`
 	// PromptSource 는 그 프롬프트가 **어디서 왔는가** 다. `typed` 는 사람이 친 것이고
 	// `sdk` 는 프로그램이 넣은 것이다 (아래 turns 의 § 참고).
 	PromptSource string `json:"promptSource"`
@@ -125,7 +144,7 @@ func (rec *record) turns(tools map[string]string) []transcript.Turn {
 	// 이걸 안 거르면 자기 참조 고리가 생긴다: 회수 훅이 "[과거 결정 참조]" 를 주입하고,
 	// 그 글에는 "결정" 이 반드시 들어 있으니, 데몬이 그걸 읽고 "이 구간에 결정이 있다"
 	// 고 판정한다. 회수가 켜져 있는 한 **모든 구간이 시그널에 걸린다.**
-	if rec.IsMeta {
+	if rec.IsMeta || rec.IsCompactSummary {
 		return nil
 	}
 	// user·assistant 가 아니면 대화가 아니다 (system·attachment·file-history-* 등).
