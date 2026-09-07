@@ -46,7 +46,7 @@ func TestBodyNeverRescuesAGatedOutNote(t *testing.T) {
 		"드문낱말 또다른드문낱말")
 
 	hits := scoreAll(notes, []string{"흔한낱말", "드문낱말", "또다른드문낱말"},
-		conversational, "", nil, Synonyms{})
+		99, conversational, "", nil, Synonyms{}, false, nil)
 	if len(hits) != 0 {
 		t.Fatalf("%d건이 올라왔다 (첫 건 %d점) — 본문은 게이트를 구제하면 안 된다",
 			len(hits), hits[0].Score)
@@ -60,7 +60,7 @@ func TestBodyStillScoresAfterTheGate(t *testing.T) {
 	notes[0].body = "드문낱말 흔한낱말" // 질의어 둘 다 본문에 있다
 	notes[1].body = "관계 없는 본문"
 
-	hits := scoreAll(notes, []string{"드문낱말", "흔한낱말"}, conversational, "", nil, Synonyms{})
+	hits := scoreAll(notes, []string{"드문낱말", "흔한낱말"}, 99, conversational, "", nil, Synonyms{}, false, nil)
 	if len(hits) != 2 {
 		t.Fatalf("%d건 — 둘 다 올라와야 한다", len(hits))
 	}

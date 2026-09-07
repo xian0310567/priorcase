@@ -59,7 +59,7 @@ func TestMixedScriptKeywordsKeepTheirOwnRule(t *testing.T) {
 		mk("승부 use 를 쓴다", ""),
 	}
 	// 두 낱말이 모두 걸려야 게이트를 넘도록 흔한 낱말을 하나 더 얹는다.
-	hits := scoreAll(prepare(notes, ""), []string{"승부", "use"}, 2, "", nil, Synonyms{})
+	hits := scoreAll(prepare(notes, ""), []string{"승부", "use"}, 99, 2, "", nil, Synonyms{}, false, nil)
 
 	got := map[string]bool{}
 	for _, h := range hits {
@@ -105,7 +105,7 @@ func TestScoreIsIndependentOfKeywordOrder(t *testing.T) {
 
 	sum := func(ks []string) map[string]int {
 		out := map[string]int{}
-		for _, h := range scoreAll(prepare(notes, ""), ks, 8, "", nil, Synonyms{}) {
+		for _, h := range scoreAll(prepare(notes, ""), ks, 99, 8, "", nil, Synonyms{}, false, nil) {
 			out[h.Note.Stem] = h.Score
 		}
 		return out

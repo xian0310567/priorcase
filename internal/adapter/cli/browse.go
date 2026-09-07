@@ -217,6 +217,72 @@ func newShowCmd() *cobra.Command {
 type searchOut struct {
 	noteOut
 	Score int `json:"score"`
+	// PromptRare 는 사람이 친 낱말 중 변별어로 걸린 수다 (search.Hit 의 §).
+	PromptRare int `json:"prompt_rare"`
+	// Trace 는 `--explain` 일 때만 실린다. **omitempty 라 꺼져 있으면 키 자체가
+	// 없다** — null 을 내면 앱이 순회하다 터진다 (jsoncontract_test.go 의 §).
+	Trace *traceOut `json:"trace,omitempty"`
+}
+
+// traceOut 은 점수 분해다 (search.ScoreTrace 의 §).
+//
+// **core 구조체를 그대로 내보내지 않는다.** 이 JSON 은 앱과 자동화가 읽는 계약이라
+// 키 이름이 snake_case 여야 하고, core 의 필드 이름이 바뀐다고 계약이 따라 바뀌면
+// 안 된다. 같은 이유로 noteOut·showOut 도 DTO 다.
+type traceOut struct {
+	Terms []termOut `json:"terms"`
+
+	GateNeed  int  `json:"gate_need"`
+	GateScore int  `json:"gate_score"`
+	GatePass  bool `json:"gate_pass"`
+
+	HeadHits   int     `json:"head_hits"`
+	RareHits   int     `json:"rare_hits"`
+	SynHits    int     `json:"synonym_hits"`
+	HeadRaw    int     `json:"head_raw"`
+	HeadRunes  int     `json:"head_runes"`
+	LengthNorm float64 `json:"length_norm"`
+	HeadScore  int     `json:"head_score"`
+
+	BodyHits      int `json:"body_hits"`
+	CwdBonus      int `json:"cwd_bonus"`
+	MentionBonus  int `json:"mention_bonus"`
+	StatusPenalty int `json:"status_penalty"`
+	Final         int `json:"final"`
+}
+
+// termOut 은 질의어 하나가 이 노트에서 겪은 일이다.
+type termOut struct {
+	Word    string `json:"word"`
+	DF      int    `json:"df"`
+	Rare    bool   `json:"rare"`
+	Head    bool   `json:"head"`
+	Synonym bool   `json:"synonym"`
+	Body    bool   `json:"body"`
+}
+
+// toTraceOut 은 core 의 분해를 계약 모양으로 옮긴다. nil 이면 nil 이다.
+func toTraceOut(t *search.ScoreTrace) *traceOut {
+	if t == nil {
+		return nil
+	}
+	// **빈 목록은 `[]` 여야 한다.** nil 슬라이스는 JSON null 로 나가고, 앱은
+	// 배열을 가정하므로 `.length` 에서 즉시 터진다 (jsoncontract_test.go 의 §).
+	terms := make([]termOut, 0, len(t.Terms))
+	for _, x := range t.Terms {
+		terms = append(terms, termOut{
+			Word: x.Word, DF: x.DF, Rare: x.Rare,
+			Head: x.Head, Synonym: x.Synonym, Body: x.Body,
+		})
+	}
+	return &traceOut{
+		Terms:    terms,
+		GateNeed: t.GateNeed, GateScore: t.GateScore, GatePass: t.GatePass,
+		HeadHits: t.HeadHits, RareHits: t.RareHits, SynHits: t.SynHits,
+		HeadRaw: t.HeadRaw, HeadRunes: t.HeadRunes, LengthNorm: t.LengthNorm,
+		HeadScore: t.HeadScore, BodyHits: t.BodyHits, CwdBonus: t.CwdBonus,
+		MentionBonus: t.MentionBonus, StatusPenalty: t.StatusPenalty, Final: t.Final,
+	}
 }
 
 // recallJSON 은 `prior recall --format json` 의 몸통이다.
@@ -226,7 +292,15 @@ type searchOut struct {
 func recallJSON(w io.Writer, l *store.Layout, c *config.Config, hits []search.Hit) error {
 	out := make([]searchOut, 0, len(hits))
 	for _, h := range hits {
-		out = append(out, searchOut{noteOut: toNoteOut(l, c, h.Note), Score: h.Score})
+		out = append(out, searchOut{
+			noteOut:    toNoteOut(l, c, h.Note),
+			Score:      h.Score,
+			PromptRare: h.PromptRare,
+			// **`--explain` 이 사람 눈에만 보이면 자동화가 못 쓴다.** 점수를
+			// 고칠 때 실패 사례를 한꺼번에 훑는 것은 사람이 아니라 스크립트다 —
+			// 하네스가 실패 60건을 던지면 그 원인을 눈으로 하나씩 볼 수 없다.
+			Trace: toTraceOut(h.Trace),
+		})
 	}
 	return json.NewEncoder(w).Encode(out)
 }

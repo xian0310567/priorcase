@@ -172,14 +172,79 @@ const supersededFloor = 1
 type Hit struct {
 	Note  store.Note
 	Score int
+	// ★ PromptRare 는 **사람이 방금 친 낱말 중 변별어로 걸린 수**다.
+	//
+	// 점수와 달리 이 값은 **자에 안 끌려다닌다.** 점수는 낱말 수와 볼트 크기에
+	// 비례해 커져서 질의끼리도 볼트끼리도 못 견주는데(맥락을 붙이면 특히), 이건
+	// "지금 물은 말의 주제어에 걸렸나" 라는 같은 질문을 어디서나 같은 눈금으로
+	// 묻는다.
+	//
+	// 맥락 낱말은 안 센다. 맥락은 주제를 **보충**하라고 넣은 것이라 거기서만
+	// 걸린 노트는 "지금 물은 것" 의 답이라는 증거가 못 된다.
+	PromptRare int
+
+	// Trace 는 이 점수가 **어디서 왔는지**다. Options.Explain 일 때만 채워진다.
+	//
+	// # 왜 필요한가
+	//
+	// 회수를 고칠 때 가장 비싼 질문은 "왜 이게 1위인가" 다. 지금까지는 그 답을
+	// 얻으려고 코드를 따라가며 손으로 다시 계산해야 했고, 그래서 **틀린 회수를
+	// 보고도 원인을 못 짚은 채 상수만 만지는 일**이 반복됐다.
+	//
+	// 실제로 이 필드가 없어서 못 본 것이 있었다: 맥락을 붙였더니 상위3 정답 7건이
+	// 밀려났는데, 무게를 1.0 에서 0.2 로 낮춰도 5건까지밖에 안 줄었다. 무게 문제가
+	// 아니라는 뜻인데 **무엇이 문제인지는 점수 분해 없이는 알 수 없었다.**
+	Trace *ScoreTrace
 	// Seen 은 **이 세션에 이미 주입된 노트**라는 뜻이다. 점수와 무관하게 호출자가
 	// 나중에 단다(hook/seen.go). 켜지면 RenderInject 가 요약을 빼고 자리만 남긴다 —
 	// 모델이 이미 갖고 있는 문장을 다시 밀어 넣지 않기 위해서다.
 	Seen bool
 }
 
+// ScoreTrace 는 점수 한 건의 분해다 (Hit.Trace 의 §).
+type ScoreTrace struct {
+	// Terms 는 **질의어마다 무슨 일이 있었는지**다. 안 걸린 낱말도 남긴다 —
+	// "왜 이게 나왔나" 만큼 "왜 저게 안 나왔나" 가 자주 필요하다.
+	Terms []TermTrace
+
+	// 게이트
+	GateNeed  int
+	GateScore int
+	GatePass  bool
+
+	// head 점수의 재료
+	HeadHits   int
+	RareHits   int
+	SynHits    int
+	HeadRaw    int // 정규화 전
+	HeadRunes  int
+	LengthNorm float64
+	HeadScore  int // 정규화 뒤 (바닥 적용)
+
+	BodyHits      int
+	CwdBonus      int
+	MentionBonus  int
+	StatusPenalty int
+	Final         int
+}
+
+// TermTrace 는 질의어 하나가 이 노트에서 겪은 일이다.
+type TermTrace struct {
+	Word string
+	// DF 는 이 낱말이 걸린 노트 수다. Rare 는 그것이 변별어 경계 아래라는 뜻이다.
+	DF   int
+	Rare bool
+	// Head·Synonym·Body 는 어디서 걸렸는지다. 셋 다 false 면 이 노트에는 없다.
+	Head, Synonym, Body bool
+}
+
 type Options struct {
 	Cwd string
+	// Explain 이 켜지면 Hit 마다 ScoreTrace 를 단다.
+	//
+	// **기본 경로에서는 할당조차 하지 않는다.** 회수는 매 프롬프트마다 도는
+	// 자리라 진단용 구조체를 늘 만들면 그 비용이 전부에게 실린다.
+	Explain bool
 	// CrossProject 가 false 면 cwd 도메인 폴더 결과가 완전히 빌 때만 전체로 넓힌다
 	// (현행 셸 동작). true 면 항상 전체를 본다.
 	CrossProject bool
@@ -240,6 +305,74 @@ type Options struct {
 
 	// Corpus 는 미리 읽어 둔 볼트다. 주면 볼트를 다시 안 읽는다 (LoadCorpus 의 §).
 	Corpus *Corpus
+
+	// Exclude 는 **없는 셈 치는 노트**다 (stem 기준).
+	//
+	// 평가가 "그 시점에 이 노트는 아직 없었다" 를 흉내 내는 데 쓴다. 라벨은
+	// "결정 N 을 쓴 대화에서 N 이 근거로 삼은 T" 인데, N 은 지금 볼트에 있고
+	// T 를 직접 가리킨다 — 빼지 않으면 **정답지를 특징으로 쓰는 것**이 되고,
+	// 그래프 확장을 재는 순간 천장이 100% 로 나온다.
+	//
+	// 문서빈도까지는 못 되돌린다(그 낱말이 볼트에 있었다는 사실은 남는다).
+	// 재는 쪽이 그 한계를 알고 써야 한다.
+	Exclude map[string]bool
+
+	// ★★★ Context 는 **질의를 둘러싼 대화**다. 비어 있으면 지금까지와 똑같이 돈다.
+	//
+	// # 왜 있나 — 프롬프트 한 줄은 검색어가 되기에 너무 얇다
+	//
+	// 회수는 지금까지 사람이 방금 친 한 줄만 봤다. 그런데 **주제는 프롬프트가 아니라
+	// 세션에 있다.** 대화체는 대명사·생략·직전 화제 참조로 굴러가서, 그 한 줄에는
+	// 내용어가 거의 없다:
+	//
+	//	"좋아. 일단 priorcase에 관련 내용을 저장해놔줘."
+	//	"그럼 이제 뭘 하는게 좋을까? 혹시 어제 완료하지 않은 작업이 있어?"
+	//
+	// 두 프롬프트 모두 그 자리에서 필요했던 노트가 분명히 있었는데(볼트가 그것을
+	// related 로 기록했다), 회수는 아무것도 못 꺼냈다.
+	//
+	// # 실측 (2026-09-04, 실볼트 결정 679건 · 실물 라벨 165건)
+	//
+	// 라벨은 `prior eval --make-labels` 가 볼트에서 만든다 — 노트의 `source_session`
+	// 으로 그 대화를 찾고, `related` 를 "그 자리에서 실제로 필요했던 노트" 로 삼는다.
+	//
+	//	맥락 글자수   못찾음   @1     @3     MRR    상위3진입/밀려남
+	//	0 (현행)      73.9%   4.8%  11.5%  0.096      —
+	//	500          49.1%   7.9%  17.6%  0.166   16 / 6
+	//	**1000**     45.5%  10.3%  24.2%  0.202   28 / 7
+	//	2000         45.5%   7.9%  24.8%  0.194   31 / 9
+	//	4000         43.6%   7.9%  24.8%  0.194   30 / 8
+	//
+	// 상위 3이 곧 주입이라 봐야 하는 수는 마지막 칸이다. 1000 에서 **28건이 들어오고
+	// 7건이 밀려난다** — 2000 을 넘으면 들어오는 것은 안 늘고 밀려나는 것만 는다.
+	//
+	// **사람이 친 말만 담는 안은 더 나빴다** (상위3 진입 21 대 28). 뜻밖이지만 기제가
+	// 분명하다 — 어시스턴트 출력과 도구 활동에 `word`·`extension`·파일 경로 같은
+	// **라틴 원어**가 들어 있고, 그것이 한국어 음차(`워드`·`익스텐션`)와 볼트 어휘를
+	// 잇는 다리가 된다. 그 불일치가 어휘 미스의 주요 갈래였다(2026-09-02 실측).
+	Context string
+
+	// # 재 보고 **안 넣은 것 둘** — 둘 다 도움이 안 됐다
+	//
+	// ① **맥락 낱말에 낮은 무게를 주기.** 프롬프트가 이기게 하려던 것인데, 무게를
+	//    1.0→0.2 로 훑어도 프롬프트 단위 나빠짐이 3→2 로밖에 안 줄고 좋아짐이 같이
+	//    깎였다(22→21). 기제가 다르기 때문이다 — 잡음은 낱말 하나가 세서 생기는 것이
+	//    아니라 **낱말이 많아서** 생긴다. 서른 개에 0.2 를 곱해도 여섯 점이고, 그동안
+	//    정답의 근거도 같은 비율로 깎인다.
+	//
+	// ② **맥락에서 변별어만 쓰기.** 흔한 낱말이 잡음이라고 보고 df 로 걸렀다.
+	//    1500자에서 좋아짐 22→17 · 나빠짐 3→3 으로 **좋아짐만 줄었다.** 맥락의
+	//    흔한 낱말도 조합으로는 주제를 가리킨다는 뜻이다.
+	//
+	// 둘 다 옵션으로 남기지 않았다. 재서 아니라고 나온 손잡이를 남겨 두면 다음
+	// 사람이 그걸 돌려 보는 데 시간을 쓴다 — 근거는 여기 글로 남기는 편이 낫다.
+
+	// MaxContextKeywords 는 맥락에서 가져올 낱말 수 상한이다. 0 이면 무제한.
+	//
+	// **MaxKeywords 와 다른 것이다.** MaxKeywords 는 질의 전체를 자르는데, 그러면
+	// 긴 낱말부터 남기는 규칙 때문에 **사람이 방금 친 짧은 낱말이 먼저 죽는다.**
+	// 여기는 맥락 쪽만 자르므로 프롬프트 낱말은 언제나 전부 남는다.
+	MaxContextKeywords int
 }
 
 // ── 같은 볼트로 여러 번 부를 때 ────────────────────────────────────────
@@ -338,10 +471,18 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	// **대화체 판정은 원문 토큰으로 한다** (PromptTokens 의 §).
 	// 상한을 걸기 **전**에 센다 — 자른 뒤에 세면 긴 발췌가 "골라 넣은 질의" 로
 	// 오판되고, 그 오판이 게이트를 풀어 버린다 (PromptTokens 의 §).
+	//
+	// ★ **맥락은 여기 안 센다.** 맥락을 더해서 세면 사람이 두 낱말로 물어도
+	// 토큰이 수백 개가 되어 게이트가 언제나 2를 요구한다 — `prior recall "볼트 동기화"`
+	// 의 계약이 맥락 유무로 갈린다.
 	nTokens := PromptTokens(prompt)
 	if o.MaxKeywords > 0 && len(keywords) > o.MaxKeywords {
 		keywords = longestKeywords(keywords, o.MaxKeywords)
 	}
+	// **맥락 낱말은 결정 풀에만 쓴다** (withContext 의 §).
+	// ctxFrom 아래는 사람이 방금 친 낱말이고 그 위는 맥락에서 온 것이다.
+	ctxFrom := len(keywords)
+	withCtx := append(append([]string(nil), keywords...), contextKeywords(keywords, o)...)
 	var (
 		skipped               []store.SkippedNote
 		pNotes, pRefs, pRules []prepared
@@ -405,7 +546,7 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 		syn = LoadSynonyms(l)
 	}
 
-	hits := scoreAll(pNotes, keywords, nTokens, cwdDomain, mentioned, syn)
+	hits := scoreAll(pNotes, withCtx, ctxFrom, nTokens, cwdDomain, mentioned, syn, o.Explain, o.Exclude)
 
 	if !o.CrossProject && cwdDomain != "" {
 		scoped := filterByDomain(hits, cwdDomain)
@@ -425,7 +566,8 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(pRules) > 0 {
 		ro := o
 		ro.Limit = o.RuleLimit
-		hits = append(trim(scoreAll(pRules, keywords, nTokens, cwdDomain, mentioned, syn), ro), hits...)
+		// **맥락을 안 준다** (아래 poolKeywords 의 §).
+		hits = append(trim(scoreAll(pRules, keywords, len(keywords), nTokens, cwdDomain, mentioned, syn, o.Explain, o.Exclude), ro), hits...)
 	}
 
 	// **참고는 자기 자리에서 자른다.** 결정과 섞어 자르면 밀어낸다 (§ ReferenceLimit).
@@ -433,10 +575,110 @@ func Recall(l *store.Layout, c *config.Config, prompt string, o Options) ([]Hit,
 	if len(pRefs) > 0 {
 		ro := o
 		ro.Limit = o.ReferenceLimit
-		rhits := trim(scoreAll(pRefs, keywords, nTokens, cwdDomain, mentioned, syn), ro)
+		rhits := trim(scoreAll(pRefs, keywords, len(keywords), nTokens, cwdDomain, mentioned, syn, o.Explain, o.Exclude), ro)
 		hits = append(hits, rhits...)
 	}
 	return hits, skipped, nil
+}
+
+// ★★★ **맥락은 결정 풀에만 쓴다. 규칙과 참고에는 프롬프트만 간다.**
+//
+// # 왜 갈랐나
+//
+// 실볼트에서 끝까지 돌려 보고 발견했다. 맥락을 붙이자 규칙 두 자리가
+// `지라 3단계` 와 `결말은 첫 회차에` 로 찼다 — 대화 주제(회수 랭킹)와 아무 상관이
+// 없다. 맥락 없이는 그 자리가 비어 있었다.
+//
+// 기제는 **작은 풀에서 문서빈도가 뜻을 잃는 것**이다. rareThreshold 는 풀 크기의
+// 3% 를 쓰되 바닥이 1 이라, 규칙 12건짜리 풀에서는 **한 건에만 있는 낱말이 전부
+// 변별어**가 된다(+2). 맥락에서 낱말이 150개쯤 들어오면 어느 규칙이든 그중 몇 개를
+// 스치고, 그 우연이 곧 +5 씩 쌓인다. 실제로 점수가 6점대에서 33·29·17 로 뛰었다.
+//
+// # 왜 고치지 않고 갈랐나
+//
+// 작은 풀의 df 를 어떻게 다뤄야 하는지는 **안 쟀다.** 실물 라벨(165건)은 전부
+// 결정 노트가 정답이라 규칙 자리의 품질을 재지 못한다. 재지 않은 것을 고치면
+// 그게 나아졌는지 알 수 없고, 규칙은 CLAUDE.md 가 *"참고가 아니라 지켜야 하는
+// 제약"* 이라고 말하는 자리라 틀린 것이 실리는 비용이 결정보다 크다.
+//
+// 그래서 **잰 자리에만 넣는다.** 규칙·참고에 맥락을 쓰는 것이 나은지는 그쪽
+// 라벨을 만든 뒤에 답할 일이다.
+
+// ── 규칙·참고 풀에는 맥락을 주지 않는다 (poolKeywords 의 자리) ──────
+//
+// ★★★ **재 보고 정한 것이다. 실볼트 실측 2026-09-07.**
+//
+// # 이득
+//
+// 규칙 실물 라벨(결정의 `source_session` 대화 → 그 결정에서 증류된 규칙, 11건 ·
+// 서로 다른 질의 7개)에서 맥락을 규칙 풀에도 주면 이랬다:
+//
+//	           못찾음   @1     @3     MRR
+//	맥락 없음    36.4%  54.5%  63.6%  0.591
+//	맥락 있음     0.0%  72.7%  81.8%  0.818   ← 잃은 정답 0건
+//
+// # 해악 — 이쪽이 표본이 훨씬 크고 결정적이다
+//
+// 같은 볼트의 실제 질의 61개로 **규칙이 몇 번 실리는지**를 셌다:
+//
+//	              규칙이 실린 질의   서로 다른 규칙   최다 규칙
+//	맥락 없음(현행)   38/61 (62%)      11/12        브라우저 18회
+//	맥락 있음        61/61 (100%)      8/12        지라 54회 · 브라우저 48회
+//
+// 규칙이 **모든 발화에** 실리고, 12건 중 2건이 자리의 84% 를 먹고, 다양성이
+// 11→8 로 준다. 그러면 규칙은 판단 기준이 아니라 **벽지**가 된다 — 매번 같은 두
+// 줄이 나오면 읽는 쪽이 그 자리를 건너뛰는 법을 배우고, 정작 다른 규칙이 필요한
+// 순간에 그 줄을 안 본다. CLAUDE.md 가 규칙을 *"참고가 아니라 지켜야 하는 제약"*
+// 이라고 부르는 자리라 이 대가가 결정 슬롯보다 비싸다.
+//
+// 이득 쪽 표본이 질의 7개뿐이고 해악 쪽이 61개다. **규칙 라벨이 크게 늘면 다시
+// 재라** — `prior eval --make-labels` 가 만드는 규칙 라벨 수가 그 조건이다.
+//
+// # 같이 기각한 것 — 큰 풀에서 변별어 판정을 빌려오기
+//
+// 규칙 풀이 12건이라 `rareThreshold` 의 바닥(1)이 걸려 **한 규칙에만 있는 낱말이
+// 전부 변별어**가 된다. `지라` 는 결정 685건에서 df 5.2% 로 흔한 낱말인데 규칙
+// 풀에서는 변별어로 승격된다 — 그래서 결정 풀의 판정을 빌려오면 나아질 줄 알았다.
+//
+// **반대였다.** 규칙 프록시 MRR 0.840→0.794, 규칙 실물 0.591→0.500,
+// 참고 0.288→0.274 로 전부 나빠졌다. 이유가 분명하다: 12건 중 1건에만 있는 낱말은
+// **그 풀 안에서 하나를 고르는 데는 진짜 변별어**다. 큰 풀의 판정을 가져오는 것은
+// 그 정보를 버리는 것이다. 문제는 df 의 뜻이 아니라 **낱말이 너무 많은 것**이었고,
+// 그건 맥락을 안 주는 것으로 이미 막힌다.
+
+// QueryTerms 는 이 질의가 실제로 쓸 낱말 수다.// QueryTerms 는 이 질의가 실제로 쓸 낱말 수다.
+//
+// **평가 하네스가 점수를 정규화하는 데 쓴다.** 점수는 낱말 수에 비례해 커지므로
+// (맥락을 붙이면 특히) 절대 점수만으로는 질의끼리 견줄 수 없다. 밖에서 다시
+// 세면 맥락 자르기와 중복 제거를 흉내 내게 되고, 그 흉내가 어긋나도 조용하다.
+func QueryTerms(prompt string, o Options) int {
+	kw := ExtractKeywords(prompt)
+	return len(kw) + len(contextKeywords(kw, o))
+}
+
+// contextKeywords 는 맥락에서 **프롬프트에 없는** 낱말만 뽑는다.
+//
+// 프롬프트에도 있는 낱말을 다시 넣지 않는 이유는 중복 제거가 아니라 계약이다 —
+// scoreAll 은 한 질의어를 한 번만 세므로(hitsSiblings 의 §) 두 번 들어오면
+// 그 낱말이 두 배가 된다.
+func contextKeywords(prompt []string, o Options) []string {
+	if strings.TrimSpace(o.Context) == "" {
+		return nil
+	}
+	have := make(map[string]bool, len(prompt))
+	for _, k := range prompt {
+		have[k] = true
+	}
+	var ctx []string
+	for _, k := range ExtractKeywords(o.Context) {
+		if !have[k] {
+			ctx = append(ctx, k)
+		}
+	}
+	if o.MaxContextKeywords > 0 && len(ctx) > o.MaxContextKeywords {
+		ctx = longestKeywords(ctx, o.MaxContextKeywords)
+	}
+	return ctx
 }
 
 // longestKeywords 는 긴 낱말부터 n 개를 남긴다 (Options.MaxKeywords 의 §).
@@ -750,6 +992,10 @@ type noteScan struct {
 	headHits int
 	synHits  int
 	bodyHits int
+	// synHit·bodyHit 는 **--explain 일 때만** 채운다. 평소에는 수만 세면 되고,
+	// 낱말마다 슬라이스를 하나 더 잡으면 그 비용이 전건에 실린다.
+	synHit  []bool
+	bodyHit []bool
 }
 
 // Head 는 headText 의 공개판이다.
@@ -760,7 +1006,14 @@ type noteScan struct {
 // Matches 를 내보내는 것과 같은 이유다.
 func Head(n store.Note, marker string) string { return headText(n, marker) }
 
-func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string, mentioned map[string]bool, syn Synonyms) []Hit {
+// scoreAll 은 노트를 점수순으로 준다.
+//
+// weights 는 낱말별 무게다. **nil 이면 전부 1 이다** — 맥락을 안 쓰는 경로가
+// 부동소수점 누적을 아예 안 타게 하려는 것이고, 그래야 기존 결과가 한 점도
+// 안 움직인다는 것이 코드에서 보인다.
+// ctxFrom 아래 색인은 사람이 친 낱말, 그 위는 맥락에서 온 낱말이다
+// (Hit.PromptRare 의 §). 맥락이 없으면 len(keywords) 라 전부 프롬프트다.
+func scoreAll(notes []prepared, keywords []string, ctxFrom, nTokens int, cwdDomain string, mentioned map[string]bool, syn Synonyms, explain bool, exclude map[string]bool) []Hit {
 	// ── 1차: 히트를 기록하면서 문서빈도를 센다 ──────────────────────
 	// **형제 낱말은 질의어마다 한 번만 푼다** (hitsSiblings 의 §).
 	sibs := make([][]string, len(keywords))
@@ -793,6 +1046,9 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		if n.Meta.Status == store.StatusRetracted {
 			continue
 		}
+		if exclude[n.Stem] {
+			continue // 없는 셈 친다 (Options.Exclude 의 §)
+		}
 		// **문서빈도의 모집단은 철회를 뺀 전건이다.** 히트가 있는 것만 세면
 		// 드문 낱말일수록 분모가 작아져 비율이 뒤집힌다.
 		pool++
@@ -801,6 +1057,10 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		head, body := pn.head, pn.body
 
 		sc := noteScan{note: n, headLen: pn.headLen, headHit: make([]bool, len(keywords))}
+		if explain {
+			sc.synHit = make([]bool, len(keywords))
+			sc.bodyHit = make([]bool, len(keywords))
+		}
 		for i, k := range keywords {
 			// **정확히 맞은 것이 우선이고, 한 질의어는 한 번만 센다.**
 			// 형제까지 따로 세면 표를 크게 쓴 낱말이 점수를 독식한다 (synonym.go).
@@ -811,6 +1071,9 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 				df[i]++
 			case hitsSiblings(head, sibs[i]):
 				sc.synHits++
+				if explain {
+					sc.synHit[i] = true
+				}
 			}
 		}
 		if sc.headHits+sc.synHits == 0 {
@@ -829,7 +1092,11 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		// 골라 넣은 두 낱말에 둘을 요구하면 정작 정확한 질의가 아무것도 못 찾는다.
 		// 대화체 프롬프트는 어미가 살아남아 거의 언제나 4개를 넘으므로, 그 경계가
 		// "자동 주입" 과 "사람이 물은 것" 을 자연스럽게 가른다.
-		gate, rareHits := sc.synHits*gateSynonym, 0
+		// **게이트는 무게를 안 본다.** 게이트가 묻는 것은 "이 노트를 후보로 볼
+		// 만한 증거가 있나" 이고, 맥락에서 나온 증거도 증거다. 무게는 후보들
+		// **사이의 순위**를 정하는 자리에서만 쓴다 — 거기가 주입 세 자리를 놓고
+		// 다투는 곳이라서다.
+		gate, rareHits, promptRare := sc.synHits*gateSynonym, 0, 0
 		for i := range keywords {
 			if !sc.headHit[i] {
 				continue
@@ -837,6 +1104,9 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 			if df[i] <= rare {
 				gate += gateRare
 				rareHits++
+				if i < ctxFrom {
+					promptRare++
+				}
 			} else {
 				gate += gateCommon
 			}
@@ -862,32 +1132,79 @@ func scoreAll(notes []prepared, keywords []string, nTokens int, cwdDomain string
 		for i, k := range keywords {
 			if matchesIn(sc.body, k, wide[i]) {
 				sc.bodyHits++
+				if explain {
+					sc.bodyHit[i] = true
+				}
 			}
 		}
 
-		score := headScore(sc.headHits, rareHits, sc.synHits, sc.headLen) + weightBody*sc.bodyHits
+		hs := headScore(sc.headHits, rareHits, sc.synHits, sc.headLen)
+		score := hs + weightBody*sc.bodyHits
 		n := sc.note
+		cwdBonus, mentionBonus, penalty := 0, 0, 0
 		if cwdDomain != "" && contains(n.Meta.Domain, cwdDomain) {
-			score += weightCwdDomain
+			cwdBonus = weightCwdDomain
+			score += cwdBonus
 		}
 		for d := range mentioned {
 			if contains(n.Meta.Domain, d) {
+				mentionBonus += weightMention
 				score += weightMention
 			}
 		}
 		if n.Meta.Status == store.StatusSuperseded {
 			// 감점은 순위를 낮추기 위한 것이지 숨기기 위한 것이 아니다.
 			// 바닥을 두는 근거와 실측은 supersededFloor 주석에 있다.
+			penalty = penaltySuperseded
 			score -= penaltySuperseded
 			if score < supersededFloor {
+				penalty = 0 // 바닥에 걸렸다 — 감점이 그대로 적용되지 않았다
 				score = supersededFloor
 			}
 		}
 		if score > 0 {
-			hits = append(hits, Hit{Note: n, Score: score})
+			h := Hit{Note: n, Score: score, PromptRare: promptRare}
+			if explain {
+				h.Trace = &ScoreTrace{
+					Terms:     termTraces(keywords, df, rare, sc),
+					GateNeed:  need,
+					GateScore: gate,
+					GatePass:  true,
+					HeadHits:  sc.headHits,
+					RareHits:  rareHits,
+					SynHits:   sc.synHits,
+					HeadRaw: weightHead*sc.headHits + weightRare*rareHits +
+						weightSynonym*sc.synHits,
+					HeadRunes:     sc.headLen,
+					LengthNorm:    lengthNorm(sc.headLen),
+					HeadScore:     hs,
+					BodyHits:      sc.bodyHits,
+					CwdBonus:      cwdBonus,
+					MentionBonus:  mentionBonus,
+					StatusPenalty: penalty,
+					Final:         score,
+				}
+			}
+			hits = append(hits, h)
 		}
 	}
 	return hits
+}
+
+// termTraces 는 낱말마다 무슨 일이 있었는지를 모은다. --explain 일 때만 부른다.
+func termTraces(keywords []string, df []int, rare int, sc noteScan) []TermTrace {
+	out := make([]TermTrace, len(keywords))
+	for i, k := range keywords {
+		t := TermTrace{Word: k, DF: df[i], Rare: df[i] <= rare, Head: sc.headHit[i]}
+		if sc.synHit != nil {
+			t.Synonym = sc.synHit[i]
+		}
+		if sc.bodyHit != nil {
+			t.Body = sc.bodyHit[i]
+		}
+		out[i] = t
+	}
+	return out
 }
 
 func filterByDomain(hits []Hit, domain string) []Hit {

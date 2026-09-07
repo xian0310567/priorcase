@@ -101,7 +101,7 @@ func runJSON(t *testing.T, cfg string, args ...string) string {
 	root := &cobra.Command{Use: "prior"}
 	root.PersistentFlags().String("config", "", "")
 	root.AddCommand(newSettingsCmd(), newVaultCmd(), newDomainCmd(), newHostsCmd(),
-		newListCmd(), newShowCmd())
+		newListCmd(), newShowCmd(), newRecallCmd())
 	var out, errb strings.Builder
 	root.SetOut(&out)
 	root.SetErr(&errb)
@@ -132,5 +132,37 @@ func TestShowJSONHasNoNulls(t *testing.T) {
 	}
 	for _, r := range rows {
 		assertNoNulls(t, "show --json "+r.Stem, runJSON(t, cfgPath, "show", r.Stem, "--json"))
+	}
+}
+
+// ★★ 회수도 같은 계약이다. **`--explain` 이 켜지면 키가 통째로 늘어난다** —
+// 새 필드가 늘어난 자리가 이 계약이 가장 잘 새는 곳이다.
+//
+// 특히 `trace.terms` 가 위험하다: 질의어가 하나도 없으면 nil 슬라이스가 되고
+// JSON `null` 로 나간다. 앱은 배열을 가정하므로 `.length` 에서 즉시 터진다.
+func TestRecallJSONHasNoNulls(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+	for _, args := range [][]string{
+		{"recall", "저장 엔진", "--format", "json"},
+		{"recall", "저장 엔진", "--format", "json", "--explain"},
+		{"recall", "저장 엔진", "--format", "json", "--explain-all"},
+		// 아무것도 안 걸리는 질의 — 빈 목록이 이 계약의 첫 시험대다.
+		{"recall", "존재하지않는낱말xyzzy", "--format", "json", "--explain"},
+	} {
+		assertNoNulls(t, strings.Join(args, " "), runJSON(t, cfgPath, args...))
+	}
+}
+
+// **`--explain` 을 꺼도 trace 키가 생기면 안 된다.** null 로 나가면 위 계약이
+// 깨지고, 빈 객체로 나가면 앱이 "분해가 있다" 로 오해한다.
+func TestRecallJSONOmitsTraceWithoutExplain(t *testing.T) {
+	cfgPath, _ := testutil.VaultConfigFile(t)
+	out := runJSON(t, cfgPath, "recall", "저장 엔진", "--format", "json")
+	if strings.Contains(out, "\"trace\"") {
+		t.Errorf("--explain 없이 trace 가 실렸다:\n%s", out)
+	}
+	withIt := runJSON(t, cfgPath, "recall", "저장 엔진", "--format", "json", "--explain")
+	if !strings.Contains(withIt, "\"trace\"") {
+		t.Errorf("--explain 인데 trace 가 없다:\n%s", withIt)
 	}
 }

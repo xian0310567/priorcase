@@ -13,6 +13,8 @@ func newRecallCmd() *cobra.Command {
 	var format string
 	var crossProject bool
 	var limit int
+	var explain, explainAll bool
+	var ctxFile string
 
 	cmd := &cobra.Command{
 		Use:   "recall <query>",
@@ -29,8 +31,21 @@ func newRecallCmd() *cobra.Command {
 			for _, a := range args[1:] {
 				query += " " + a
 			}
+			// **맥락은 파일로 받는다.** 대화 발췌는 수천 자라 인자로 못 넘긴다.
+			// 훅은 이걸 트랜스크립트에서 직접 읽지만(hook/recall.go), 여기는
+			// 사람이 재현·진단하는 자리라 손으로 줄 수 있어야 한다.
+			var ctx string
+			if ctxFile != "" {
+				b, rerr := os.ReadFile(ctxFile)
+				if rerr != nil {
+					return fmt.Errorf("맥락 파일을 못 읽는다: %w", rerr)
+				}
+				ctx = string(b)
+			}
 			hits, skipped, err := search.Recall(l, c, query, search.Options{
 				Cwd: cwd, CrossProject: crossProject, Limit: limit, MinScore: 1,
+				Explain: explain || explainAll,
+				Context: ctx,
 				// 사람이 찾을 때도 참고 문서를 본다 — 훅과 같은 코퍼스를 봐야
 				// "훅은 주는데 recall 은 안 준다" 가 안 생긴다.
 				IncludeReferences: true,
@@ -77,6 +92,9 @@ func newRecallCmd() *cobra.Command {
 				if a := h.Note.Meta.Author; a != "" {
 					fmt.Fprintf(out, "     — %s\n", a)
 				}
+				if explain || explainAll {
+					renderExplain(out, h, explainAll)
+				}
 			}
 
 			// **작업 로그는 사람이 물었을 때만 나온다.** 자동 주입(--format inject)에는
@@ -111,5 +129,11 @@ func newRecallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "human", "출력 형식: human | inject | json")
 	cmd.Flags().BoolVar(&crossProject, "cross-project", true, "cwd 도메인 밖의 결정도 찾는다")
 	cmd.Flags().IntVar(&limit, "limit", 3, "최대 결과 수")
+	cmd.Flags().BoolVar(&explain, "explain", false,
+		"점수가 어디서 왔는지 분해해서 보여 준다 (걸린 낱말만)")
+	cmd.Flags().BoolVar(&explainAll, "explain-all", false,
+		"--explain 에 안 걸린 낱말까지 — '왜 저게 안 나왔나' 를 볼 때")
+	cmd.Flags().StringVar(&ctxFile, "context", "",
+		"대화 맥락을 담은 파일. 훅이 실제로 하는 회수를 손으로 재현할 때 쓴다")
 	return cmd
 }

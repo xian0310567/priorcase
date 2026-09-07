@@ -32,6 +32,10 @@ func (o Options) userPromptSubmit() error {
 	// 읽기 전용이라 그 저장소의 규약을 건드릴 수 없다.
 	hits, skipped, err := search.Recall(o.Layout, o.Config, prompt, search.Options{
 		Cwd: o.Input.Cwd, CrossProject: true, Limit: 3, MinScore: 1,
+		// ★ **직전 대화를 질의에 얹는다** (context.go 의 §). 실측으로 상위3에
+		// 정답이 든 질의가 25%→55% 가 됐다. 못 읽으면 빈 값이고, 그러면 지금까지와
+		// 똑같이 프롬프트 한 줄로 돈다.
+		Context: o.recentContext(),
 		// **참고 문서도 본다.** 실측(2026-08-13)으로 볼트 245건 중 98건이 결정이
 		// 아니었고, 실제 질의 51개로 재 보니 참고를 넣었을 때 1위가 바뀐 것이
 		// 9건인데 결정이 밀려난 것은 1건뿐이었다 — 비어 있던 자리를 채운다.
@@ -122,6 +126,17 @@ func (o Options) askOutcome(hits []search.Hit) string {
 			"방금 꺼낸 %s (%s) 는 결과가 안 적혀 있다.\n  %s\n",
 			"%s (%s), just recalled, has no recorded outcome.\n  %s\n"),
 			n.Stem, n.Meta.Date, summary)
+	}
+	// ★ **그때 무엇을 기대했는지가 있으면 그것으로 묻는다.**
+	//
+	// "이 결정 좋았나요?" 는 답하기 어렵다 — 기준이 없으면 지금 아는 것으로
+	// 되짚게 되고(hindsight bias), 그러면 회고가 결과의 재서술이 된다.
+	// 기대가 적혀 있으면 물음이 **대조**가 된다: 그때 이렇게 봤는데 실제로는?
+	if e := strings.TrimSpace(n.Meta.Expected); e != "" {
+		fmt.Fprintf(&b, lang.T("당시 예상: %s\n", "Expected at the time: %s\n"), e)
+	}
+	if sm := strings.TrimSpace(n.Meta.SuccessMetric); sm != "" {
+		fmt.Fprintf(&b, lang.T("성공 조건: %s\n", "Success metric: %s\n"), sm)
 	}
 	fmt.Fprintf(&b, lang.T(
 		"**지금 대화에서 그 결과를 알 수 있으면** `prior review %s --outcome good|bad --retro \"...\"` 로 남겨라. 모르면 넘어가라.\n",

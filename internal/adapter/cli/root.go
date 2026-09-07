@@ -30,6 +30,7 @@ func NewRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().String("config", "", "설정 파일 경로 (기본: $XDG_CONFIG_HOME/priorcase/config.toml)")
 	root.AddCommand(newRecallCmd())
+	root.AddCommand(newEvalCmd())
 	root.AddCommand(newNoteCmd())
 	root.AddCommand(newCaptureCmd())
 	root.AddCommand(newReviewCmd())
