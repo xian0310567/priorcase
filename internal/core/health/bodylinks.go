@@ -112,8 +112,6 @@ type BodyLink struct {
 }
 
 var (
-	wikiLink  = regexp.MustCompile(`\[\[(.+?)\]\]`)
-	codeFence = regexp.MustCompile("^\\s*(```|~~~)")
 	// dated 는 규약의 날짜 꼬리다 (`…-2026-08-12`).
 	dated = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 	// marker 는 결정 노트 표식이다. 설정에서 유도하지 않고 둘 다 받는다 —
@@ -122,13 +120,6 @@ var (
 	marker = regexp.MustCompile(`-(결정|decision)-`)
 	// numbered 는 `00-`·`14-` 로 시작하는 문서 이름이다.
 	numbered = regexp.MustCompile(`^\d{2}-`)
-	// inlineCode 는 백틱으로 감싼 조각이다. 옵시디언은 그 안의 `[[X]]` 를 링크로
-	// 만들지 않으므로 우리도 세면 안 된다 — 스키마·규약 문서가 자리표시자를 그렇게
-	// 적는다(`superseded-by: # 뒤집혔을 때 \`[[새-결정-노트]]\` 를 넣는다`).
-	//
-	// 펜스만 보고 인라인을 안 보면 그런 문서가 **영원히 짖는다.** 늘 뜨는 경고는
-	// 무시하는 법을 가르치고, 그러면 진짜 깨진 링크도 같이 묻힌다.
-	inlineCode = regexp.MustCompile("`[^`]*`")
 )
 
 // looksLikeNote 는 **볼트 노트 이름으로 쓰려던 것인지** 본다.
@@ -137,25 +128,6 @@ var (
 // 늘어나고, 늘리는 것을 잊으면 조용히 오탐이 된다. 규약은 안 늘어난다.
 func looksLikeNote(v string) bool {
 	return dated.MatchString(v) || marker.MatchString(v) || numbered.MatchString(v)
-}
-
-// linkTarget 은 `[[ ]]` 안에서 **대상 이름**만 뽑는다.
-//
-// 별칭은 `|` 로 나뉘는데 **표 안에서는 `\|` 로 이스케이프된다.** 그걸 안 끊으면
-// 대상 이름 끝에 역슬래시가 붙어 멀쩡한 링크가 전부 깨진 것으로 보인다.
-// 헤딩 앵커(`#`)와 블록 참조도 잘라 낸다.
-func linkTarget(raw string) string {
-	v := raw
-	if i := strings.Index(v, `\|`); i >= 0 {
-		v = v[:i]
-	}
-	if i := strings.IndexByte(v, '|'); i >= 0 {
-		v = v[:i]
-	}
-	if i := strings.IndexByte(v, '#'); i >= 0 {
-		v = v[:i]
-	}
-	return store.NFC(strings.TrimSpace(strings.TrimRight(strings.TrimSpace(v), `\`)))
 }
 
 func scanBodyLinks(vault string, stems map[string]bool) (typo, orphan []BodyLink) {
@@ -186,27 +158,19 @@ func scanBodyLinks(vault string, stems map[string]bool) (typo, orphan []BodyLink
 			}
 		}
 		rel := strings.TrimPrefix(strings.TrimPrefix(p, vault), string(filepath.Separator))
-		inFence := false
-		for _, line := range strings.Split(body, "\n") {
-			if codeFence.MatchString(line) {
-				inFence = !inFence
+		// **파싱은 store 하나가 한다** (store.BodyLinks 의 §). 여기서 정규식을
+		// 따로 들면 통계와 이 검사가 같은 볼트를 두고 반대로 말한다 — 실제로
+		// 그랬다(끊긴 링크 36 대 0). 코드 펜스·인라인 코드·별칭 처리가 전부
+		// 그쪽에 있다.
+		for _, v := range store.BodyLinks(body) {
+			if v == "" || stems[v] || !looksLikeNote(v) {
 				continue
 			}
-			if inFence {
-				continue
-			}
-			// 인라인 코드를 먼저 지운다 (위 inlineCode 주석).
-			for _, m := range wikiLink.FindAllStringSubmatch(inlineCode.ReplaceAllString(line, ""), -1) {
-				v := linkTarget(m[1])
-				if v == "" || stems[v] || !looksLikeNote(v) {
-					continue
-				}
-				link := BodyLink{Path: rel, Target: v, Suggest: store.NearestStem(v, stems)}
-				if link.Suggest == "" {
-					orphan = append(orphan, link)
-				} else {
-					typo = append(typo, link)
-				}
+			link := BodyLink{Path: rel, Target: v, Suggest: store.NearestStem(v, stems)}
+			if link.Suggest == "" {
+				orphan = append(orphan, link)
+			} else {
+				typo = append(typo, link)
 			}
 		}
 		return nil

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -17,6 +18,86 @@ type Note struct {
 	Meta Meta
 	Body []byte
 }
+
+// Links 는 이 노트가 가리키는 다른 노트 전부다 — related · supersedes · 본문 위키링크.
+//
+// **노트의 성질이므로 여기 산다.** 예전에는 평가 하네스가 자기 안에 갖고 있었는데,
+// 통계와 라벨러가 같은 것을 필요로 하면서 세 벌이 될 참이었다. 위키링크 문법을
+// 여러 곳에서 따로 다루면 한쪽만 고쳐졌을 때 **서로 다른 그래프를 보게 된다.**
+//
+// 중복은 그대로 둔다 — 몇 번 가리켰는지가 뜻을 갖는 자리가 있다.
+func (n Note) Links() []string {
+	out := make([]string, 0, len(n.Meta.Related)+len(n.Meta.Supersedes))
+	add := func(s string) {
+		if v := strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "[]")); v != "" {
+			out = append(out, NFC(v))
+		}
+	}
+	for _, r := range n.Meta.Related {
+		add(r)
+	}
+	for _, s := range n.Meta.Supersedes {
+		add(s)
+	}
+	return append(out, BodyLinks(string(n.Body))...)
+}
+
+// BodyLinks 는 본문의 위키링크 **대상 이름**만 뽑는다.
+//
+// ★ **이것이 위키링크를 읽는 유일한 자리다.** 예전에는 health 의 깨진 링크 검사와
+// 통계가 각자 정규식을 갖고 있었고, 그 둘이 실제로 어긋났다 — 같은 볼트를 두고
+// doctor 는 "링크가 전부 걸린다" 고 하고 통계는 "끊긴 링크 36건" 이라고 했다.
+// **두 진단이 반대로 말하면 사람은 둘 다 안 믿는다.**
+//
+// 세 가지를 걸러야 옵시디언이 실제로 거는 링크와 같아진다:
+//
+//   - **코드 펜스 안**은 예시다. 스키마·규약 문서가 자리표시자를 거기 적는다.
+//   - **인라인 코드 안**도 같다 (“ `[[새-결정-노트]]` “ 처럼). 펜스만 보고
+//     인라인을 안 보면 그런 문서가 영원히 짖고, 늘 뜨는 경고는 무시를 가르친다.
+//   - **별칭·앵커**는 대상이 아니다. 표 안에서는 별칭 구분자가 `\|` 로
+//     이스케이프되는데, 그걸 안 끊으면 이름 끝에 역슬래시가 붙어 멀쩡한 링크가
+//     전부 깨진 것으로 보인다.
+func BodyLinks(body string) []string {
+	var out []string
+	inFence := false
+	for _, line := range strings.Split(body, "\n") {
+		if codeFenceRe.MatchString(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		for _, m := range wikiLinkRe.FindAllStringSubmatch(inlineCodeRe.ReplaceAllString(line, ""), -1) {
+			if v := LinkTarget(m[1]); v != "" {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// LinkTarget 은 `[[ ]]` 안에서 대상 이름만 뽑는다 (BodyLinks 의 §).
+func LinkTarget(raw string) string {
+	v := raw
+	if i := strings.Index(v, `\|`); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.IndexByte(v, '|'); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.IndexByte(v, '#'); i >= 0 {
+		v = v[:i]
+	}
+	return NFC(strings.TrimSpace(strings.TrimRight(strings.TrimSpace(v), `\`)))
+}
+
+var (
+	// **게으른 수량자다** (`.+?`). 한 줄에 링크가 둘이면 탐욕 매칭이 둘을 하나로 삼킨다.
+	wikiLinkRe   = regexp.MustCompile(`\[\[(.+?)\]\]`)
+	codeFenceRe  = regexp.MustCompile("^\\s*(```|~~~)")
+	inlineCodeRe = regexp.MustCompile("`[^`]*`")
+)
 
 // SkippedNote 는 List() 가 읽지 못해 건너뛴 결정 노트 하나다.
 //

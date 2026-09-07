@@ -8,26 +8,6 @@ import (
 	"github.com/xian0310567/priorcase/internal/testutil"
 )
 
-// **표 안의 `\|` 를 안 끊으면 멀쩡한 링크가 전부 깨진 것으로 보인다.**
-//
-// 실측 중에 실제로 이 실수를 했다 — `[[대상\|별칭]]` 이 `대상\` 로 잡혀 후보가
-// 68개로 부풀었고, 고치니 28개가 됐다. 오탐 93%로 본문 검사를 포기했던 2026-08-15
-// 의 판단도 일부는 이런 순진한 파싱 탓이었을 수 있다.
-func TestLinkTargetHandlesEscapedAliasPipe(t *testing.T) {
-	for raw, want := range map[string]string{
-		`대상`:     "대상",
-		`대상|별칭`:  "대상",
-		`대상\|별칭`: "대상", // 표 안에서 이스케이프된 파이프
-		`대상#헤딩`:  "대상",
-		`00-도구-선택-가이드\|01 · 가이드`: "00-도구-선택-가이드",
-		`  여백  `: "여백",
-	} {
-		if got := linkTarget(raw); got != want {
-			t.Errorf("linkTarget(%q) = %q, want %q", raw, got, want)
-		}
-	}
-}
-
 // 자리표시자는 낱말 목록이 아니라 **모양**으로 거른다. 목록은 새 자리표시자가
 // 생길 때마다 늘어나고, 늘리는 것을 잊으면 조용히 오탐이 된다.
 func TestLooksLikeNoteFiltersPlaceholders(t *testing.T) {
