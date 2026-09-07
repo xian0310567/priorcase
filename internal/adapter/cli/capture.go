@@ -84,6 +84,14 @@ func newCaptureCmd() *cobra.Command {
 	f.StringSliceVar(&r.Tags, "tag", nil, "태그 (반복 가능)")
 	f.StringSliceVar(&r.Related, "related", nil,
 		"근거로 삼은 문서의 위키링크 [[stem]] — 다른 프로젝트 결정도 넣는다 (반복 가능)")
+	// ★ 결과를 나중에 판정하기 위한 셋 (store.Meta 의 §). **전부 선택이다** —
+	// 강제하면 기록 마찰이 올라가고, 마찰이 올라가면 기록 자체가 안 남는다.
+	f.StringVar(&r.Expected, "expected", "",
+		"그때 무엇이 일어날 것으로 봤나 — 결과만 보면 hindsight bias 가 생긴다")
+	f.StringVar(&r.SuccessMetric, "success-metric", "",
+		"무엇이면 성공인가 (자연어로 충분하다)")
+	f.StringVar(&r.ReviewAfter, "review-after", "",
+		"이 결정을 다시 볼 날짜 YYYY-MM-DD — 그날이 지나면 회고 큐가 연다")
 	f.StringVar(&bodyFile, "body", "", "본문 파일 경로. - 이면 표준입력")
 	_ = cmd.MarkFlagRequired("domain")
 	_ = cmd.MarkFlagRequired("slug")

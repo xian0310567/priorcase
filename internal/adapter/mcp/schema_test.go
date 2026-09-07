@@ -38,7 +38,7 @@ func TestToolSchemasMatchArgStructs(t *testing.T) {
 			}{
 				"priorcase_recall":  {[]string{"query", "limit", "cross_project"}, []string{"query"}},
 				"priorcase_note":    {[]string{"domain", "summary", "body", "tags", "date", "session_id"}, []string{"domain", "summary"}},
-				"priorcase_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "supersede_reason", "date", "session_id"}, []string{"domain", "slug", "summary"}},
+				"priorcase_capture": {[]string{"domain", "slug", "summary", "body", "tags", "related", "supersedes", "supersede_reason", "expected", "success_metric", "review_after", "date", "session_id"}, []string{"domain", "slug", "summary"}},
 				"priorcase_review":  {[]string{"stem", "outcome", "status", "summary", "retrospective", "supersedes", "supersede_reason"}, []string{"stem"}},
 				"priorcase_pending": {[]string{"resolve"}, nil},
 			}

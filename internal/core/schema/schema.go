@@ -66,6 +66,18 @@ func Validate(marker, stem string, m store.Meta) error {
 	if !IsFuture(m) && !outcomes[m.Outcome] {
 		return fmt.Errorf("outcome 이 허용값(pending/good/bad) 밖이다: %q", m.Outcome)
 	}
+	// ★ review_after 는 **비어 있어도 되지만, 있으면 날짜여야 한다.**
+	//
+	// 회고 큐가 이 값을 오늘과 견주는데(retro), 모양이 틀리면 그 비교가 조용히
+	// 거짓이 되어 그 결정은 **영영 큐에 안 뜬다.** 쓰는 자리에서 막는 편이 낫다.
+	//
+	// **더 새 판으로 쓰인 노트는 건너뛴다** — 위 열거값과 같은 이유로, 우리가
+	// 모르는 모양(예: 나중에 상대 표기를 허용)을 틀렸다고 하면 남의 노트를 거부한다.
+	if !IsFuture(m) && strings.TrimSpace(m.ReviewAfter) != "" {
+		if _, err := time.Parse("2006-01-02", strings.TrimSpace(m.ReviewAfter)); err != nil {
+			return fmt.Errorf("review_after 는 YYYY-MM-DD 여야 한다: %q", m.ReviewAfter)
+		}
+	}
 	if err := checkOverturnConsistency(m); err != nil {
 		return err
 	}

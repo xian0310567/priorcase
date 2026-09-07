@@ -69,6 +69,44 @@ type Meta struct {
 	// 비어 있으면 방출하지 않는다 — 기존 18노트를 다시 저장해도 바이트가 안 바뀐다.
 	SupersededReason string `yaml:"superseded_reason,omitempty"`
 
+	// ── 결과를 나중에 판정하기 위한 셋 ────────────────────────────────
+	//
+	// ★★★ **결과만 보면 hindsight bias 가 생긴다.**
+	//
+	// 지금 노트는 "무엇을 정했나 · 왜 정했나 · 결과가 good/bad/pending" 을 갖는다.
+	// 그런데 판단을 배우는 데 필요한 것은 **"그때 무엇이 일어날 것으로 봤는가"** 다.
+	// 그것이 없으면 회고가 "이 결정 좋았나요?" 로 뭉개지고, 실측으로 결과가 적힌
+	// 결정이 157건 중 2건(1.3%)이었다.
+	//
+	// 셋 다 **비면 줄을 안 쓴다.** author·schema 와 같은 규칙이고, 그래서 스키마
+	// 판을 올리지 않는다 — 옛 바이너리는 이 키들을 Extra 로 보존한다.
+	//
+	// **판별기가 지어내면 안 된다.** 사용자가 명시적으로 말했을 때만 적는다
+	// (judge 의 프롬프트 규칙). 없는 기대를 적으면 회고가 그 지어낸 문장을 기준으로
+	// 판정하게 되고, 그건 이 셋을 넣은 이유를 정확히 뒤집는다.
+
+	// Expected 는 **결정 당시의 예상**이다. 자연어로 충분하다.
+	//
+	//	expected: "캐시를 적용하면 API p95 latency 가 약 30% 줄 것으로 본다"
+	Expected string `yaml:"expected,omitempty"`
+
+	// SuccessMetric 은 **무엇이면 성공인가**다.
+	//
+	//	success_metric: "API p95 latency < 150ms"
+	//
+	// 기계가 파싱할 수 있는 형태일 필요는 없다. 사람이 나중에 읽고 판정할 수
+	// 있으면 된다 — 파싱 가능한 형태를 요구하면 아무도 안 적는다.
+	SuccessMetric string `yaml:"success_metric,omitempty"`
+
+	// ReviewAfter 는 **이 결정을 다시 볼 날짜**다 (YYYY-MM-DD).
+	//
+	//	review_after: 2026-10-01
+	//
+	// 회고 큐가 지금은 "다시 참조됨" 과 "뒤집힘" 으로만 열린다. 그 둘은 **다른
+	// 사건이 일어나야** 열리므로, 조용히 잘 돌아간 결정은 영영 안 열린다 — 그런데
+	// 그것이야말로 "예상대로 됐나" 를 물어야 하는 것이다.
+	ReviewAfter string `yaml:"review_after,omitempty"`
+
 	Related       []string `yaml:"related"`
 	Tags          []string `yaml:"tags"`
 	SourceSession string   `yaml:"source_session"`
@@ -312,6 +350,18 @@ func EmitFrontmatter(m Meta) []byte {
 	b.WriteString("supersedes: " + emitLinkList(m.Supersedes) + "\n")
 	if strings.TrimSpace(m.SupersededReason) != "" {
 		b.WriteString("superseded_reason: " + quote(m.SupersededReason) + "\n")
+	}
+	// 셋 다 비면 줄을 안 쓴다 (Meta 의 §). outcome 바로 뒤 무리에 두는 이유는
+	// **같은 질문의 앞뒤**라서다 — 무엇을 기대했고(expected·success_metric),
+	// 언제 다시 보고(review_after), 어떻게 됐나(outcome).
+	if strings.TrimSpace(m.Expected) != "" {
+		b.WriteString("expected: " + quote(m.Expected) + "\n")
+	}
+	if strings.TrimSpace(m.SuccessMetric) != "" {
+		b.WriteString("success_metric: " + quote(m.SuccessMetric) + "\n")
+	}
+	if strings.TrimSpace(m.ReviewAfter) != "" {
+		b.WriteString("review_after: " + quote(m.ReviewAfter) + "\n")
 	}
 	b.WriteString("related: " + quoted(wikilinks(m.Related)) + "\n")
 	b.WriteString("tags: " + bare(m.Tags) + "\n")

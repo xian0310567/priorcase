@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xian0310567/priorcase/internal/core/config"
 	"github.com/xian0310567/priorcase/internal/core/search"
@@ -28,6 +29,14 @@ const (
 	ReasonRecalled Reason = "recalled"
 	// ReasonSuperseded 는 이 결정을 뒤집는 결정이 나왔다는 뜻이다.
 	ReasonSuperseded Reason = "superseded"
+	// ★ ReasonScheduled 는 **그 결정이 스스로 정한 날짜가 지났다**는 뜻이다
+	// (store.Meta.ReviewAfter).
+	//
+	// 앞의 둘은 **다른 사건이 일어나야** 열린다 — 다시 참조되거나 뒤집히거나.
+	// 그래서 조용히 잘 돌아간 결정은 영영 안 열리는데, 그것이야말로 "예상대로
+	// 됐나" 를 물어야 하는 것이다. 실측으로 결과가 적힌 결정이 157건 중 2건
+	// (1.3%)이었던 이유의 한 갈래가 여기다.
+	ReasonScheduled Reason = "scheduled"
 )
 
 // Item 은 회고 큐의 한 줄이다.
@@ -198,6 +207,7 @@ func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error)
 		}
 	}
 
+	today := clock().Format("2006-01-02")
 	var out []Item
 	for stem, n := range byStem {
 		// **결과가 이미 판명된 것은 묻지 않는다.** 이 조건이 없으면 사람이 답한
@@ -205,11 +215,18 @@ func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error)
 		if n.Meta.Outcome != "pending" {
 			continue
 		}
+		// **이유는 하나만 저장한다.** 여럿을 담으려면 Item 스키마가 넓어지는데,
+		// 사람에게 보여 주는 것은 "왜 지금 묻나" 한 줄이라 대표 하나면 된다.
+		//
+		// 순서: 뒤집힘 > 재회수 > 예정. 뒤집힘은 **결과가 이미 나온 것**이라 가장
+		// 확실하고, 예정은 달력이 만든 것이라 가장 약한 근거다.
 		switch {
-		case hits[stem] >= MinHits:
-			out = append(out, item(n, ReasonRecalled, hits[stem]))
 		case superseded[stem]:
 			out = append(out, item(n, ReasonSuperseded, hits[stem]))
+		case hits[stem] >= MinHits:
+			out = append(out, item(n, ReasonRecalled, hits[stem]))
+		case scheduledDue(n, today):
+			out = append(out, item(n, ReasonScheduled, hits[stem]))
 		}
 	}
 
@@ -225,6 +242,26 @@ func Due(l *store.Layout, c *config.Config) ([]Item, []store.SkippedNote, error)
 		return out[i].Stem < out[j].Stem
 	})
 	return out, skipped, nil
+}
+
+// clock 은 오늘을 준다. **시험이 갈아 끼울 수 있게 변수다** — 날짜에 달린 판정을
+// 진짜 시계로 시험하면 그 시험은 하루가 지나면 다른 것을 잰다.
+//
+// (`now` 가 아닌 이유는 이 패키지의 시험이 이미 그 이름을 쓰고 있어서다.
+// `Ask` 는 시각을 인자로 받는데, `Due` 는 호출부가 셋이라 인자를 늘리면
+// 그 셋이 다 시각을 알아야 한다 — 아는 이유가 없는 자리들이다.)
+var clock = time.Now
+
+// scheduledDue 는 그 결정이 정한 날짜가 지났는지 본다.
+//
+// **문자열로 견준다.** YYYY-MM-DD 는 사전순이 곧 시간순이고, 스키마가 그 모양을
+// 강제한다(schema.Validate). 파싱하면 실패 경로가 생기는데, 여기서 실패하면
+// 그 결정이 조용히 큐에서 빠진다 — 날짜를 적어 둔 사람이 가장 기대하지 않는 일이다.
+//
+// 같은 날도 포함한다. "10월 1일 이후에 보자" 는 10월 1일에 봐도 되는 것이다.
+func scheduledDue(n store.Note, today string) bool {
+	d := strings.TrimSpace(n.Meta.ReviewAfter)
+	return d != "" && d <= today
 }
 
 // slugOf 는 stem 에서 slug 를 뽑는다. stem 은 `{domain}{marker}{slug}-{date}` 다.

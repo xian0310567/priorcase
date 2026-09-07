@@ -52,6 +52,14 @@ type ReviewRequest struct {
 	// 깨는 것이 우리가 막으려는 일이다.
 	Tags []string
 
+	// ── 결과를 나중에 판정하기 위한 셋 (store.Meta 의 §) ──────────────
+	//
+	// **비면 변경 없음이다.** 지우는 길은 두지 않았다 — 기대를 지우는 것은
+	// 회고의 근거를 지우는 것이라, 필요하면 사람이 노트를 직접 고치는 편이 낫다.
+	Expected      string
+	SuccessMetric string
+	ReviewAfter   string
+
 	// SupersedeReason 은 **무엇이 이 판단을 뒤집었는가** 다. 없으면 변경 없음.
 	//
 	// 이 자리가 없어서 잃던 것: supersede() 는 옛 노트에 status="superseded" 와
@@ -134,6 +142,15 @@ func Review(l *store.Layout, r ReviewRequest) (ReviewResult, error) {
 
 	// related 를 덧붙인다. 대상이 없는 것은 빼고 호출부에 알린다 (relatedcheck.go).
 	var dropped []DroppedLink
+	if strings.TrimSpace(r.Expected) != "" {
+		n.Meta.Expected = r.Expected
+	}
+	if strings.TrimSpace(r.SuccessMetric) != "" {
+		n.Meta.SuccessMetric = r.SuccessMetric
+	}
+	if strings.TrimSpace(r.ReviewAfter) != "" {
+		n.Meta.ReviewAfter = r.ReviewAfter
+	}
 	if r.Tags != nil {
 		// **보일러플레이트는 지키고 나머지를 간다.** `decision` 은 capture 가 모든
 		// 노트에 붙이는 표식이라 사람이 지울 것이 아니고, 지우면 그 노트가

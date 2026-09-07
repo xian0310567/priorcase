@@ -48,5 +48,10 @@ func newReviewCmd() *cobra.Command {
 	// 줘야 한다(capture.Review 가 요구한다).
 	f.StringVar(&r.SupersedeReason, "reason", "",
 		"무엇이 이 판단을 뒤집었는가 — 측정 결과·계기를 한 줄로 (--supersedes 없으면 --status 도 함께)")
+	// ★ 기대는 capture 때 못 적었어도 나중에 붙일 수 있어야 한다 — 결정을 내린
+	// 뒤에야 "무엇으로 판정할지" 가 정해지는 일이 흔하다. **비면 변경 없음이다.**
+	f.StringVar(&r.Expected, "expected", "", "그때 무엇이 일어날 것으로 봤나")
+	f.StringVar(&r.SuccessMetric, "success-metric", "", "무엇이면 성공인가")
+	f.StringVar(&r.ReviewAfter, "review-after", "", "다시 볼 날짜 YYYY-MM-DD")
 	return cmd
 }

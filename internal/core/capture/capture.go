@@ -39,6 +39,14 @@ type Request struct {
 	Tags    []string
 	Related []string
 	Body    []byte
+
+	// ── 결과를 나중에 판정하기 위한 셋 (store.Meta 의 §) ──────────────
+	//
+	// **전부 선택이다.** 강제하면 기록 마찰이 올라가고, 마찰이 올라가면 기록
+	// 자체가 안 남는다 — 이 프로젝트가 자동 기록을 만든 이유가 그것이다.
+	Expected      string
+	SuccessMetric string
+	ReviewAfter   string
 }
 
 type Result struct {
@@ -95,6 +103,7 @@ func Do(l *store.Layout, c *config.Config, r Request) (Result, error) {
 		Summary: r.Summary, Status: "active", Outcome: "pending",
 		Related: relatedLinks,
 		Tags:    ensureDecisionTag(r.Tags), SourceSession: r.SourceSession,
+		Expected: r.Expected, SuccessMetric: r.SuccessMetric, ReviewAfter: r.ReviewAfter,
 	}
 
 	// --supersedes 는 prior review 와 같은 로직(supersedeAll)을 탄다 — 대상 검증,

@@ -92,6 +92,26 @@ func captureSchema(l i18n.Lang) map[string]any {
 			"**What overturned that decision** — the measurement or trigger, in one line. It pairs with "+
 				"supersedes and lands on the old note. Without the trigger the next person cannot trust the "+
 				"reversal and will swing back to the original")),
+		// ★ 결과를 나중에 판정하기 위한 셋 (store.Meta 의 §).
+		//
+		// **판별기와 에이전트가 지어내면 안 된다.** 없는 기대를 적으면 회고가 그
+		// 지어낸 문장을 기준으로 판정하게 되고, 그건 이 셋을 넣은 이유를 정확히
+		// 뒤집는다. 설명문이 그 금지를 직접 말한다 — 설명문이 곧 계약이다.
+		"expected": prop("string", l.T(
+			"**사용자가 명시적으로 말했을 때만** 적는다. 이 결정을 내릴 때 무엇이 일어날 것으로 봤는가. "+
+				"대화에 없으면 비워 둬라 — 지어낸 기대는 나중 회고를 통째로 오염시킨다",
+			"Fill this **only if the user said it explicitly**: what they expected to happen when making "+
+				"this decision. Leave empty if the conversation does not say — an invented expectation "+
+				"poisons every later retrospective")),
+		"success_metric": prop("string", l.T(
+			"**사용자가 말했을 때만** 적는다. 무엇이면 성공인가. 자연어로 충분하다 (예: \"p95 < 150ms\")",
+			"Fill this **only if the user said it**: what would count as success. Plain language is fine "+
+				"(e.g. \"p95 < 150ms\")")),
+		"review_after": prop("string", l.T(
+			"이 결정을 다시 볼 날짜 YYYY-MM-DD. 그날이 지나면 회고 큐가 연다 — "+
+				"다시 참조되지도 뒤집히지도 않은 결정은 이것 없이는 영영 안 열린다",
+			"Date to revisit this decision, YYYY-MM-DD. The retrospective queue opens it after that day — "+
+				"a decision that is never re-recalled and never overturned will otherwise never come up")),
 		"date": prop("string", l.T(
 			"YYYY-MM-DD (기본: 오늘)",
 			"YYYY-MM-DD (default: today)")),

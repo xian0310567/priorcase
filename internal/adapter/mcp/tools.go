@@ -203,8 +203,13 @@ type captureArgs struct {
 	// 여기 인자가 없어서 에이전트는 영영 못 넘겼다 — 실볼트 18노트 중 번복 사유가
 	// 남은 것이 0건이었던 실제 원인이 이 한 줄의 부재였다.
 	SupersedeReason string `json:"supersede_reason,omitempty"`
-	Date            string `json:"date,omitempty"`
-	SessionID       string `json:"session_id,omitempty"`
+	// ★ 결과를 나중에 판정하기 위한 셋 (store.Meta 의 §). 전부 선택이고,
+	// **대화에 없으면 비워 둬야 한다** — 스키마 설명문이 그 금지를 말한다.
+	Expected      string `json:"expected,omitempty"`
+	SuccessMetric string `json:"success_metric,omitempty"`
+	ReviewAfter   string `json:"review_after,omitempty"`
+	Date          string `json:"date,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
 	// Author 는 이 결정을 내린 사람이다. 비면 설정·git 신원에서 정한다.
 	Author string `json:"author,omitempty"`
 }
@@ -226,6 +231,9 @@ func (s *server) capture(ctx context.Context, req *sdk.CallToolRequest, a captur
 		SourceSession:   a.SessionID,
 		Tags:            a.Tags,
 		Related:         a.Related,
+		Expected:        a.Expected,
+		SuccessMetric:   a.SuccessMetric,
+		ReviewAfter:     a.ReviewAfter,
 		Body:            []byte(a.Body),
 	})
 	if err != nil {
