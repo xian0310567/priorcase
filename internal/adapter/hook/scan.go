@@ -35,7 +35,7 @@ func (o Options) safetyNet(ctx context.Context) error {
 	// **자기 호스트의 CLI 를 먼저 본다.** 예전에는 `claude` 만 찾았다 — Codex 만
 	// 깔린 머신에서는 판별기가 있는데도 "없다" 가 되어 시그널 필터가 다시 켜지고,
 	// 언어에 묶인 키워드가 판별기 앞을 막는 상태로 돌아갔다.
-	judgeAvailable := judge.FindFor(o.judgeFlavor(), o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) != nil
+	judgeAvailable := judge.Available(o.Config, o.judgeFlavor())
 	r, owned, serr := daemon.ScanOnce(o.StateDir, o.Config, o.Layout, o.Input.TranscriptPath, judgeAvailable)
 
 	// **세션이 끝나거나 압축될 때가 마지막 기회다.** 그때까지 에이전트가 기록하지

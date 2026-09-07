@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xian0310567/priorcase/internal/core/config"
+	"github.com/xian0310567/priorcase/internal/core/judge"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
 
@@ -104,4 +106,61 @@ func TestBrokenStateStillReportsThroughFilter(t *testing.T) {
 	if !strings.Contains(r.out, "확인할 수 없다") {
 		t.Errorf("면제 필터가 읽기 실패를 삼켰다:\n%s", r.out)
 	}
+}
+
+// ★★★ **정하지 않은 사람에게는 대화 발췌가 밖으로 나갈 수 있다고 알린다.**
+//
+// 판별기는 이 도구에서 밖으로 나가는 유일한 경로다 (judge/policy.go 의 §).
+// 지금까지는 CLI 가 PATH 에 있으면 아무 말 없이 그렇게 했다.
+//
+// **doctor 에 두면 안 된다** — 실측으로 doctor 는 업무 중에 0회 돈다. 세션 진입이
+// 유일하게 매번 도는 통로다 (judgeBlock 의 §).
+func TestSessionStartAsksAboutJudgeWhenUndecided(t *testing.T) {
+	// **정말 안 정한 상태**를 만든다: judge 도 judge_path 도 비어 있다.
+	//
+	// judge_path 에 스텁을 심으면 custom 으로 읽혀 "정했다" 가 되어 버린다
+	// (config.Capture.JudgeMode 의 §). 그래서 여기서는 자동 탐색 경로를 그대로
+	// 태우고, 이 머신에 판별기가 없으면 **조용한 것이 맞다**는 쪽을 확인한다.
+	c := cfg(t)
+	c.Capture.Judge = ""
+	c.Capture.JudgePath = ""
+
+	got := runHook(t, c, pendingStore(t), EventSessionStart,
+		Input{Cwd: "/tmp/proj/alpha"}).out
+
+	// 이 머신에 판별기가 없으면 나가는 것이 없으므로 조용한 것이 맞다.
+	if !judgeInstalled(c) {
+		if strings.Contains(got, "자동 판별") {
+			t.Errorf("판별기가 없는데 개인정보 경고가 떴다 — 소음이다:\n%s", got)
+		}
+		t.Skip("이 머신에 판별기가 없다 — 알릴 것이 없는 경로만 확인했다")
+	}
+	if !strings.Contains(got, "자동 판별") {
+		t.Errorf("안 정했는데 아무 말도 안 한다 — 계약이 없는 것과 같다:\n%s", got)
+	}
+	if !strings.Contains(got, "judge") {
+		t.Errorf("무엇을 적어야 하는지 안 알려 준다:\n%s", got)
+	}
+}
+
+// ★★ **정한 사람에게는 한 줄도 안 쓴다.** 정하고도 매번 뜨면 그것이 소음이고,
+// 소음이 된 경고는 진짜 경고를 가린다.
+func TestSessionStartSilentOnceJudgeIsDecided(t *testing.T) {
+	for _, mode := range []string{"off", "auto", "claude", "codex"} {
+		c := cfg(t)
+		c.Capture.Judge = mode
+		c.Capture.JudgePath = ""
+		got := runHook(t, c, pendingStore(t), EventSessionStart,
+			Input{Cwd: "/tmp/proj/alpha"}).out
+		if strings.Contains(got, "자동 판별이 아직") {
+			t.Errorf("judge=%q 로 정했는데 또 묻는다:\n%s", mode, got)
+		}
+	}
+}
+
+// judgeInstalled 는 이 머신에서 판별기를 찾을 수 있는지 본다.
+func judgeInstalled(c *config.Config) bool {
+	a := *c
+	a.Capture.Judge = "auto"
+	return judge.Available(&a, judge.FlavorClaude)
 }

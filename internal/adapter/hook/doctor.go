@@ -343,6 +343,31 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 	if o.Config == nil {
 		return
 	}
+	// ★ **정책부터 말한다.** 대화 발췌가 밖으로 나가는 유일한 경로라
+	// (judge/policy.go 의 §) "무엇이 켜져 있나" 보다 "내가 그걸 허락했나" 가 먼저다.
+	mode := o.Config.Capture.JudgeMode()
+	switch {
+	case !mode.Valid():
+		add(r, "자동 판별", health.Fail,
+			fmt.Sprintf("설정의 judge = %q 는 모르는 값이다 — 판별기가 꺼진 채로 돈다",
+				o.Config.Capture.Judge),
+			fmt.Sprintf("쓸 수 있는 값: %s", judgeModeList()))
+		return
+	case mode == config.JudgeOff:
+		add(r, "자동 판별", health.OK,
+			"꺼짐 — 대화 발췌가 밖으로 나가지 않는다", "")
+		return
+	case mode == config.JudgeUnset:
+		add(r, "자동 판별", health.Warn,
+			"**안 정했다** — 예전처럼 설치된 AI CLI 를 찾아 쓰고 있다. "+
+				"그러면 대화 발췌가 그 CLI 를 통해 해당 AI 서비스로 전달될 수 있다",
+			"설정의 [capture] 에 judge 를 적어라 — "+judgeModeList())
+	case mode == config.JudgeCustom && strings.TrimSpace(o.Config.Capture.JudgePath) == "":
+		add(r, "자동 판별", health.Fail,
+			`judge = "custom" 인데 judge_path 가 비었다 — 판별기가 꺼진 채로 돈다`,
+			"judge_path 에 실행 파일 경로를 적거나 judge 를 auto 로 바꿔라")
+		return
+	}
 	set, ok := judge.Configured(o.Config.Capture.JudgePath)
 	if set && !ok {
 		add(r, "자동 기록", health.Fail,
@@ -371,6 +396,16 @@ func checkJudge(r *health.Report, o DoctorOptions) {
 		}
 	}
 	reportJudges(r, found, false, len(o.Config.Capture.Signals) == 0)
+}
+
+// judgeModeList 는 쓸 수 있는 judge 값을 문구로 만든다. 목록을 두 벌 두지 않으려고
+// config 의 것을 그대로 쓴다 — 값이 늘 때 한 곳만 고치면 된다.
+func judgeModeList() string {
+	parts := make([]string, 0, len(config.JudgeModes))
+	for _, m := range config.JudgeModes {
+		parts = append(parts, string(m))
+	}
+	return strings.Join(parts, " | ")
 }
 
 // reportJudges 는 찾은 판별기들을 한 줄로 낸다.

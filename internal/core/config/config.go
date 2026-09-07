@@ -42,8 +42,37 @@ type Capture struct {
 	MinTurns       int      `toml:"min_turns"`
 	QuiesceSeconds int      `toml:"quiesce_seconds"`
 
-	// JudgePath 는 자동 승격에 쓸 판별기 명령이다. 비면 자동으로 찾는다
-	// (~/.local/bin/claude → PATH 의 claude). 못 찾으면 자동 승격이 꺼진다.
+	// ★★★ Judge 는 **자동 판별기를 쓸지 사용자가 명시적으로 정하는 자리**다.
+	//
+	// # 왜 필요한가 — 로컬 우선 제품의 유일한 구멍
+	//
+	// priorcase 는 자기 서버가 없고 볼트를 어디에도 올리지 않는다. 그런데 자동
+	// 판별기는 **대화 발췌를 설치된 AI CLI 에 넘긴다.** 우리가 네트워크를 직접
+	// 타지 않아도 사용자 관점에서는 이렇다:
+	//
+	//	priorcase → claude/codex CLI → 그 회사 서버
+	//
+	// 지금까지는 CLI 가 PATH 에 있으면 **아무 말 없이** 그렇게 했다. 개인 도구일
+	// 때는 넘어갔지만 npm 에 공개된 제품에서는 계약이 없는 것이다.
+	//
+	// # 값
+	//
+	//	off      안 쓴다. 표시만 남고 사람이 나중에 `prior pending` 으로 본다
+	//	auto     설치된 것을 찾아 쓴다 (대화를 만든 호스트를 앞에 두는 사슬)
+	//	claude   Claude CLI 만
+	//	codex    Codex CLI 만
+	//	custom   judge_path 가 가리키는 것만
+	//	""       **아직 안 정했다** — 옛 설정이다 (JudgeMode 의 §)
+	//
+	// # 왜 빈 값을 "off" 로 읽지 않는가
+	//
+	// 그러면 이미 쓰고 있던 사람의 자동 기록이 **조용히 멈춘다.** 이 프로젝트가
+	// 죄목으로 드는 고장이 정확히 그것이다 — 멈춘 것은 큐에 쌓일 뿐 아무 말도
+	// 안 한다. 그래서 빈 값은 "예전처럼 돌되 **세션 진입에서 매번 알리고** 정하게
+	// 한다" 로 읽는다 (hook/start.go 의 judgeBlock).
+	Judge string `toml:"judge"`
+
+	// JudgePath 는 판별기 명령 경로다 (`judge = "custom"` 일 때 필수).
 	//
 	// **API 키를 직접 읽지 않는다.** 호스트 CLI 만 쓴다 — 키 등록은 진짜 장벽이고,
 	// 사용자가 모르는 사이에 과금되는 경로를 만들지 않기 위해서다.
@@ -51,6 +80,54 @@ type Capture struct {
 	// JudgeModel 은 판별에 쓸 모델이다. 비면 haiku.
 	JudgeModel string `toml:"judge_model"`
 }
+
+// JudgeMode 는 판별기 정책이다 (Capture.Judge 의 §).
+type JudgeMode string
+
+const (
+	// JudgeUnset 은 **아직 안 정했다** 는 뜻이다. 옛 설정이 여기 온다.
+	JudgeUnset  JudgeMode = ""
+	JudgeOff    JudgeMode = "off"
+	JudgeAuto   JudgeMode = "auto"
+	JudgeClaude JudgeMode = "claude"
+	JudgeCodex  JudgeMode = "codex"
+	JudgeCustom JudgeMode = "custom"
+)
+
+// JudgeModes 는 설정에 쓸 수 있는 값 전부다 (빈 값 제외). 진단 문구가 이걸 쓴다.
+var JudgeModes = []JudgeMode{JudgeOff, JudgeAuto, JudgeClaude, JudgeCodex, JudgeCustom}
+
+// JudgeMode 는 설정을 정규화한 정책을 준다.
+//
+// **`judge_path` 만 적혀 있던 옛 설정은 custom 이다.** 그 사람은 이미 명시적으로
+// 하나를 지목했으므로 다시 물을 것이 없다 — 물으면 이미 정한 것을 또 정하라는 말이 된다.
+//
+// 모르는 값은 **Unset 으로 떨어뜨리지 않고 그대로 준다.** 오타를 조용히
+// "예전처럼" 으로 읽으면 `judge = "of"` 가 판별기를 켠 채로 돈다. 판정은
+// Valid 이 하고, 진단이 그것을 말한다.
+func (c Capture) JudgeMode() JudgeMode {
+	m := JudgeMode(strings.ToLower(strings.TrimSpace(c.Judge)))
+	if m == JudgeUnset && strings.TrimSpace(c.JudgePath) != "" {
+		return JudgeCustom
+	}
+	return m
+}
+
+// Valid 는 설정에 쓸 수 있는 값인지 본다. 빈 값(아직 안 정함)도 유효하다.
+func (m JudgeMode) Valid() bool {
+	if m == JudgeUnset {
+		return true
+	}
+	for _, v := range JudgeModes {
+		if v == m {
+			return true
+		}
+	}
+	return false
+}
+
+// Decided 는 **사람이 명시적으로 정했나**다. 안 정했으면 세션 진입에서 묻는다.
+func (m JudgeMode) Decided() bool { return m != JudgeUnset && m.Valid() }
 
 type Domain struct {
 	Prefix string   `toml:"prefix"`

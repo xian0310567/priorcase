@@ -225,7 +225,18 @@ min_turns = 6
 quiesce_seconds = 3
 
 # 자동 기록 — 세션 끝에 판별기가 기록되지 않은 결정을 대신 남긴다.
-# 비우면 자동으로 찾는다. 못 찾으면 표시만 남는다. **API 키는 쓰지 않는다.**
+#
+# ★ 이 기능을 켜면 **대화 발췌가 설치된 AI CLI 를 통해 해당 AI 서비스로 전달될 수
+#   있다.** priorcase 자체는 telemetry 도 없고 볼트를 어디에도 올리지 않는다 —
+#   밖으로 나가는 경로는 이것 하나뿐이라 기본값을 off 로 둔다.
+#
+#   off    안 쓴다. 구간은 표시만 남고 prior pending 으로 사람이 본다
+#   auto   설치된 것을 찾아 쓴다 (대화를 만든 호스트를 앞에 두는 사슬)
+#   claude / codex   그 CLI 만 쓴다
+#   custom judge_path 가 가리키는 것만 쓴다
+#
+#   **API 키는 쓰지 않는다.** 호스트 CLI 만 쓴다.
+judge       = "off"
 judge_path  = ""
 judge_model = "claude-haiku-4-5"
 
@@ -284,8 +295,19 @@ min_turns = 6
 quiesce_seconds = 3
 
 # Automatic recording — at the end of a session a judge records decisions the
-# agent never captured. Leave judge_path empty to auto-detect. If nothing is
-# found, segments are only flagged. **No API key is ever read.**
+# agent never captured.
+#
+# ★ Turning this on means **conversation excerpts may be sent through an
+#   installed AI CLI to its AI service.** priorcase itself has no telemetry and
+#   never uploads your vault — this is the only outbound path, so it ships off.
+#
+#   off    do not use it. Segments stay flagged for prior pending
+#   auto   use whichever CLI is installed (host that made the conversation first)
+#   claude / codex   use only that CLI
+#   custom use only what judge_path points at
+#
+#   **No API key is ever read.** Host CLIs only.
+judge       = "off"
 judge_path  = ""
 judge_model = "claude-haiku-4-5"
 

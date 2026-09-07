@@ -228,3 +228,49 @@ func TestHostResolutionGoesThroughOneDoor(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ★★★ **판별기를 고르는 통로도 하나여야 한다.**
+//
+// 판별기는 **대화 발췌가 밖으로 나가는 유일한 경로**다 (judge/policy.go 의 §).
+// 그래서 "쓸지 말지" 스위치가 설정에 있고(`[capture] judge`), 그 스위치를 한 자리라도
+// 건너뛰면 **사람은 껐다고 믿는데 발췌는 계속 나간다.** 조용하고 되돌릴 수 없다.
+//
+// 만드는 자리가 다섯이었다 — 훅의 가용성 검사, 데몬의 구간별 선택, 데몬 상태 보고,
+// 승격 게이트, doctor. 호스트 목록에서 같은 고장을 이미 겪었고 그래서
+// TestHostResolutionGoesThroughOneDoor 가 있다. 여기도 같은 모양이다.
+//
+// **doctor 는 예외다.** 진단은 "설정이 무엇을 가리키나" 와 "그 자리에 실제로 무엇이
+// 있나" 를 **따로** 말해야 한다 — 정책이 걸러 낸 뒤의 결과만 보면 "왜 안 도는지" 를
+// 설명할 수 없다. 판별기를 실행하지 않고 존재만 보는 자리다.
+func TestJudgeSelectionGoesThroughOneDoor(t *testing.T) {
+	// 판별기를 **만드는** 함수들. Available·For 는 통로 자신이라 여기 없다.
+	guarded := []string{"judge.Find(", "judge.FindFor(", "judge.FindFlavor("}
+
+	err := filepath.WalkDir("..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		s := filepath.ToSlash(p)
+		// 통로 자신과, 진단(위 §).
+		if strings.Contains(s, "/core/judge/") || strings.HasSuffix(s, "/hook/doctor.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		for _, sym := range guarded {
+			if hasNonCommentCall(string(b), sym) {
+				t.Errorf("%s 가 %s 를 직접 부른다 — 설정의 판별기 스위치를 건너뛴다. "+
+					"judge.For / judge.Available 을 써라 (개인정보 계약이 그 문에 걸려 있다)", p, sym)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

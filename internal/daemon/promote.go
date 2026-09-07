@@ -102,7 +102,7 @@ func Promote(ctx context.Context, o PromoteOptions) {
 	// **판을 통째로 한 판별기로 정하지 않는다.** 밀린 구간은 여러 호스트에서
 	// 오므로 판별기는 구간마다 고른다 (아래 루프의 judgeFor). 여기서는 "쓸 수
 	// 있는 판별기가 하나라도 있는가" 만 본다 — 없으면 표시만 남는 것이 원래 동작이다.
-	if judge.FindFor(judge.FlavorClaude, o.Config.Capture.JudgePath, o.Config.Capture.JudgeModel) == nil {
+	if !judge.Available(o.Config, judge.FlavorClaude) {
 		return
 	}
 	// 호스트 루트는 한 번만 찾는다. **ResolveHosts 를 쓴다** — hosts.Resolve 를

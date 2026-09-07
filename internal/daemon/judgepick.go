@@ -26,7 +26,7 @@ import (
 // 못 가르면 claude 를 앞에 둔다. 그게 이 도구의 원래 동작이고, 사슬이라 codex 도
 // 뒤에 붙으므로 잃는 것이 없다.
 func judgeFor(c *config.Config, path string, rs []hosts.Resolved) judge.Judge {
-	return judge.FindFor(preferredFlavor(path, rs), c.Capture.JudgePath, c.Capture.JudgeModel)
+	return judge.For(c, preferredFlavor(path, rs))
 }
 
 // preferredFlavor 는 그 transcript 를 만든 호스트의 판별기 종류다.

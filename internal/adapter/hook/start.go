@@ -7,6 +7,7 @@ import (
 
 	"github.com/xian0310567/priorcase/internal/core/health"
 	"github.com/xian0310567/priorcase/internal/core/i18n"
+	"github.com/xian0310567/priorcase/internal/core/judge"
 	"github.com/xian0310567/priorcase/internal/core/store"
 	"github.com/xian0310567/priorcase/internal/daemon"
 )
@@ -203,6 +204,7 @@ func (o Options) sessionStart() error {
 			"\n⚠️ %s missing from recall — could not be read. `prior doctor` explains why.\n"),
 			lang.Count(broken, "건", "decision note", "decision notes"))
 	}
+	b.WriteString(o.judgeBlock())
 	b.WriteString(o.fallbackBlock(notes))
 	b.WriteString(o.pendingBlock())
 
@@ -377,6 +379,65 @@ func (o Options) pendingBlock() string {
 			"  - %s %s · %d turns · signals %s\n"),
 			p.When(), d, p.Turns, strings.Join(p.Signals, "·"))
 	}
+	return b.String()
+}
+
+// ★★★ judgeBlock 은 **대화 발췌가 밖으로 나갈 수 있다는 사실**을 알리고 정하게 한다.
+//
+// # 무엇이 문제였나
+//
+// priorcase 는 자기 서버가 없고 볼트를 어디에도 올리지 않는다. 그런데 자동 판별기는
+// 대화 발췌를 설치된 AI CLI 에 넘긴다 — 우리가 네트워크를 직접 타지 않아도
+// 사용자에게는 `priorcase → claude/codex CLI → 그 회사 서버` 다. 지금까지는 CLI 가
+// PATH 에 있으면 **아무 말 없이** 그렇게 했다.
+//
+// # 왜 doctor 가 아니라 여기인가
+//
+// 같은 실측을 두 번째 쓰는 것이다 — `prior doctor` 는 **업무 중에 안 돈다**.
+// 트랜스크립트 전수로 세니 실행 116회가 전부 priorcase 저장소 안이었고 실제 작업에서는
+// 0회다 (fallbackBlock 의 §). 개인정보 계약을 아무도 안 여는 방에 붙이면 계약이 아니다.
+//
+// # 왜 매번 뜨는가
+//
+// 정할 때까지 뜬다. 한 번 보여 주고 마는 것은 "알렸다" 는 알리바이일 뿐이고,
+// 이 프로젝트는 그런 조용한 것을 죄목으로 든다. 한 줄 적으면 영영 사라진다.
+//
+// # 왜 CLI 가 없으면 조용한가
+//
+// 그때는 나가는 것이 없다. 나가지도 않는데 개인정보 경고를 매 세션 띄우면 그것이
+// 소음이고, 소음이 된 경고는 진짜 경고를 가린다.
+func (o Options) judgeBlock() string {
+	if o.Config == nil || o.Layout == nil {
+		return ""
+	}
+	// **정한 사람에게는 아무 말도 안 한다.** off·auto·claude·codex·custom 전부
+	// 명시적 선택이다 (config.JudgeMode 의 §).
+	if o.Config.Capture.JudgeMode().Decided() {
+		return ""
+	}
+	// 판별기를 실제로 못 찾으면 나가는 것이 없다.
+	if !judge.Available(o.Config, o.judgeFlavor()) {
+		return ""
+	}
+	lang := o.Layout.Lang()
+	var b strings.Builder
+	b.WriteString(lang.T(
+		"\n⚠️ **자동 판별이 아직 정해지지 않았다.**\n"+
+			"지금은 예전처럼 설치된 AI CLI 를 찾아 쓰고 있고, 그러면 **대화 발췌가 그 CLI 를 통해\n"+
+			"해당 AI 서비스로 전달될 수 있다.** priorcase 자체는 telemetry 도 없고 볼트를 어디에도\n"+
+			"올리지 않는다 — 밖으로 나가는 경로는 이것 하나뿐이다.\n"+
+			"설정(`prior settings --path` 가 자리를 알려 준다)의 `[capture]` 에 한 줄 적으면 사라진다:\n"+
+			"  `judge = \"off\"`     안 쓴다 (기록은 표시만 남고 `prior pending` 으로 사람이 본다)\n"+
+			"  `judge = \"auto\"`    지금 동작을 그대로 승인한다\n"+
+			"  `judge = \"claude\"` / `\"codex\"`   한 CLI 만 쓴다\n",
+		"\n⚠️ **Automatic decision detection is undecided.**\n"+
+			"It currently falls back to whichever AI CLI is installed, which means **conversation\n"+
+			"excerpts may be sent through that CLI to its AI service.** priorcase itself has no\n"+
+			"telemetry and never uploads your vault — this is the only outbound path.\n"+
+			"Add one line under `[capture]` in your config (`prior settings --path` shows where):\n"+
+			"  `judge = \"off\"`     do not use it (segments stay queued for `prior pending`)\n"+
+			"  `judge = \"auto\"`    approve the current behaviour\n"+
+			"  `judge = \"claude\"` / `\"codex\"`   use only that CLI\n"))
 	return b.String()
 }
 
